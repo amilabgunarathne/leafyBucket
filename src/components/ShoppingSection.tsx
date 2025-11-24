@@ -1,0 +1,326 @@
+import React, { useState } from 'react';
+import { Plus, Minus, ShoppingCart, Star, Leaf, Package, AlertCircle } from 'lucide-react';
+import { getMarketPrices } from '../data/vegetables';
+
+interface CartItem {
+  id: string;
+  name: string;
+  pricePerUnit: number;
+  quantity: number; // Number of 250g units
+  totalWeight: number; // Total weight in grams
+  image: string;
+  category: string;
+}
+
+const ShoppingSection = () => {
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [isCartOpen, setIsCartOpen] = useState(false);
+
+  // Use market prices per 250g for individual shopping
+  const products = getMarketPrices();
+
+  const addToCart = (product: typeof products[0]) => {
+    setCart(prevCart => {
+      const existingItem = prevCart.find(item => item.id === product.id);
+      if (existingItem) {
+        return prevCart.map(item =>
+          item.id === product.id
+            ? { 
+                ...item, 
+                quantity: item.quantity + 1,
+                totalWeight: (item.quantity + 1) * 250
+              }
+            : item
+        );
+      } else {
+        return [...prevCart, {
+          id: product.id,
+          name: product.name,
+          pricePerUnit: product.price,
+          quantity: 1, // 1 unit = 250g
+          totalWeight: 250,
+          image: product.image,
+          category: product.category
+        }];
+      }
+    });
+  };
+
+  const updateQuantity = (id: string, newQuantity: number) => {
+    if (newQuantity === 0) {
+      setCart(prevCart => prevCart.filter(item => item.id !== id));
+    } else {
+      setCart(prevCart =>
+        prevCart.map(item =>
+          item.id === id 
+            ? { 
+                ...item, 
+                quantity: newQuantity,
+                totalWeight: newQuantity * 250
+              } 
+            : item
+        )
+      );
+    }
+  };
+
+  const getCartTotal = () => {
+    return cart.reduce((total, item) => total + (item.pricePerUnit * item.quantity), 0);
+  };
+
+  const getCartItemCount = () => {
+    return cart.reduce((total, item) => total + item.quantity, 0);
+  };
+
+  const getTotalWeight = () => {
+    return cart.reduce((total, item) => total + item.totalWeight, 0);
+  };
+
+  const getItemQuantity = (productId: string) => {
+    const item = cart.find(item => item.id === productId);
+    return item ? item.quantity : 0;
+  };
+
+  return (
+    <section id="shop" className="py-20 bg-gray-50">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        {/* Header */}
+        <div className="text-center space-y-4 mb-16">
+          <h2 className="text-4xl font-bold text-gray-900">Shop Individual Vegetables</h2>
+          <p className="text-xl text-gray-600 max-w-2xl mx-auto">
+            Prefer to choose your own vegetables? Shop our fresh selection individually at market prices per 250g.
+          </p>
+        </div>
+
+        {/* Important Notice */}
+        <div className="mb-8 bg-blue-50 border-2 border-blue-200 rounded-xl p-4">
+          <div className="flex items-start space-x-3">
+            <AlertCircle className="h-5 w-5 text-blue-600 mt-0.5 flex-shrink-0" />
+            <div>
+              <h4 className="font-semibold text-blue-900 mb-1">Order Information</h4>
+              <p className="text-sm text-blue-800">
+                All prices are per 250g. Minimum order quantity is 250g per vegetable for practical packaging and handling.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Shopping Cart Button */}
+        <div className="fixed top-20 right-4 z-40">
+          <button
+            onClick={() => setIsCartOpen(!isCartOpen)}
+            className="bg-green-600 text-white p-4 rounded-full shadow-lg hover:bg-green-700 transition-all duration-200 relative"
+          >
+            <ShoppingCart className="h-6 w-6" />
+            {getCartItemCount() > 0 && (
+              <span className="absolute -top-2 -right-2 bg-orange-500 text-white text-xs rounded-full h-6 w-6 flex items-center justify-center font-bold">
+                {getCartItemCount()}
+              </span>
+            )}
+          </button>
+        </div>
+
+        {/* Products Grid */}
+        <div className="grid md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 mb-12">
+          {products.map((product) => (
+            <div key={product.id} className="bg-white rounded-2xl overflow-hidden shadow-lg hover:shadow-xl transition-all duration-300 group">
+              <div className="relative overflow-hidden">
+                <img
+                  src={product.image}
+                  alt={product.name}
+                  className="w-full h-48 object-cover group-hover:scale-110 transition-transform duration-300"
+                />
+                <div className="absolute top-3 left-3 bg-green-100 text-green-800 px-2 py-1 rounded-full text-xs font-semibold flex items-center space-x-1">
+                  <Leaf className="h-3 w-3" />
+                  <span>Organic</span>
+                </div>
+                <div className="absolute top-3 right-3 bg-white/90 backdrop-blur-sm px-2 py-1 rounded-full">
+                  <div className="flex items-center">
+                    {[...Array(5)].map((_, i) => (
+                      <Star key={i} className="h-3 w-3 text-yellow-400 fill-current" />
+                    ))}
+                  </div>
+                </div>
+              </div>
+              
+              <div className="p-6">
+                <div className="mb-3">
+                  <h3 className="text-lg font-semibold text-gray-900 mb-1">{product.name}</h3>
+                  <p className="text-sm text-gray-600 leading-relaxed">{product.description}</p>
+                </div>
+                
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <span className="text-2xl font-bold text-green-600">LKR {product.price}</span>
+                    <span className="text-sm text-gray-500 ml-1">/ 250g</span>
+                  </div>
+                  <div className="flex items-center space-x-1 text-xs text-gray-500">
+                    <Package className="h-3 w-3" />
+                    <span>Min: 250g</span>
+                  </div>
+                </div>
+
+                {getItemQuantity(product.id) === 0 ? (
+                  <button
+                    onClick={() => addToCart(product)}
+                    className="w-full bg-green-600 text-white py-3 px-4 rounded-xl font-semibold hover:bg-green-700 transition-colors flex items-center justify-center space-x-2"
+                  >
+                    <Plus className="h-4 w-4" />
+                    <span>Add 250g</span>
+                  </button>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between bg-green-50 rounded-xl p-2">
+                      <button
+                        onClick={() => updateQuantity(product.id, getItemQuantity(product.id) - 1)}
+                        className="bg-white text-green-600 p-2 rounded-lg hover:bg-gray-50 transition-colors"
+                      >
+                        <Minus className="h-4 w-4" />
+                      </button>
+                      <div className="text-center">
+                        <div className="font-semibold text-green-800">
+                          {getItemQuantity(product.id)} units
+                        </div>
+                        <div className="text-xs text-green-600">
+                          {getItemQuantity(product.id) * 250}g total
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => updateQuantity(product.id, getItemQuantity(product.id) + 1)}
+                        className="bg-white text-green-600 p-2 rounded-lg hover:bg-gray-50 transition-colors"
+                      >
+                        <Plus className="h-4 w-4" />
+                      </button>
+                    </div>
+                    <div className="text-center text-sm text-gray-600">
+                      Total: LKR {product.price * getItemQuantity(product.id)}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Shopping Cart Sidebar */}
+        {isCartOpen && (
+          <div className="fixed inset-0 z-50 overflow-hidden">
+            <div className="absolute inset-0 bg-black bg-opacity-50" onClick={() => setIsCartOpen(false)}></div>
+            <div className="absolute right-0 top-0 h-full w-full max-w-md bg-white shadow-xl">
+              <div className="flex flex-col h-full">
+                <div className="flex items-center justify-between p-6 border-b">
+                  <h3 className="text-lg font-semibold text-gray-900">Shopping Cart</h3>
+                  <button
+                    onClick={() => setIsCartOpen(false)}
+                    className="text-gray-400 hover:text-gray-600"
+                  >
+                    ×
+                  </button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-6">
+                  {cart.length === 0 ? (
+                    <div className="text-center py-12">
+                      <ShoppingCart className="h-12 w-12 text-gray-300 mx-auto mb-4" />
+                      <p className="text-gray-500">Your cart is empty</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {cart.map((item) => (
+                        <div key={item.id} className="flex items-center space-x-4 bg-gray-50 rounded-xl p-4">
+                          <img
+                            src={item.image}
+                            alt={item.name}
+                            className="w-16 h-16 object-cover rounded-lg"
+                          />
+                          <div className="flex-1">
+                            <h4 className="font-semibold text-gray-900 text-sm">{item.name}</h4>
+                            <p className="text-green-600 font-bold">LKR {item.pricePerUnit} / 250g</p>
+                            <p className="text-xs text-gray-500">{item.totalWeight}g total</p>
+                            <p className="text-xs text-green-600 font-medium">
+                              Subtotal: LKR {item.pricePerUnit * item.quantity}
+                            </p>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            <button
+                              onClick={() => updateQuantity(item.id, item.quantity - 1)}
+                              className="bg-white text-gray-600 p-1 rounded hover:bg-gray-100"
+                            >
+                              <Minus className="h-3 w-3" />
+                            </button>
+                            <span className="font-semibold text-sm w-8 text-center">{item.quantity}</span>
+                            <button
+                              onClick={() => updateQuantity(item.id, item.quantity + 1)}
+                              className="bg-white text-gray-600 p-1 rounded hover:bg-gray-100"
+                            >
+                              <Plus className="h-3 w-3" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {cart.length > 0 && (
+                  <div className="border-t p-6 space-y-4">
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-center text-sm">
+                        <span className="text-gray-600">Total Weight:</span>
+                        <span className="font-semibold">{getTotalWeight()}g</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-lg font-semibold text-gray-900">Total:</span>
+                        <span className="text-2xl font-bold text-green-600">LKR {getCartTotal().toLocaleString()}</span>
+                      </div>
+                    </div>
+                    <button className="w-full bg-green-600 text-white py-4 px-6 rounded-xl font-semibold hover:bg-green-700 transition-colors">
+                      Proceed to Checkout
+                    </button>
+                    <p className="text-xs text-gray-500 text-center">
+                      Free delivery on orders over LKR 1,500
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Benefits Section */}
+        <div className="bg-white rounded-3xl p-8 shadow-lg">
+          <div className="text-center mb-8">
+            <h3 className="text-2xl font-bold text-gray-900 mb-4">Why Shop Individual Vegetables?</h3>
+            <p className="text-gray-600">Perfect for those who prefer to choose exactly what they want</p>
+          </div>
+          
+          <div className="grid md:grid-cols-3 gap-8">
+            <div className="text-center">
+              <div className="bg-green-100 rounded-full p-4 inline-flex items-center justify-center mb-4">
+                <Package className="h-8 w-8 text-green-600" />
+              </div>
+              <h4 className="font-semibold text-gray-900 mb-2">250g Minimum Orders</h4>
+              <p className="text-gray-600 text-sm">Practical packaging sizes for better handling and freshness</p>
+            </div>
+            <div className="text-center">
+              <div className="bg-orange-100 rounded-full p-4 inline-flex items-center justify-center mb-4">
+                <Leaf className="h-8 w-8 text-orange-600" />
+              </div>
+              <h4 className="font-semibold text-gray-900 mb-2">Market Prices</h4>
+              <p className="text-gray-600 text-sm">Fair pricing based on actual market rates per 250g</p>
+            </div>
+            <div className="text-center">
+              <div className="bg-blue-100 rounded-full p-4 inline-flex items-center justify-center mb-4">
+                <ShoppingCart className="h-8 w-8 text-blue-600" />
+              </div>
+              <h4 className="font-semibold text-gray-900 mb-2">Flexible Shopping</h4>
+              <p className="text-gray-600 text-sm">Order when you want, no subscription required</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+};
+
+export default ShoppingSection;

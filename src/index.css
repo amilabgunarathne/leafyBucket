@@ -1,0 +1,13 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Smooth scrolling for the entire page */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Offset for fixed header when scrolling to sections */
+section[id] {
+  scroll-margin-top: 80px;
+}
