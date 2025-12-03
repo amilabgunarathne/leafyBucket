@@ -1,4 +1,4 @@
-// Vegetable categorization and pricing system
+// Vegetble categorization and pricing system
 // Categories with value ratios: Root/Tuber (4) : Leafy (2) : Bushy/Fruit (3)
 
 import PricingService from '../services/pricingService';
