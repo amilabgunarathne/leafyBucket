@@ -28,15 +28,11 @@ const AuthPage = () => {
     setError('');
 
     if (isLogin) {
-      const success = await login(formData.email, formData.password);
+      const { success, error } = await login(formData.email, formData.password);
       if (success) {
         navigate(from, { replace: true });
       } else {
-        if (adminRequired) {
-          setError('Invalid credentials or insufficient permissions. Use admin@leafybucket.lk / admin123 for admin access.');
-        } else {
-          setError('Invalid email or password. Try demo@leafybucket.lk / demo123');
-        }
+        setError(error || 'Invalid credentials');
       }
     } else {
       if (!formData.name.trim()) {
@@ -44,11 +40,17 @@ const AuthPage = () => {
         return;
       }
 
-      const success = await signup(formData.email, formData.password, formData.name);
+      const { success, error, data } = await signup(formData.email, formData.password, formData.name);
       if (success) {
-        navigate('/subscription', { replace: true });
+        if (data?.session) {
+          navigate('/subscription', { replace: true });
+        } else {
+          // No session means email confirmation is required
+          setError('Account created! Please check your email to confirm your account.');
+          setFormData(prev => ({ ...prev, password: '' })); // Clear password
+        }
       } else {
-        setError('User already exists with this email');
+        setError(error || 'Sign up failed');
       }
     }
   };
@@ -62,14 +64,24 @@ const AuthPage = () => {
 
   const fillDemoCredentials = async () => {
     setIsLogin(true);
-    await login('demo@leafybucket.lk', 'demo123');
-    navigate(from, { replace: true });
+    setError('');
+    const { success, error } = await login('demo@leafybucket.lk', 'demo123');
+    if (success) {
+      navigate(from, { replace: true });
+    } else {
+      setError(error || 'Demo login failed');
+    }
   };
 
   const fillAdminCredentials = async () => {
     setIsLogin(true);
-    await login('admin@leafybucket.lk', 'admin123');
-    navigate('/admin', { replace: true });
+    setError('');
+    const { success, error } = await login('admin@leafybucket.lk', 'admin123');
+    if (success) {
+      navigate('/admin', { replace: true });
+    } else {
+      setError(error || 'Admin login failed');
+    }
   };
 
   return (

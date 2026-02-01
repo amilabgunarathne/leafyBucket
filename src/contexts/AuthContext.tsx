@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { supabase } from '../lib/supabase';
 
 interface User {
   id: string;
@@ -6,7 +7,7 @@ interface User {
   name: string;
   phone?: string;
   address?: string;
-  role: 'user' | 'admin'; // Add role field
+  role: 'user' | 'admin';
   subscription?: {
     plan: 'small' | 'medium' | 'large';
     status: 'active' | 'paused' | 'cancelled';
@@ -22,8 +23,9 @@ interface User {
 
 interface AuthContextType {
   user: User | null;
-  login: (email: string, password: string) => Promise<boolean>;
-  signup: (email: string, password: string, name: string) => Promise<boolean>;
+  login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  signup: (email: string, password: string, name: string) => Promise<{ success: boolean; error?: string; data?: any }>;
   logout: () => void;
   updateUser: (userData: Partial<User>) => void;
   isLoading: boolean;
@@ -44,126 +46,175 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Mock users database with admin accounts
-  const mockUsers = [
-    {
-      id: '1',
-      email: 'demo@leafybucket.lk',
-      password: 'demo123',
-      name: 'Demo User',
-      role: 'user' as const,
-      phone: '+94 77 123 4567',
-      address: 'Colombo, Sri Lanka',
-      subscription: {
-        plan: 'medium' as const,
-        status: 'active' as const,
-        nextDelivery: '2024-01-07',
-        customizations: {
-          excludedVegetables: ['karavila'],
-          removedVegetables: [],
-          addedVegetables: ['radish'],
-          deliveryDay: 'sunday'
-        }
-      }
-    },
-    {
-      id: '2',
-      email: 'admin@leafybucket.lk',
-      password: 'admin123',
-      name: 'Admin User',
-      role: 'admin' as const,
-      phone: '+94 77 999 8888',
-      address: 'Bandarawela, Sri Lanka'
-    },
-    {
-      id: '3',
-      email: 'superadmin@leafybucket.lk',
-      password: 'super123',
-      name: 'Super Admin',
-      role: 'admin' as const,
-      phone: '+94 77 000 1111',
-      address: 'Bandarawela, Sri Lanka'
+  // Helper to fetch full user profile and subscription
+  const fetchUserProfile = async (userId: string, email: string) => {
+    try {
+      // 1. Fetch Profile
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', userId)
+        .single();
+
+      if (profileError) throw profileError;
+
+      // 2. Fetch Subscription
+      const { data: subscription, error: subError } = await supabase
+        .from('subscriptions')
+        .select('*')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      // Construct User Object
+      const userData: User = {
+        id: userId,
+        email: email,
+        name: profile.full_name || email.split('@')[0],
+        phone: profile.phone || '',
+        address: profile.address || '',
+        role: profile.role || 'user',
+        subscription: subscription ? {
+          plan: subscription.plan,
+          status: subscription.status,
+          nextDelivery: subscription.next_delivery,
+          customizations: subscription.customizations || {
+            excludedVegetables: [],
+            removedVegetables: [],
+            addedVegetables: [],
+            deliveryDay: 'sunday'
+          }
+        } : undefined
+      };
+
+      setUser(userData);
+    } catch (error) {
+      console.error('Error fetching user profile:', error);
+      // Fallback for new users who might not have a profile trigger running yet? 
+      // Should be handled by DB trigger, but just in case:
+      setUser({
+        id: userId,
+        email: email,
+        name: 'User',
+        role: 'user'
+      });
+    } finally {
+      setIsLoading(false);
     }
-  ];
+  };
 
   useEffect(() => {
-    // Check for stored user session
-    const storedUser = localStorage.getItem('leafybucket_user');
-    if (storedUser) {
-      try {
-        const parsedUser = JSON.parse(storedUser);
-        // Ensure role exists (for backward compatibility)
-        if (!parsedUser.role) {
-          parsedUser.role = 'user';
-        }
-        setUser(parsedUser);
-      } catch (error) {
-        console.error('Error parsing stored user:', error);
-        localStorage.removeItem('leafybucket_user');
+    // Check active session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        fetchUserProfile(session.user.id, session.user.email!);
+      } else {
+        setIsLoading(false);
       }
-    }
-    setIsLoading(false);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        fetchUserProfile(session.user.id, session.user.email!);
+      } else {
+        setUser(null);
+        setIsLoading(false);
+      }
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
-  const login = async (email: string, password: string): Promise<boolean> => {
+  const login = async (email: string, password: string): Promise<{ success: boolean; error?: string }> => {
     setIsLoading(true);
-    
-    // Simulate API call delay
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    const foundUser = mockUsers.find(u => u.email === email && u.password === password);
-    
-    if (foundUser) {
-      const { password: _, ...userWithoutPassword } = foundUser;
-      setUser(userWithoutPassword);
-      localStorage.setItem('leafybucket_user', JSON.stringify(userWithoutPassword));
-      setIsLoading(false);
-      return true;
-    }
-    
-    setIsLoading(false);
-    return false;
-  };
-
-  const signup = async (email: string, password: string, name: string): Promise<boolean> => {
-    setIsLoading(true);
-    
-    // Simulate API call delay
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    // Check if user already exists
-    const existingUser = mockUsers.find(u => u.email === email);
-    if (existingUser) {
-      setIsLoading(false);
-      return false;
-    }
-    
-    // Create new user (always as regular user, not admin)
-    const newUser = {
-      id: Date.now().toString(),
+    const { error } = await supabase.auth.signInWithPassword({
       email,
-      name,
-      role: 'user' as const,
-      phone: '',
-      address: ''
-    };
-    
-    setUser(newUser);
-    localStorage.setItem('leafybucket_user', JSON.stringify(newUser));
-    setIsLoading(false);
-    return true;
+      password,
+    });
+
+    if (error) {
+      console.error('Login error:', error.message);
+      setIsLoading(false);
+      return { success: false, error: error.message };
+    }
+
+    return { success: true };
   };
 
-  const logout = () => {
+  const signup = async (email: string, password: string, name: string): Promise<{ success: boolean; error?: string }> => {
+    setIsLoading(true);
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: {
+          name: name,
+          role: 'user' // Default role
+        }
+      }
+    });
+
+    if (error) {
+      console.error('Signup error:', error.message);
+      setIsLoading(false);
+      return { success: false, error: error.message };
+    }
+
+    if (data.user) {
+      // Profile creation is handled by Supabase Trigger (in schema.sql)
+      return { success: true };
+    }
+
+    return { success: false, error: 'Sign up failed unexpectedly' };
+  };
+
+  const logout = async () => {
+    await supabase.auth.signOut();
     setUser(null);
-    localStorage.removeItem('leafybucket_user');
   };
 
-  const updateUser = (userData: Partial<User>) => {
-    if (user) {
-      const updatedUser = { ...user, ...userData };
-      setUser(updatedUser);
-      localStorage.setItem('leafybucket_user', JSON.stringify(updatedUser));
+  const updateUser = async (userData: Partial<User>) => {
+    if (!user) return;
+
+    try {
+      // Update local state optimistic
+      setUser({ ...user, ...userData });
+
+      // Update Profile Table
+      if (userData.name || userData.phone || userData.address) {
+        await supabase.from('profiles').update({
+          full_name: userData.name,
+          phone: userData.phone,
+          address: userData.address
+        }).eq('id', user.id);
+      }
+
+      // Update Subscription Table
+      if (userData.subscription) {
+        // Check if subscription exists first
+        const { data: existingSub } = await supabase
+          .from('subscriptions')
+          .select('id')
+          .eq('user_id', user.id)
+          .maybeSingle();
+
+        const subData = {
+          user_id: user.id,
+          plan: userData.subscription.plan,
+          status: userData.subscription.status,
+          next_delivery: userData.subscription.nextDelivery,
+          customizations: userData.subscription.customizations
+        };
+
+        if (existingSub) {
+          await supabase.from('subscriptions').update(subData).eq('user_id', user.id);
+        } else {
+          // Create new subscription if not exists
+          await supabase.from('subscriptions').insert(subData);
+        }
+      }
+    } catch (error) {
+      console.error('Error updating user data:', error);
+      // Ideally revert local state here on error
     }
   };
 

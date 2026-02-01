@@ -1,3 +1,5 @@
+import { supabase } from '../lib/supabase';
+
 // Vegetable management service for dynamic CRUD operations
 export interface Vegetable {
   id: string;
@@ -20,6 +22,7 @@ export interface Vegetable {
 class VegetableService {
   private static instance: VegetableService;
   private vegetables: Map<string, Vegetable> = new Map();
+  private initialized: boolean = false;
 
   static getInstance(): VegetableService {
     if (!VegetableService.instance) {
@@ -28,47 +31,64 @@ class VegetableService {
     return VegetableService.instance;
   }
 
-  // Initialize with default vegetables
+  // Initialize with vegetables from Supabase
   async initialize() {
-    // Always initialize pricing service first
-    const pricingService = await import('./pricingService');
-    await pricingService.default.getInstance().initialize();
-    
-    // Load from localStorage first
-    const stored = localStorage.getItem('admin_vegetables');
-    if (stored) {
-      try {
-        const parsed = JSON.parse(stored);
-        Object.entries(parsed).forEach(([id, veg]) => {
-          this.vegetables.set(id, veg as Vegetable);
-        });
-        console.log('Loaded vegetables from storage:', this.vegetables.size);
-        return;
-      } catch (error) {
-        console.error('Error loading stored vegetables:', error);
-      }
-    }
+    if (this.initialized) return;
 
-    // If no stored data, initialize with defaults
     try {
-      const { vegetables: defaultVegetables } = await import('../data/vegetables');
-      console.log('Loading default vegetables:', defaultVegetables.length);
-      defaultVegetables.forEach(veg => {
-        const vegetable: Vegetable = {
-          ...veg,
-          isAvailable: true,
-          nutritionScore: 8, // Default nutrition score
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        };
-        this.vegetables.set(veg.id, vegetable);
-      });
-      
-      this.saveVegetables();
-      console.log('Initialized vegetables:', this.vegetables.size);
+      console.log('Initializing VegetableService with Supabase...');
+      // Initialize pricing service (if needed, though dependencies should be handled carefully)
+      const pricingService = await import('./pricingService');
+      await pricingService.default.getInstance().initialize();
+
+      const { data, error } = await supabase
+        .from('vegetables')
+        .select('*');
+
+      if (error) {
+        throw error;
+      }
+
+      if (data) {
+        this.vegetables.clear();
+        data.forEach((row: any) => {
+          // Map DB columns to Frontend interface if needed (snake_case to camelCase)
+          // Our schema.sql used snake_case for some fields like market_price_per_250g
+          // But here we need to ensure we map them correctly
+          const vegetable: Vegetable = {
+            id: row.id,
+            name: row.name,
+            category: row.category,
+            baseValue: row.base_value,
+            typicalWeight: row.typical_weight,
+            marketPricePer250g: row.market_price_per_250g,
+            description: row.description,
+            season: row.season,
+            benefits: row.benefits,
+            image: row.image,
+            weightPerValuePoint: row.weight_per_value_point,
+            isAvailable: row.is_available,
+            nutritionScore: row.nutrition_score,
+            createdAt: row.created_at,
+            updatedAt: row.updated_at
+          };
+          this.vegetables.set(vegetable.id, vegetable);
+        });
+        console.log('VegetableService: Loaded', this.vegetables.size, 'vegetables from Supabase');
+        this.notifyListeners();
+      }
+
+      this.initialized = true;
     } catch (error) {
       console.error('Error initializing vegetables:', error);
     }
+  }
+
+  private notifyListeners(vegetableId?: string) {
+    // Trigger custom event for React components
+    window.dispatchEvent(new CustomEvent('vegetablesUpdated', {
+      detail: { vegetableId }
+    }));
   }
 
   // Get all vegetables (available and unavailable)
@@ -78,17 +98,13 @@ class VegetableService {
 
   // Get only available vegetables
   getActiveVegetables(): Vegetable[] {
-    const activeVegetables = Array.from(this.vegetables.values()).filter(veg => veg.isAvailable);
-    console.log('VegetableService: Found', activeVegetables.length, 'active vegetables out of', this.vegetables.size, 'total');
-    return activeVegetables;
+    return Array.from(this.vegetables.values()).filter(veg => veg.isAvailable);
   }
 
   // Get vegetables by category
   getVegetablesByCategory(category: 'root' | 'leafy' | 'bushy', includeInactive: boolean = false): Vegetable[] {
     const vegetables = includeInactive ? this.getAllVegetables() : this.getActiveVegetables();
-    const categoryVegetables = vegetables.filter(veg => veg.category === category);
-    console.log(`VegetableService: Found ${categoryVegetables.length} vegetables in category ${category} (includeInactive: ${includeInactive})`);
-    return categoryVegetables;
+    return vegetables.filter(veg => veg.category === category);
   }
 
   // Get single vegetable
@@ -97,81 +113,126 @@ class VegetableService {
   }
 
   // Add new vegetable
-  createVegetable(vegetableData: Omit<Vegetable, 'id' | 'createdAt' | 'updatedAt'>): Promise<Vegetable> {
-    return new Promise((resolve) => {
-      const id = this.generateId(vegetableData.name);
-      const vegetable: Vegetable = {
-        ...vegetableData,
-        id,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
-      
-      this.vegetables.set(id, vegetable);
-      this.saveVegetables();
-      resolve(vegetable);
-    });
+  async createVegetable(vegetableData: Omit<Vegetable, 'id' | 'createdAt' | 'updatedAt'>): Promise<Vegetable> {
+    const id = this.generateId(vegetableData.name);
+    const now = new Date().toISOString();
+
+    const dbPayload = {
+      id,
+      name: vegetableData.name,
+      category: vegetableData.category,
+      base_value: vegetableData.baseValue,
+      typical_weight: vegetableData.typicalWeight,
+      market_price_per_250g: vegetableData.marketPricePer250g,
+      description: vegetableData.description,
+      season: vegetableData.season,
+      benefits: vegetableData.benefits,
+      image: vegetableData.image,
+      weight_per_value_point: vegetableData.weightPerValuePoint,
+      is_available: vegetableData.isAvailable,
+      nutrition_score: vegetableData.nutritionScore,
+      // created_at and updated_at handled by DB defaults, but we can send if needed
+    };
+
+    const { data, error } = await supabase
+      .from('vegetables')
+      .insert(dbPayload)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error creating vegetable:', error);
+      throw error;
+    }
+
+    // Update local cache
+    const newVegetable: Vegetable = {
+      ...vegetableData,
+      id,
+      createdAt: data.created_at || now,
+      updatedAt: data.updated_at || now
+    };
+
+    this.vegetables.set(id, newVegetable);
+    this.notifyListeners(id);
+    return newVegetable;
   }
 
   // Update existing vegetable
-  updateVegetable(id: string, updates: Partial<Omit<Vegetable, 'id' | 'createdAt'>>): Promise<Vegetable> {
-    return new Promise((resolve, reject) => {
-      const existing = this.vegetables.get(id);
-      if (!existing) {
-        reject(new Error('Vegetable not found'));
-        return;
-      }
+  async updateVegetable(id: string, updates: Partial<Omit<Vegetable, 'id' | 'createdAt'>>): Promise<Vegetable> {
+    const existing = this.vegetables.get(id);
+    if (!existing) {
+      throw new Error('Vegetable not found');
+    }
 
-      const updated: Vegetable = {
-        ...existing,
-        ...updates,
-        updatedAt: new Date().toISOString()
-      };
+    // Map updates to DB columns
+    const dbUpdates: any = {};
+    if (updates.name !== undefined) dbUpdates.name = updates.name;
+    if (updates.category !== undefined) dbUpdates.category = updates.category;
+    if (updates.baseValue !== undefined) dbUpdates.base_value = updates.baseValue;
+    if (updates.typicalWeight !== undefined) dbUpdates.typical_weight = updates.typicalWeight;
+    if (updates.marketPricePer250g !== undefined) dbUpdates.market_price_per_250g = updates.marketPricePer250g;
+    if (updates.description !== undefined) dbUpdates.description = updates.description;
+    if (updates.season !== undefined) dbUpdates.season = updates.season;
+    if (updates.benefits !== undefined) dbUpdates.benefits = updates.benefits;
+    if (updates.image !== undefined) dbUpdates.image = updates.image;
+    if (updates.weightPerValuePoint !== undefined) dbUpdates.weight_per_value_point = updates.weightPerValuePoint;
+    if (updates.isAvailable !== undefined) dbUpdates.is_available = updates.isAvailable;
+    if (updates.nutritionScore !== undefined) dbUpdates.nutrition_score = updates.nutritionScore;
 
-      this.vegetables.set(id, updated);
-      this.saveVegetables();
-      resolve(updated);
-    });
+    dbUpdates.updated_at = new Date().toISOString();
+
+    const { data, error } = await supabase
+      .from('vegetables')
+      .update(dbUpdates)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error updating vegetable:', error);
+      throw error;
+    }
+
+    const updatedVegetable: Vegetable = {
+      ...existing,
+      ...updates,
+      updatedAt: data.updated_at
+    };
+
+    this.vegetables.set(id, updatedVegetable);
+    this.notifyListeners(id);
+    return updatedVegetable;
   }
 
   // Toggle vegetable availability
-  toggleVegetableStatus(id: string): boolean {
+  async toggleVegetableStatus(id: string): Promise<boolean> {
     const vegetable = this.vegetables.get(id);
     if (!vegetable) return false;
 
-    const updatedVegetable = {
-      ...vegetable,
-      isAvailable: !vegetable.isAvailable,
-      updatedAt: new Date().toISOString()
-    };
-    
-    this.vegetables.set(id, updatedVegetable);
-    this.saveVegetables();
-    
-    console.log(`Toggled ${id} availability to:`, updatedVegetable.isAvailable);
-    
-    // Trigger a storage event to notify other components
-    window.dispatchEvent(new StorageEvent('storage', {
-      key: 'admin_vegetables',
-      newValue: JSON.stringify(Object.fromEntries(this.vegetables)),
-      oldValue: null
-    }));
-    
-    // Also trigger a custom event for immediate updates
-    window.dispatchEvent(new CustomEvent('vegetablesUpdated', {
-      detail: { vegetableId: id, isAvailable: updatedVegetable.isAvailable }
-    }));
-    
-    return true;
+    try {
+      await this.updateVegetable(id, { isAvailable: !vegetable.isAvailable });
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
 
   // Delete vegetable (permanent removal)
-  deleteVegetable(id: string): boolean {
-    const deleted = this.vegetables.delete(id);
-    if (deleted) {
-      this.saveVegetables();
+  async deleteVegetable(id: string): Promise<boolean> {
+    const { error } = await supabase
+      .from('vegetables')
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      console.error('Error deleting vegetable:', error);
+      return false;
     }
-    return deleted;
+
+    this.vegetables.delete(id);
+    this.notifyListeners(id);
+    return true;
   }
 
   // Generate unique ID from name
@@ -179,56 +240,23 @@ class VegetableService {
     const base = name.toLowerCase()
       .replace(/[^a-z0-9]/g, '')
       .substring(0, 20);
-    
+
     let id = base;
     let counter = 1;
-    
+
     while (this.vegetables.has(id)) {
       id = `${base}${counter}`;
       counter++;
     }
-    
+
     return id;
-  }
-
-  // Save to localStorage
-  private saveVegetables(): void {
-    try {
-      const vegetablesObject = Object.fromEntries(this.vegetables);
-      localStorage.setItem('admin_vegetables', JSON.stringify(vegetablesObject));
-    } catch (error) {
-      console.error('Error saving vegetables:', error);
-    }
-  }
-
-  // Export vegetables for backup
-  exportVegetables(): string {
-    return JSON.stringify(Array.from(this.vegetables.values()), null, 2);
-  }
-
-  // Import vegetables from backup
-  importVegetables(jsonData: string): boolean {
-    try {
-      const vegetables = JSON.parse(jsonData) as Vegetable[];
-      this.vegetables.clear();
-      
-      vegetables.forEach(veg => {
-        this.vegetables.set(veg.id, veg);
-      });
-      
-      this.saveVegetables();
-      return true;
-    } catch (error) {
-      console.error('Error importing vegetables:', error);
-      return false;
-    }
   }
 
   // Get statistics
   getStatistics() {
     const all = this.getAllVegetables();
     const active = this.getActiveVegetables();
-    
+
     return {
       total: all.length,
       active: active.length,
