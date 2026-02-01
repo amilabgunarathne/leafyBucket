@@ -14,11 +14,11 @@ const AuthPage = () => {
     address: ''
   });
   const [error, setError] = useState('');
-  
+
   const { login, signup, isLoading } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  
+
   // Get the intended destination or default to subscription page
   const from = location.state?.from?.pathname || '/subscription';
   const adminRequired = location.state?.adminRequired || false;
@@ -43,7 +43,7 @@ const AuthPage = () => {
         setError('Name is required');
         return;
       }
-      
+
       const success = await signup(formData.email, formData.password, formData.name);
       if (success) {
         navigate('/subscription', { replace: true });
@@ -60,22 +60,16 @@ const AuthPage = () => {
     }));
   };
 
-  const fillDemoCredentials = () => {
-    setFormData(prev => ({
-      ...prev,
-      email: 'demo@leafybucket.lk',
-      password: 'demo123'
-    }));
+  const fillDemoCredentials = async () => {
     setIsLogin(true);
+    await login('demo@leafybucket.lk', 'demo123');
+    navigate(from, { replace: true });
   };
 
-  const fillAdminCredentials = () => {
-    setFormData(prev => ({
-      ...prev,
-      email: 'admin@leafybucket.lk',
-      password: 'admin123'
-    }));
+  const fillAdminCredentials = async () => {
     setIsLogin(true);
+    await login('admin@leafybucket.lk', 'admin123');
+    navigate('/admin', { replace: true });
   };
 
   return (
@@ -84,30 +78,30 @@ const AuthPage = () => {
         <div className="bg-white rounded-3xl shadow-xl p-8">
           {/* Header */}
           <div className="text-center mb-8">
-            <Link 
-              to="/" 
+            <Link
+              to="/"
               className="inline-flex items-center space-x-2 text-green-600 hover:text-green-700 transition-colors mb-6"
             >
               <ArrowLeft className="h-5 w-5" />
               <span>Back to Home</span>
             </Link>
-            
+
             <div className="flex items-center justify-center mb-4">
-              <img 
-                src="/full_logo_light-removebg-preview.png" 
-                alt="Leafy Bucket Logo" 
+              <img
+                src="/full_logo_light-removebg-preview.png"
+                alt="Leafy Bucket Logo"
                 className="h-16 w-auto object-contain"
               />
             </div>
-            
+
             <h2 className="text-xl font-semibold text-gray-900 mb-2">
               {adminRequired ? 'Admin Access Required' : (isLogin ? 'Welcome Back!' : 'Join Leafy Bucket')}
             </h2>
             <p className="text-gray-600">
-              {adminRequired 
+              {adminRequired
                 ? 'Please sign in with admin credentials to access the admin panel'
-                : (isLogin 
-                  ? 'Sign in to manage your fresh vegetable subscription' 
+                : (isLogin
+                  ? 'Sign in to manage your fresh vegetable subscription'
                   : 'Start your journey to healthier eating today'
                 )
               }
@@ -139,16 +133,16 @@ const AuthPage = () => {
                 <div className="space-y-2">
                   <button
                     onClick={fillDemoCredentials}
-                    className="w-full text-xs bg-blue-600 text-white px-3 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+                    className="w-full text-xs bg-blue-600 text-white px-3 py-2 rounded-lg hover:bg-blue-700 transition-colors flex items-center justify-center space-x-1"
                   >
-                    Regular User: demo@leafybucket.lk / demo123
+                    <span>Instant Login as Regular User</span>
                   </button>
                   <button
                     onClick={fillAdminCredentials}
                     className="w-full text-xs bg-orange-600 text-white px-3 py-2 rounded-lg hover:bg-orange-700 transition-colors flex items-center justify-center space-x-1"
                   >
                     <Shield className="h-3 w-3" />
-                    <span>Admin: admin@leafybucket.lk / admin123</span>
+                    <span>Instant Login as Admin</span>
                   </button>
                 </div>
               </div>

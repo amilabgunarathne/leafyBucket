@@ -59,7 +59,7 @@ const Hero = () => {
               </div>
               <div className="flex items-center space-x-2 text-gray-600">
                 <Leaf className="h-5 w-5 text-green-600" />
-                <span className="text-sm">100% organic</span>
+                <span className="text-sm">100% fresh</span>
               </div>
             </div>
           </div>

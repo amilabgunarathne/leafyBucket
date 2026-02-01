@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ArrowLeft, Package, Settings, User, Edit3, MapPin, Phone, Mail, Pause, Play, Check, Calendar, Clock, Truck, Leaf } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import ConfirmationModal from '../components/ConfirmationModal';
 
 const SubscriptionPage = () => {
   const { user, updateUser, logout } = useAuth();
@@ -13,6 +14,9 @@ const SubscriptionPage = () => {
     phone: user?.phone || '',
     address: user?.address || ''
   });
+
+  const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
+  const [pendingAction, setPendingAction] = useState<'pause' | 'resume' | null>(null);
 
   // Redirect if not logged in
   React.useEffect(() => {
@@ -33,7 +37,7 @@ const SubscriptionPage = () => {
   const handleStartSubscription = (plan: 'small' | 'medium' | 'large') => {
     const nextDelivery = new Date();
     nextDelivery.setDate(nextDelivery.getDate() + 7);
-    
+
     updateUser({
       subscription: {
         plan,
@@ -52,12 +56,21 @@ const SubscriptionPage = () => {
 
   const toggleSubscriptionStatus = () => {
     if (user.subscription) {
+      const isPaused = user.subscription.status === 'paused';
+      setPendingAction(isPaused ? 'resume' : 'pause');
+      setIsConfirmModalOpen(true);
+    }
+  };
+
+  const handleConfirmStatusChange = () => {
+    if (user.subscription && pendingAction) {
       updateUser({
         subscription: {
           ...user.subscription,
-          status: user.subscription.status === 'active' ? 'paused' : 'active'
+          status: pendingAction === 'pause' ? 'paused' : 'active'
         }
       });
+      setPendingAction(null);
     }
   };
 
@@ -111,8 +124,8 @@ const SubscriptionPage = () => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-4">
-              <Link 
-                to="/" 
+              <Link
+                to="/"
                 className="flex items-center space-x-2 text-green-600 hover:text-green-700 transition-colors"
               >
                 <ArrowLeft className="h-5 w-5" />
@@ -121,7 +134,7 @@ const SubscriptionPage = () => {
               <div className="h-6 w-px bg-gray-300"></div>
               <h1 className="text-2xl font-bold text-gray-900">My Account</h1>
             </div>
-            
+
             <div className="flex items-center space-x-4">
               <div className="text-right">
                 <div className="text-sm text-gray-600">Welcome back,</div>
@@ -146,19 +159,17 @@ const SubscriptionPage = () => {
               <nav className="space-y-2">
                 <button
                   onClick={() => setActiveTab('overview')}
-                  className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-left transition-colors ${
-                    activeTab === 'overview' ? 'bg-green-100 text-green-800' : 'text-gray-600 hover:bg-gray-100'
-                  }`}
+                  className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-left transition-colors ${activeTab === 'overview' ? 'bg-green-100 text-green-800' : 'text-gray-600 hover:bg-gray-100'
+                    }`}
                 >
                   <Package className="h-5 w-5" />
                   <span>Overview</span>
                 </button>
-                
+
                 <button
                   onClick={() => setActiveTab('profile')}
-                  className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-left transition-colors ${
-                    activeTab === 'profile' ? 'bg-green-100 text-green-800' : 'text-gray-600 hover:bg-gray-100'
-                  }`}
+                  className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-left transition-colors ${activeTab === 'profile' ? 'bg-green-100 text-green-800' : 'text-gray-600 hover:bg-gray-100'
+                    }`}
                 >
                   <User className="h-5 w-5" />
                   <span>Profile</span>
@@ -193,12 +204,11 @@ const SubscriptionPage = () => {
                       <h2 className="text-3xl font-bold text-gray-900 mb-4">Choose Your Leafy Bucket Plan</h2>
                       <p className="text-gray-600">Start your journey to healthier eating with fresh, organic vegetables delivered weekly</p>
                     </div>
-                    
+
                     <div className="grid md:grid-cols-3 gap-6">
                       {plans.map((plan) => (
-                        <div key={plan.id} className={`border-2 rounded-2xl p-6 transition-all hover:shadow-lg ${
-                          plan.id === 'medium' ? 'border-green-600 bg-green-50' : 'border-gray-200'
-                        }`}>
+                        <div key={plan.id} className={`border-2 rounded-2xl p-6 transition-all hover:shadow-lg ${plan.id === 'medium' ? 'border-green-600 bg-green-50' : 'border-gray-200'
+                          }`}>
                           {plan.id === 'medium' && (
                             <div className="text-center mb-4">
                               <span className="bg-green-600 text-white px-3 py-1 rounded-full text-sm font-semibold">
@@ -206,7 +216,7 @@ const SubscriptionPage = () => {
                               </span>
                             </div>
                           )}
-                          
+
                           <div className="text-center mb-6">
                             <h3 className="text-xl font-bold text-gray-900 mb-2">{plan.name}</h3>
                             <p className="text-gray-600 mb-4">{plan.description}</p>
@@ -215,7 +225,7 @@ const SubscriptionPage = () => {
                             </div>
                             <div className="text-sm text-gray-600">per month</div>
                           </div>
-                          
+
                           <div className="space-y-3 mb-6">
                             <div className="flex items-center space-x-2">
                               <Check className="h-4 w-4 text-green-600" />
@@ -234,14 +244,13 @@ const SubscriptionPage = () => {
                               <span className="text-sm">Free delivery</span>
                             </div>
                           </div>
-                          
+
                           <button
                             onClick={() => handleStartSubscription(plan.id as 'small' | 'medium' | 'large')}
-                            className={`w-full py-3 px-6 rounded-xl font-semibold transition-colors ${
-                              plan.id === 'medium'
+                            className={`w-full py-3 px-6 rounded-xl font-semibold transition-colors ${plan.id === 'medium'
                                 ? 'bg-green-600 text-white hover:bg-green-700'
                                 : 'bg-gray-100 text-gray-800 hover:bg-gray-200'
-                            }`}
+                              }`}
                           >
                             Start Subscription
                           </button>
@@ -256,15 +265,14 @@ const SubscriptionPage = () => {
                     <div className="bg-white rounded-3xl shadow-lg p-8">
                       <div className="flex items-center justify-between mb-6">
                         <h2 className="text-2xl font-bold text-gray-900">Your Subscription</h2>
-                        <div className={`px-4 py-2 rounded-full text-sm font-semibold ${
-                          user.subscription.status === 'active' 
-                            ? 'bg-green-100 text-green-800' 
+                        <div className={`px-4 py-2 rounded-full text-sm font-semibold ${user.subscription.status === 'active'
+                            ? 'bg-green-100 text-green-800'
                             : 'bg-yellow-100 text-yellow-800'
-                        }`}>
+                          }`}>
                           {user.subscription.status === 'active' ? 'Active' : 'Paused'}
                         </div>
                       </div>
-                      
+
                       <div className="grid md:grid-cols-2 gap-8">
                         <div>
                           <h3 className="text-lg font-semibold text-gray-900 mb-4">{currentPlan?.name}</h3>
@@ -289,15 +297,14 @@ const SubscriptionPage = () => {
                             </div>
                           </div>
                         </div>
-                        
+
                         <div className="space-y-4">
                           <button
                             onClick={toggleSubscriptionStatus}
-                            className={`w-full flex items-center justify-center space-x-2 py-3 px-6 rounded-xl font-semibold transition-colors ${
-                              user.subscription.status === 'active'
+                            className={`w-full flex items-center justify-center space-x-2 py-3 px-6 rounded-xl font-semibold transition-colors ${user.subscription.status === 'active'
                                 ? 'bg-yellow-100 text-yellow-800 hover:bg-yellow-200'
                                 : 'bg-green-100 text-green-800 hover:bg-green-200'
-                            }`}
+                              }`}
                           >
                             {user.subscription.status === 'active' ? (
                               <>
@@ -311,7 +318,7 @@ const SubscriptionPage = () => {
                               </>
                             )}
                           </button>
-                          
+
                           <Link
                             to="/customize"
                             className="w-full flex items-center justify-center space-x-2 py-3 px-6 rounded-xl font-semibold bg-green-600 text-white hover:bg-green-700 transition-colors"
@@ -330,10 +337,10 @@ const SubscriptionPage = () => {
                         <div className="text-center">
                           <Calendar className="h-8 w-8 text-green-600 mx-auto mb-2" />
                           <div className="font-semibold text-gray-900">
-                            {new Date(user.subscription.nextDelivery).toLocaleDateString('en-US', { 
-                              weekday: 'long', 
-                              month: 'long', 
-                              day: 'numeric' 
+                            {new Date(user.subscription.nextDelivery).toLocaleDateString('en-US', {
+                              weekday: 'long',
+                              month: 'long',
+                              day: 'numeric'
                             })}
                           </div>
                           <div className="text-sm text-gray-600">Delivery Date</div>
@@ -363,7 +370,7 @@ const SubscriptionPage = () => {
                           <Settings className="h-4 w-4" />
                         </Link>
                       </div>
-                      
+
                       <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
                         {vegetables.slice(0, currentPlan?.vegetables || 7).map((veg) => (
                           <div key={veg.id} className="flex items-center justify-between p-4 bg-green-50 rounded-xl">
@@ -378,7 +385,7 @@ const SubscriptionPage = () => {
 
                       <div className="mt-6 p-4 bg-blue-50 border-2 border-blue-200 rounded-xl">
                         <p className="text-sm text-blue-800">
-                          <strong>Fixed Pricing:</strong> Your monthly price stays at LKR {currentPlan?.price.toLocaleString()}. 
+                          <strong>Fixed Pricing:</strong> Your monthly price stays at LKR {currentPlan?.price.toLocaleString()}.
                           We adjust weekly quantities based on market conditions to maintain quality and value.
                         </p>
                       </div>
@@ -387,7 +394,7 @@ const SubscriptionPage = () => {
                     {/* Billing Summary */}
                     <div className="bg-white rounded-3xl shadow-lg p-8">
                       <h3 className="text-xl font-bold text-gray-900 mb-6">Billing Summary</h3>
-                      
+
                       <div className="grid md:grid-cols-2 gap-8">
                         <div>
                           <div className="bg-green-50 border-2 border-green-200 rounded-2xl p-6">
@@ -443,7 +450,7 @@ const SubscriptionPage = () => {
                     <span>{isEditingProfile ? 'Cancel' : 'Edit'}</span>
                   </button>
                 </div>
-                
+
                 {isEditingProfile ? (
                   <div className="space-y-6">
                     <div>
@@ -455,7 +462,7 @@ const SubscriptionPage = () => {
                         className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent"
                       />
                     </div>
-                    
+
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">Phone Number</label>
                       <input
@@ -466,7 +473,7 @@ const SubscriptionPage = () => {
                         placeholder="+94 77 123 4567"
                       />
                     </div>
-                    
+
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">Delivery Address</label>
                       <textarea
@@ -477,7 +484,7 @@ const SubscriptionPage = () => {
                         placeholder="Enter your full delivery address including street, city, and postal code"
                       />
                     </div>
-                    
+
                     <div className="flex space-x-4">
                       <button
                         onClick={handleProfileUpdate}
@@ -511,7 +518,7 @@ const SubscriptionPage = () => {
                             <div className="font-medium text-gray-900">{user.name}</div>
                           </div>
                         </div>
-                        
+
                         <div className="flex items-center space-x-3">
                           <Mail className="h-5 w-5 text-gray-600" />
                           <div>
@@ -520,7 +527,7 @@ const SubscriptionPage = () => {
                           </div>
                         </div>
                       </div>
-                      
+
                       <div className="space-y-4">
                         <div className="flex items-center space-x-3">
                           <Phone className="h-5 w-5 text-gray-600" />
@@ -529,7 +536,7 @@ const SubscriptionPage = () => {
                             <div className="font-medium text-gray-900">{user.phone || 'Not provided'}</div>
                           </div>
                         </div>
-                        
+
                         <div className="flex items-start space-x-3">
                           <MapPin className="h-5 w-5 text-gray-600 mt-0.5" />
                           <div>
@@ -554,6 +561,24 @@ const SubscriptionPage = () => {
           </div>
         </div>
       </div>
+
+      <ConfirmationModal
+        isOpen={isConfirmModalOpen}
+        onClose={() => {
+          setIsConfirmModalOpen(false);
+          setPendingAction(null);
+        }}
+        onConfirm={handleConfirmStatusChange}
+        title={pendingAction === 'pause' ? 'Pause Subscription?' : 'Resume Subscription?'}
+        message={
+          pendingAction === 'pause'
+            ? 'Are you sure you want to pause your subscription? You will not receive any vegetable boxes until you resume.'
+            : 'Are you sure you want to resume your subscription? Your vegetable deliveries will restart from the next scheduled date.'
+        }
+        confirmText={pendingAction === 'pause' ? 'Yes, Pause It' : 'Yes, Resume It'}
+        cancelText="No, Keep It"
+        isDangerous={pendingAction === 'pause'}
+      />
     </div>
   );
 };
