@@ -1,11 +1,21 @@
 import React from 'react';
 import { ArrowLeft, Star, Leaf, MapPin, Calendar } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { getActiveVegetables } from '../data/vegetables';
+import VegetableService from '../services/vegetableService';
+import { Vegetable } from '../data/vegetables';
 
 const ProductsPage = () => {
   // Get active vegetables from the admin-managed list
-  const vegetables = getActiveVegetables();
+  const [vegetables, setVegetables] = React.useState<Vegetable[]>([]);
+  const vegetableService = VegetableService.getInstance();
+
+  React.useEffect(() => {
+    const fetchVegetables = async () => {
+      await vegetableService.initialize();
+      setVegetables(vegetableService.getActiveVegetables());
+    };
+    fetchVegetables();
+  }, []);
 
   const seasonalHighlights = [
     {
@@ -26,14 +36,14 @@ const ProductsPage = () => {
       <section className="bg-gradient-to-br from-green-50 via-white to-orange-50 py-20">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center space-y-6 mb-12">
-            <Link 
-              to="/" 
+            <Link
+              to="/"
               className="inline-flex items-center space-x-2 text-green-600 hover:text-green-700 transition-colors mb-4"
             >
               <ArrowLeft className="h-5 w-5" />
               <span>Back to Home</span>
             </Link>
-            
+
             <h1 className="text-5xl lg:text-6xl font-bold text-gray-900 leading-tight">
               What's in Your
               <span className="text-green-600"> Leafy Bucket</span>
@@ -89,7 +99,7 @@ const ProductsPage = () => {
       <section className="py-16 bg-gray-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <h2 className="text-3xl font-bold text-gray-900 text-center mb-12">Our Complete Vegetable Selection</h2>
-          
+
           <div className="grid md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 mb-12">
             {vegetables.map((vegetable, index) => (
               <div key={index} className="bg-white rounded-2xl overflow-hidden shadow-lg hover:shadow-xl transition-all duration-300 group">
@@ -109,15 +119,15 @@ const ProductsPage = () => {
                       ))}
                     </div>
                   </div>
-                  
+
                   <p className="text-gray-600 text-sm leading-relaxed mb-4">{vegetable.description}</p>
-                  
+
                   <div className="space-y-3">
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-gray-500">Season:</span>
                       <span className="font-medium text-green-600">{vegetable.season}</span>
                     </div>
-                    
+
                     <div>
                       <span className="text-gray-500 text-sm block mb-2">Health Benefits:</span>
                       <div className="flex flex-wrap gap-1">
@@ -143,7 +153,7 @@ const ProductsPage = () => {
           <p className="text-green-100 text-lg mb-8 max-w-3xl mx-auto">
             Our vegetables are grown in the cool, fertile climate of Bandarawela, where traditional farming methods meet organic practices. The high altitude and rich soil create perfect conditions for nutrient-dense vegetables with authentic Sri Lankan flavors.
           </p>
-          
+
           <div className="grid md:grid-cols-3 gap-8 mb-8">
             <div className="text-center">
               <div className="text-3xl font-bold mb-2">1,200m</div>
@@ -158,15 +168,15 @@ const ProductsPage = () => {
               <div className="text-green-100">Organic Certified</div>
             </div>
           </div>
-          
+
           <div className="space-y-4 sm:space-y-0 sm:space-x-4 sm:flex sm:justify-center">
-            <Link 
+            <Link
               to="/customize"
               className="inline-block bg-white text-green-600 px-8 py-3 rounded-full font-semibold hover:bg-gray-100 transition-colors"
             >
               Customize Your Leafy Bucket
             </Link>
-            <Link 
+            <Link
               to="/"
               className="inline-block border-2 border-white text-white px-8 py-3 rounded-full font-semibold hover:bg-white hover:text-green-600 transition-colors"
             >

@@ -24,7 +24,6 @@ interface User {
 interface AuthContextType {
   user: User | null;
   login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
-  login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   signup: (email: string, password: string, name: string) => Promise<{ success: boolean; error?: string; data?: any }>;
   logout: () => void;
   updateUser: (userData: Partial<User>) => void;
@@ -89,12 +88,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(userData);
     } catch (error) {
       console.error('Error fetching user profile:', error);
-      // Fallback for new users who might not have a profile trigger running yet? 
-      // Should be handled by DB trigger, but just in case:
+
+      // Fallback: Try to get name from session metadata if available, otherwise email
+      let fallbackName = 'User';
+      const { data } = await supabase.auth.getUser();
+      if (data.user?.user_metadata?.name) {
+        fallbackName = data.user.user_metadata.name;
+      } else if (email) {
+        fallbackName = email.split('@')[0];
+      }
+
       setUser({
         id: userId,
         email: email,
-        name: 'User',
+        name: fallbackName,
         role: 'user'
       });
     } finally {
@@ -140,7 +147,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return { success: true };
   };
 
-  const signup = async (email: string, password: string, name: string): Promise<{ success: boolean; error?: string }> => {
+  const signup = async (email: string, password: string, name: string): Promise<{ success: boolean; error?: string; data?: any }> => {
     setIsLoading(true);
     const { data, error } = await supabase.auth.signUp({
       email,
@@ -159,12 +166,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { success: false, error: error.message };
     }
 
-    if (data.user) {
-      // Profile creation is handled by Supabase Trigger (in schema.sql)
-      return { success: true };
-    }
-
-    return { success: false, error: 'Sign up failed unexpectedly' };
+    // Success response always returns data, but session might be null if email confirmation is on
+    setIsLoading(false);
+    return { success: true, data };
   };
 
   const logout = async () => {

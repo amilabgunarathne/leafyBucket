@@ -13,7 +13,9 @@ const AuthPage = () => {
     phone: '',
     address: ''
   });
+
   const [error, setError] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
 
   const { login, signup, isLoading } = useAuth();
   const navigate = useNavigate();
@@ -26,6 +28,7 @@ const AuthPage = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setSuccessMessage('');
 
     if (isLogin) {
       const { success, error } = await login(formData.email, formData.password);
@@ -46,7 +49,7 @@ const AuthPage = () => {
           navigate('/subscription', { replace: true });
         } else {
           // No session means email confirmation is required
-          setError('Account created! Please check your email to confirm your account.');
+          setSuccessMessage('Account created! Please check your email to confirm your account.');
           setFormData(prev => ({ ...prev, password: '' })); // Clear password
         }
       } else {
@@ -165,6 +168,13 @@ const AuthPage = () => {
           {error && (
             <div className="mb-6 p-4 bg-red-50 border-2 border-red-200 rounded-xl">
               <p className="text-sm text-red-800 text-center">{error}</p>
+            </div>
+          )}
+
+          {/* Success Message */}
+          {successMessage && (
+            <div className="mb-6 p-4 bg-green-50 border-2 border-green-200 rounded-xl">
+              <p className="text-sm text-green-800 text-center font-medium">{successMessage}</p>
             </div>
           )}
 

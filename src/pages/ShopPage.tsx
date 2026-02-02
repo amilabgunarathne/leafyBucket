@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { Plus, Minus, ShoppingCart, Star, Leaf, Package, ArrowLeft, TreePine, Flower, Filter, AlertCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { getMarketPrices, getDynamicVegetablesByCategory } from '../data/vegetables';
 import VegetableService from '../services/vegetableService';
+import { supabase } from '../lib/supabase';
+import PricingService from '../services/pricingService';
 
 interface CartItem {
   id: string;
@@ -32,8 +33,16 @@ const ShopPage = () => {
         console.error('Failed to initialize VegetableService:', error);
       }
     };
-    
+
+    // DEBUG: Direct Supabase Fetch
+    const debugSupabase = async () => {
+      const { data, error } = await supabase.from('vegetables').select('*');
+      console.log('DEBUG: Direct Supabase Fetch Result:', { data, error });
+      if (error) console.error('Supabase Error Details:', error.message, error.details);
+    };
+
     initializeServices();
+    debugSupabase();
   }, []);
 
   // Listen for changes in vegetable data
@@ -53,7 +62,7 @@ const ShopPage = () => {
 
     window.addEventListener('storage', handleStorageChange);
     window.addEventListener('vegetablesUpdated', handleCustomRefresh);
-    
+
     return () => {
       window.removeEventListener('storage', handleStorageChange);
       window.removeEventListener('vegetablesUpdated', handleCustomRefresh);
@@ -62,26 +71,35 @@ const ShopPage = () => {
 
   // Get products with market prices per 250g
   const productsWithPrices = React.useMemo(() => {
-    const products = getMarketPrices();
+    const activeVegetables = vegetableService.getActiveVegetables();
+    const pricingService = PricingService.getInstance();
+
+    const products = activeVegetables.map(veg => ({
+      ...veg,
+      price: pricingService.getPrice(veg.id) || veg.marketPricePer250g, // Use dynamic price or fallback to default
+      unit: '250g',
+      minOrderQuantity: 250 // Minimum order quantity in grams
+    }));
+
     console.log('Products with prices:', products.length);
     return products;
   }, [refreshTrigger]);
-  
+
 
   // Filter products by category
   const filteredProducts = React.useMemo(() => {
     let filtered;
-    
+
     if (selectedCategory === 'all') {
       filtered = productsWithPrices;
     } else {
-      const categoryVegetables = getDynamicVegetablesByCategory(selectedCategory);
-      filtered = categoryVegetables.map(veg => {
+      const categoryVegetables = vegetableService.getVegetablesByCategory(selectedCategory);
+      filtered = categoryVegetables.filter(veg => veg.isAvailable).map(veg => {
         const pricing = productsWithPrices.find(p => p.id === veg.id);
         return pricing || { ...veg, price: veg.marketPricePer250g, unit: '250g', minOrderQuantity: 250 };
       });
     }
-    
+
     console.log(`Filtered products for ${selectedCategory}:`, filtered.length);
     return filtered;
   }, [selectedCategory, productsWithPrices]);
@@ -92,11 +110,11 @@ const ShopPage = () => {
       if (existingItem) {
         return prevCart.map(item =>
           item.id === product.id
-            ? { 
-                ...item, 
-                quantity: item.quantity + 1,
-                totalWeight: (item.quantity + 1) * 250
-              }
+            ? {
+              ...item,
+              quantity: item.quantity + 1,
+              totalWeight: (item.quantity + 1) * 250
+            }
             : item
         );
       } else {
@@ -119,12 +137,12 @@ const ShopPage = () => {
     } else {
       setCart(prevCart =>
         prevCart.map(item =>
-          item.id === id 
-            ? { 
-                ...item, 
-                quantity: newQuantity,
-                totalWeight: newQuantity * 250
-              } 
+          item.id === id
+            ? {
+              ...item,
+              quantity: newQuantity,
+              totalWeight: newQuantity * 250
+            }
             : item
         )
       );
@@ -182,14 +200,14 @@ const ShopPage = () => {
       <section className="bg-gradient-to-br from-green-50 via-white to-orange-50 py-20">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center space-y-6">
-            <Link 
-              to="/" 
+            <Link
+              to="/"
               className="inline-flex items-center space-x-2 text-green-600 hover:text-green-700 transition-colors mb-4"
             >
               <ArrowLeft className="h-5 w-5" />
               <span>Back to Home</span>
             </Link>
-            
+
             <div className="flex items-center justify-center space-x-3 mb-6">
               <ShoppingCart className="h-10 w-10 text-green-600" />
               <h1 className="text-5xl lg:text-6xl font-bold text-gray-900 leading-tight">
@@ -198,7 +216,7 @@ const ShopPage = () => {
               </h1>
             </div>
             <p className="text-xl text-gray-600 max-w-3xl mx-auto leading-relaxed">
-              Choose exactly what you need from our fresh selection of organic vegetables. 
+              Choose exactly what you need from our fresh selection of organic vegetables.
               <span className="font-semibold text-green-700"> All prices shown per 250g</span> with minimum order quantities for practical handling.
             </p>
           </div>
@@ -215,7 +233,7 @@ const ShopPage = () => {
               <div>
                 <h4 className="font-semibold text-blue-900 mb-1">Order Information</h4>
                 <p className="text-sm text-blue-800">
-                  All prices are per 250g. Minimum order quantity is 250g per vegetable for practical packaging and handling. 
+                  All prices are per 250g. Minimum order quantity is 250g per vegetable for practical packaging and handling.
                   You can order multiple units (250g, 500g, 750g, etc.) of each vegetable.
                 </p>
               </div>
@@ -231,11 +249,10 @@ const ShopPage = () => {
             <div className="flex flex-wrap gap-3">
               <button
                 onClick={() => setSelectedCategory('all')}
-                className={`px-4 py-2 rounded-full font-medium transition-colors ${
-                  selectedCategory === 'all'
-                    ? 'bg-green-600 text-white'
-                    : 'bg-white text-gray-700 hover:bg-gray-100'
-                }`}
+                className={`px-4 py-2 rounded-full font-medium transition-colors ${selectedCategory === 'all'
+                  ? 'bg-green-600 text-white'
+                  : 'bg-white text-gray-700 hover:bg-gray-100'
+                  }`}
               >
                 All Categories
               </button>
@@ -245,11 +262,10 @@ const ShopPage = () => {
                   <button
                     key={category}
                     onClick={() => setSelectedCategory(category as 'root' | 'leafy' | 'bushy')}
-                    className={`px-4 py-2 rounded-full font-medium transition-colors flex items-center space-x-2 ${
-                      selectedCategory === category
-                        ? 'bg-green-600 text-white'
-                        : 'bg-white text-gray-700 hover:bg-gray-100'
-                    }`}
+                    className={`px-4 py-2 rounded-full font-medium transition-colors flex items-center space-x-2 ${selectedCategory === category
+                      ? 'bg-green-600 text-white'
+                      : 'bg-white text-gray-700 hover:bg-gray-100'
+                      }`}
                   >
                     <Icon className="h-4 w-4" />
                     <span>{getCategoryName(category)}</span>
@@ -260,7 +276,7 @@ const ShopPage = () => {
           </div>
 
           {/* Shopping Cart Button */}
-          <div className="fixed top-20 right-4 z-40">
+          <div className="fixed top-24 md:top-28 right-4 z-40">
             <button
               onClick={() => setIsCartOpen(!isCartOpen)}
               className="bg-green-600 text-white p-4 rounded-full shadow-lg hover:bg-green-700 transition-all duration-200 relative"
@@ -280,7 +296,7 @@ const ShopPage = () => {
               <Package className="h-16 w-16 text-gray-300 mx-auto mb-4" />
               <h3 className="text-xl font-semibold text-gray-900 mb-2">No Vegetables Available</h3>
               <p className="text-gray-600 mb-6">
-                {selectedCategory === 'all' 
+                {selectedCategory === 'all'
                   ? 'No vegetables are currently available for purchase.'
                   : `No ${getCategoryName(selectedCategory).toLowerCase()} vegetables are currently available.`
                 }
@@ -294,91 +310,91 @@ const ShopPage = () => {
             </div>
           ) : (
             <div className="grid md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 mb-12">
-            {filteredProducts.map((product) => {
-              const CategoryIcon = getCategoryIcon(product.category);
-              
-              return (
-                <div key={product.id} className="bg-white rounded-2xl overflow-hidden shadow-lg hover:shadow-xl transition-all duration-300 group">
-                  <div className="relative overflow-hidden">
-                    <img
-                      src={product.image}
-                      alt={product.name}
-                      className="w-full h-48 object-cover group-hover:scale-110 transition-transform duration-300"
-                    />
-                    <div className={`absolute top-3 left-3 px-2 py-1 rounded-full text-xs font-semibold flex items-center space-x-1 ${getCategoryColor(product.category)}`}>
-                      <CategoryIcon className="h-3 w-3" />
-                      <span>{getCategoryName(product.category)}</span>
-                    </div>
-                    <div className="absolute top-3 right-3 bg-white/90 backdrop-blur-sm px-2 py-1 rounded-full">
-                      <div className="flex items-center">
-                        {[...Array(5)].map((_, i) => (
-                          <Star key={i} className="h-3 w-3 text-yellow-400 fill-current" />
-                        ))}
+              {filteredProducts.map((product) => {
+                const CategoryIcon = getCategoryIcon(product.category);
+
+                return (
+                  <div key={product.id} className="bg-white rounded-2xl overflow-hidden shadow-lg hover:shadow-xl transition-all duration-300 group">
+                    <div className="relative overflow-hidden">
+                      <img
+                        src={product.image}
+                        alt={product.name}
+                        className="w-full h-48 object-cover group-hover:scale-110 transition-transform duration-300"
+                      />
+                      <div className={`absolute top-3 left-3 px-2 py-1 rounded-full text-xs font-semibold flex items-center space-x-1 ${getCategoryColor(product.category)}`}>
+                        <CategoryIcon className="h-3 w-3" />
+                        <span>{getCategoryName(product.category)}</span>
                       </div>
-                    </div>
-                  </div>
-                  
-                  <div className="p-6">
-                    <div className="mb-3">
-                      <h3 className="text-lg font-semibold text-gray-900 mb-1">{product.name}</h3>
-                      <p className="text-sm text-gray-600 leading-relaxed">{product.description}</p>
-                    </div>
-                    
-                    <div className="flex items-center justify-between mb-4">
-                      <div>
-                        <span className="text-2xl font-bold text-green-600">LKR {product.price}</span>
-                        <span className="text-sm text-gray-500 ml-1">/ 250g</span>
-                      </div>
-                      <div className="text-right">
-                        <div className="flex items-center space-x-1 text-xs text-gray-500">
-                          <Package className="h-3 w-3" />
-                          <span>Min: 250g</span>
+                      <div className="absolute top-3 right-3 bg-white/90 backdrop-blur-sm px-2 py-1 rounded-full">
+                        <div className="flex items-center">
+                          {[...Array(5)].map((_, i) => (
+                            <Star key={i} className="h-3 w-3 text-yellow-400 fill-current" />
+                          ))}
                         </div>
                       </div>
                     </div>
 
-                    {/* Quantity selector or Add button */}
-                    {getItemQuantity(product.id) === 0 ? (
-                      <button
-                        onClick={() => addToCart(product)}
-                        className="w-full bg-green-600 text-white py-3 px-4 rounded-xl font-semibold hover:bg-green-700 transition-colors flex items-center justify-center space-x-2"
-                      >
-                        <Plus className="h-4 w-4" />
-                        <span>Add 250g</span>
-                      </button>
-                    ) : (
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between bg-green-50 rounded-xl p-2">
-                          <button
-                            onClick={() => updateQuantity(product.id, getItemQuantity(product.id) - 1)}
-                            className="bg-white text-green-600 p-2 rounded-lg hover:bg-gray-50 transition-colors"
-                          >
-                            <Minus className="h-4 w-4" />
-                          </button>
-                          <div className="text-center">
-                            <div className="font-semibold text-green-800">
-                              {getItemQuantity(product.id)} units
-                            </div>
-                            <div className="text-xs text-green-600">
-                              {getItemQuantity(product.id) * 250}g total
-                            </div>
-                          </div>
-                          <button
-                            onClick={() => updateQuantity(product.id, getItemQuantity(product.id) + 1)}
-                            className="bg-white text-green-600 p-2 rounded-lg hover:bg-gray-50 transition-colors"
-                          >
-                            <Plus className="h-4 w-4" />
-                          </button>
+                    <div className="p-6">
+                      <div className="mb-3">
+                        <h3 className="text-lg font-semibold text-gray-900 mb-1">{product.name}</h3>
+                        <p className="text-sm text-gray-600 leading-relaxed">{product.description}</p>
+                      </div>
+
+                      <div className="flex items-center justify-between mb-4">
+                        <div>
+                          <span className="text-2xl font-bold text-green-600">LKR {product.price}</span>
+                          <span className="text-sm text-gray-500 ml-1">/ 250g</span>
                         </div>
-                        <div className="text-center text-sm text-gray-600">
-                          Total: LKR {product.price * getItemQuantity(product.id)}
+                        <div className="text-right">
+                          <div className="flex items-center space-x-1 text-xs text-gray-500">
+                            <Package className="h-3 w-3" />
+                            <span>Min: 250g</span>
+                          </div>
                         </div>
                       </div>
-                    )}
+
+                      {/* Quantity selector or Add button */}
+                      {getItemQuantity(product.id) === 0 ? (
+                        <button
+                          onClick={() => addToCart(product)}
+                          className="w-full bg-green-600 text-white py-3 px-4 rounded-xl font-semibold hover:bg-green-700 transition-colors flex items-center justify-center space-x-2"
+                        >
+                          <Plus className="h-4 w-4" />
+                          <span>Add 250g</span>
+                        </button>
+                      ) : (
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between bg-green-50 rounded-xl p-2">
+                            <button
+                              onClick={() => updateQuantity(product.id, getItemQuantity(product.id) - 1)}
+                              className="bg-white text-green-600 p-2 rounded-lg hover:bg-gray-50 transition-colors"
+                            >
+                              <Minus className="h-4 w-4" />
+                            </button>
+                            <div className="text-center">
+                              <div className="font-semibold text-green-800">
+                                {getItemQuantity(product.id)} units
+                              </div>
+                              <div className="text-xs text-green-600">
+                                {getItemQuantity(product.id) * 250}g total
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => updateQuantity(product.id, getItemQuantity(product.id) + 1)}
+                              className="bg-white text-green-600 p-2 rounded-lg hover:bg-gray-50 transition-colors"
+                            >
+                              <Plus className="h-4 w-4" />
+                            </button>
+                          </div>
+                          <div className="text-center text-sm text-gray-600">
+                            Total: LKR {product.price * getItemQuantity(product.id)}
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
             </div>
           )}
 
@@ -408,7 +424,7 @@ const ShopPage = () => {
                       <div className="space-y-4">
                         {cart.map((item) => {
                           const CategoryIcon = getCategoryIcon(item.category);
-                          
+
                           return (
                             <div key={item.id} className="flex items-center space-x-4 bg-gray-50 rounded-xl p-4">
                               <img
@@ -480,7 +496,7 @@ const ShopPage = () => {
               <h3 className="text-2xl font-bold text-gray-900 mb-4">Why Shop Individual Vegetables?</h3>
               <p className="text-gray-600">Perfect for those who prefer to choose exactly what they want at market prices</p>
             </div>
-            
+
             <div className="grid md:grid-cols-3 gap-8">
               <div className="text-center">
                 <div className="bg-green-100 rounded-full p-4 inline-flex items-center justify-center mb-4">

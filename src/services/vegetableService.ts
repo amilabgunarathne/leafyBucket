@@ -37,24 +37,37 @@ class VegetableService {
 
     try {
       console.log('Initializing VegetableService with Supabase...');
-      // Initialize pricing service (if needed, though dependencies should be handled carefully)
-      const pricingService = await import('./pricingService');
-      await pricingService.default.getInstance().initialize();
+      // Initialize pricing service (safely)
+      try {
+        const pricingService = await import('./pricingService');
+        await pricingService.default.getInstance().initialize();
+      } catch (pricingError) {
+        console.warn('Failed to initialize PricingService (continuing without dynamic pricing):', pricingError);
+      }
 
       const { data, error } = await supabase
         .from('vegetables')
         .select('*');
 
       if (error) {
+        console.error('VegetableService: Supabase error:', error);
         throw error;
+      }
+
+      console.log('VegetableService: Raw data received:', data);
+      if (data && data.length > 0) {
+        console.log('First Item Keys:', Object.keys(data[0]));
       }
 
       if (data) {
         this.vegetables.clear();
         data.forEach((row: any) => {
-          // Map DB columns to Frontend interface if needed (snake_case to camelCase)
-          // Our schema.sql used snake_case for some fields like market_price_per_250g
-          // But here we need to ensure we map them correctly
+          // Verify critical fields
+          if (!row.id || !row.name) {
+            console.warn('Skipping invalid row:', row);
+            return;
+          }
+
           const vegetable: Vegetable = {
             id: row.id,
             name: row.name,
@@ -68,9 +81,9 @@ class VegetableService {
             image: row.image,
             weightPerValuePoint: row.weight_per_value_point,
             isAvailable: row.is_available,
-            nutritionScore: row.nutrition_score,
-            createdAt: row.created_at,
-            updatedAt: row.updated_at
+            updatedAt: row.updated_at || new Date().toISOString(),
+            createdAt: row.created_at || new Date().toISOString(),
+            nutritionScore: row.nutrition_score
           };
           this.vegetables.set(vegetable.id, vegetable);
         });

@@ -3,6 +3,7 @@ import { ArrowLeft, Package, Settings, User, Edit3, MapPin, Phone, Mail, Pause, 
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import ConfirmationModal from '../components/ConfirmationModal';
+import VegetableService from '../services/vegetableService';
 
 const SubscriptionPage = () => {
   const { user, updateUser, logout } = useAuth();
@@ -103,22 +104,25 @@ const SubscriptionPage = () => {
 
   const currentPlan = plans.find(p => p.id === user.subscription?.plan);
 
-  const vegetables = [
-    { id: 'gherkin', name: 'Fresh Gherkin', weight: '310g' },
-    { id: 'carrots', name: 'Organic Carrots', weight: '500g' },
-    { id: 'gotukola', name: 'Gotukola (Pennywort)', weight: '370g' },
-    { id: 'mukunuwenna', name: 'Mukunuwenna', weight: '460g' },
-    { id: 'bandakka', name: 'Bandakka (Okra)', weight: '370g' },
-    { id: 'karavila', name: 'Karavila (Bitter Gourd)', weight: '340g' },
-    { id: 'wambatu', name: 'Wambatu (Eggplant)', weight: '400g' },
-    { id: 'chilies', name: 'Lunu Miris Chili', weight: '550g' },
-    { id: 'kankun', name: 'Kankun (Water Spinach)', weight: '390g' },
-    { id: 'leeks', name: 'Leeks (Lunu Kola)', weight: '290g' },
-    { id: 'radish', name: 'Radish (Rabu)', weight: '420g' }
-  ];
+  const [vegetables, setVegetables] = useState<{ id: string, name: string, weight: string }[]>([]);
+  const vegetableService = VegetableService.getInstance();
+
+  React.useEffect(() => {
+    const fetchVegetables = async () => {
+      await vegetableService.initialize();
+      const allVegetables = vegetableService.getAllVegetables();
+      const formattedVegetables = allVegetables.map(v => ({
+        id: v.id,
+        name: v.name,
+        weight: v.typicalWeight
+      }));
+      setVegetables(formattedVegetables);
+    };
+    fetchVegetables();
+  }, []);
 
   return (
-    <div className="pt-16 min-h-screen bg-gray-50">
+    <div className="pt-24 min-h-screen bg-gray-50">
       {/* Header */}
       <div className="bg-white border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
@@ -248,8 +252,8 @@ const SubscriptionPage = () => {
                           <button
                             onClick={() => handleStartSubscription(plan.id as 'small' | 'medium' | 'large')}
                             className={`w-full py-3 px-6 rounded-xl font-semibold transition-colors ${plan.id === 'medium'
-                                ? 'bg-green-600 text-white hover:bg-green-700'
-                                : 'bg-gray-100 text-gray-800 hover:bg-gray-200'
+                              ? 'bg-green-600 text-white hover:bg-green-700'
+                              : 'bg-gray-100 text-gray-800 hover:bg-gray-200'
                               }`}
                           >
                             Start Subscription
@@ -266,8 +270,8 @@ const SubscriptionPage = () => {
                       <div className="flex items-center justify-between mb-6">
                         <h2 className="text-2xl font-bold text-gray-900">Your Subscription</h2>
                         <div className={`px-4 py-2 rounded-full text-sm font-semibold ${user.subscription.status === 'active'
-                            ? 'bg-green-100 text-green-800'
-                            : 'bg-yellow-100 text-yellow-800'
+                          ? 'bg-green-100 text-green-800'
+                          : 'bg-yellow-100 text-yellow-800'
                           }`}>
                           {user.subscription.status === 'active' ? 'Active' : 'Paused'}
                         </div>
@@ -302,8 +306,8 @@ const SubscriptionPage = () => {
                           <button
                             onClick={toggleSubscriptionStatus}
                             className={`w-full flex items-center justify-center space-x-2 py-3 px-6 rounded-xl font-semibold transition-colors ${user.subscription.status === 'active'
-                                ? 'bg-yellow-100 text-yellow-800 hover:bg-yellow-200'
-                                : 'bg-green-100 text-green-800 hover:bg-green-200'
+                              ? 'bg-yellow-100 text-yellow-800 hover:bg-yellow-200'
+                              : 'bg-green-100 text-green-800 hover:bg-green-200'
                               }`}
                           >
                             {user.subscription.status === 'active' ? (

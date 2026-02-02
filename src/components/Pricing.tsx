@@ -1,10 +1,21 @@
 import React from 'react';
 import { Check, Star, Package, Leaf, TreePine, Flower } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { vegetables, calculatePlanAllocation, defaultPlanVegetables, CATEGORY_VALUES } from '../data/vegetables';
+import { vegetables, calculatePlanAllocation, defaultPlanVegetables, CATEGORY_VALUES, Vegetable } from '../data/vegetables';
+import VegetableService from '../services/vegetableService';
 
 const Pricing = () => {
   const { user } = useAuth();
+  const [activeVegetables, setActiveVegetables] = React.useState<Vegetable[]>([]);
+  const vegetableService = VegetableService.getInstance();
+
+  React.useEffect(() => {
+    const init = async () => {
+      await vegetableService.initialize();
+      setActiveVegetables(vegetableService.getActiveVegetables());
+    };
+    init();
+  }, []);
 
   const handleStartSubscription = () => {
     if (user) {
@@ -109,8 +120,12 @@ const Pricing = () => {
         <div className="grid md:grid-cols-3 gap-8 mb-12">
           {plans.map((plan, index) => {
             const planVegetables = defaultPlanVegetables[plan.planId];
-            const allocation = calculatePlanAllocation(parseInt(plan.vegetableBudget.replace(',', '')), planVegetables);
-            
+            const allocation = calculatePlanAllocation(
+              parseInt(plan.vegetableBudget.replace(',', '')),
+              planVegetables,
+              activeVegetables // Pass dynamic vegetables list
+            );
+
             return (
               <div key={index} className={`rounded-3xl p-8 ${plan.popular ? 'bg-green-600 text-white ring-4 ring-green-200 scale-105' : 'bg-gray-50'} relative`}>
                 {plan.popular && (
@@ -121,16 +136,15 @@ const Pricing = () => {
                     </div>
                   </div>
                 )}
-                
+
                 <div className="text-center mb-8">
                   <h3 className={`text-2xl font-bold mb-2 ${plan.popular ? 'text-white' : 'text-gray-900'}`}>{plan.name}</h3>
                   <p className={`${plan.popular ? 'text-green-100' : 'text-gray-600'} mb-4`}>{plan.description}</p>
-                  
+
                   {/* Vegetable Count and Weight Highlight */}
                   <div className="space-y-2 mb-4">
-                    <div className={`inline-flex items-center space-x-2 px-4 py-2 rounded-full ${
-                      plan.popular ? 'bg-green-500 text-white' : 'bg-green-100 text-green-700'
-                    }`}>
+                    <div className={`inline-flex items-center space-x-2 px-4 py-2 rounded-full ${plan.popular ? 'bg-green-500 text-white' : 'bg-green-100 text-green-700'
+                      }`}>
                       <Package className="h-5 w-5" />
                       <span className="font-semibold">{plan.vegetableCount} vegetables</span>
                     </div>
@@ -138,7 +152,7 @@ const Pricing = () => {
                       Total weight: {plan.weight}
                     </div>
                   </div>
-                  
+
                   <div className="flex items-baseline justify-center">
                     <span className={`text-lg mr-1 ${plan.popular ? 'text-green-100' : 'text-gray-600'}`}>LKR</span>
                     <span className={`text-5xl font-bold ${plan.popular ? 'text-white' : 'text-gray-900'}`}>{plan.price}</span>
@@ -170,11 +184,11 @@ const Pricing = () => {
                       const categoryVegs = allocation.filter(v => v.category === category);
                       const categoryBudget = categoryVegs.reduce((sum, v) => sum + v.allocatedBudget, 0);
                       const categoryCount = categoryVegs.length;
-                      
+
                       if (categoryCount === 0) return null;
-                      
+
                       const Icon = getCategoryIcon(category);
-                      
+
                       return (
                         <div key={category} className="flex items-center justify-between">
                           <div className="flex items-center space-x-2">
@@ -201,13 +215,12 @@ const Pricing = () => {
                   ))}
                 </ul>
 
-                <button 
+                <button
                   onClick={handleStartSubscription}
-                  className={`w-full py-4 px-6 rounded-full font-semibold transition-all duration-200 ${
-                    plan.popular 
-                      ? 'bg-white text-green-600 hover:bg-gray-100' 
+                  className={`w-full py-4 px-6 rounded-full font-semibold transition-all duration-200 ${plan.popular
+                      ? 'bg-white text-green-600 hover:bg-gray-100'
                       : 'bg-green-600 text-white hover:bg-green-700'
-                  }`}
+                    }`}
                 >
                   Start Subscription
                 </button>
@@ -222,8 +235,12 @@ const Pricing = () => {
           <div className="grid md:grid-cols-3 gap-8 text-sm">
             {plans.map((plan) => {
               const planVegetables = defaultPlanVegetables[plan.planId];
-              const allocation = calculatePlanAllocation(parseInt(plan.vegetableBudget.replace(',', '')), planVegetables);
-              
+              const allocation = calculatePlanAllocation(
+                parseInt(plan.vegetableBudget.replace(',', '')),
+                planVegetables,
+                activeVegetables
+              );
+
               return (
                 <div key={plan.planId}>
                   <h4 className="font-semibold text-green-600 mb-3">{plan.name}</h4>

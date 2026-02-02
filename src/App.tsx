@@ -27,7 +27,7 @@ function App() {
         console.error('Failed to initialize services:', error);
       }
     };
-    
+
     initializeServices();
   }, []);
 
@@ -39,31 +39,31 @@ function App() {
           <Routes>
             <Route path="/" element={<HomePage />} />
             <Route path="/products" element={<ProductsPage />} />
-            <Route 
-              path="/customize" 
+            <Route
+              path="/customize"
               element={
                 <ProtectedRoute>
                   <CustomizationPage />
                 </ProtectedRoute>
-              } 
+              }
             />
             <Route path="/shop" element={<ShopPage />} />
             <Route path="/auth" element={<AuthPage />} />
-            <Route 
-              path="/subscription" 
+            <Route
+              path="/subscription"
               element={
                 <ProtectedRoute>
                   <SubscriptionPage />
                 </ProtectedRoute>
-              } 
+              }
             />
-            <Route 
-              path="/admin" 
+            <Route
+              path="/admin"
               element={
                 <AdminProtectedRoute>
                   <AdminPage />
                 </AdminProtectedRoute>
-              } 
+              }
             />
           </Routes>
           <Footer />
