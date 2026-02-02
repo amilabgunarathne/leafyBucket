@@ -65,27 +65,7 @@ const AuthPage = () => {
     }));
   };
 
-  const fillDemoCredentials = async () => {
-    setIsLogin(true);
-    setError('');
-    const { success, error } = await login('demo@leafybucket.lk', 'demo123');
-    if (success) {
-      navigate(from, { replace: true });
-    } else {
-      setError(error || 'Demo login failed');
-    }
-  };
 
-  const fillAdminCredentials = async () => {
-    setIsLogin(true);
-    setError('');
-    const { success, error } = await login('admin@leafybucket.lk', 'admin123');
-    if (success) {
-      navigate('/admin', { replace: true });
-    } else {
-      setError(error || 'Admin login failed');
-    }
-  };
 
   return (
     <div className="pt-16 min-h-screen bg-gradient-to-br from-green-50 via-white to-orange-50">
@@ -138,31 +118,7 @@ const AuthPage = () => {
             </div>
           )}
 
-          {/* Demo Credentials Banner */}
-          {isLogin && (
-            <div className="mb-6 p-4 bg-blue-50 border-2 border-blue-200 rounded-xl">
-              <div className="text-center">
-                <p className="text-sm text-blue-800 mb-3">
-                  <strong>Demo Accounts:</strong>
-                </p>
-                <div className="space-y-2">
-                  <button
-                    onClick={fillDemoCredentials}
-                    className="w-full text-xs bg-blue-600 text-white px-3 py-2 rounded-lg hover:bg-blue-700 transition-colors flex items-center justify-center space-x-1"
-                  >
-                    <span>Instant Login as Regular User</span>
-                  </button>
-                  <button
-                    onClick={fillAdminCredentials}
-                    className="w-full text-xs bg-orange-600 text-white px-3 py-2 rounded-lg hover:bg-orange-700 transition-colors flex items-center justify-center space-x-1"
-                  >
-                    <Shield className="h-3 w-3" />
-                    <span>Instant Login as Admin</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
+
 
           {/* Error Message */}
           {error && (
