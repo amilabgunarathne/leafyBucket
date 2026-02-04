@@ -1,7 +1,7 @@
 import React from 'react';
 import { Check, Star, Package, Leaf, TreePine, Flower } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { vegetables, calculatePlanAllocation, defaultPlanVegetables, CATEGORY_VALUES, Vegetable } from '../data/vegetables';
+import { calculatePlanAllocation, defaultPlanVegetables, Vegetable } from '../data/vegetables';
 import VegetableService from '../services/vegetableService';
 
 const Pricing = () => {
@@ -27,65 +27,78 @@ const Pricing = () => {
     }
   };
 
-  const plans = [
-    {
-      name: "Small Family",
-      price: "2,900",
-      description: "Perfect for 1-2 people",
-      vegetableCount: "4",
-      weight: "1.5-2 kg",
-      vegetableBudget: "2,200",
-      handlingFee: "700",
-      features: [
-        "4 varieties of vegetables",
-        "1.5-2 kg of fresh produce",
-        "Weekly delivery",
-        "Free delivery",
-        "Seasonal recipe cards"
-      ],
-      popular: false,
-      planId: 'small'
-    },
-    {
-      name: "Medium Family",
-      price: "4,900",
-      description: "Great for 3-4 people",
-      vegetableCount: "7",
-      weight: "3-4 kg",
-      vegetableBudget: "4,000",
-      handlingFee: "900",
-      features: [
-        "7 varieties of vegetables",
-        "3-4 kg of fresh produce",
-        "Weekly delivery",
-        "Free delivery",
-        "Seasonal recipe cards",
-        "Priority customer support"
-      ],
-      popular: true,
-      planId: 'medium'
-    },
-    {
-      name: "Large Family",
-      price: "6,900",
-      description: "Ideal for 5+ people",
-      vegetableCount: "10",
-      weight: "5-6 kg",
-      vegetableBudget: "5,700",
-      handlingFee: "1,200",
-      features: [
-        "10 varieties of vegetables",
-        "5-6 kg of fresh produce",
-        "Weekly delivery",
-        "Free delivery",
-        "Seasonal recipe cards",
-        "Priority customer support",
-        "Exclusive chef recipes"
-      ],
-      popular: false,
-      planId: 'large'
-    }
-  ];
+  type PlanId = 'small' | 'medium' | 'large';
+
+  const plans: {
+    name: string;
+    price: string;
+    description: string;
+    vegetableCount: string;
+    weight: string;
+    vegetableBudget: string;
+    handlingFee: string;
+    features: string[];
+    popular: boolean;
+    planId: PlanId;
+  }[] = [
+      {
+        name: "Small Family",
+        price: "2,900",
+        description: "Perfect for 1-2 people",
+        vegetableCount: "4",
+        weight: "1.5-2 kg",
+        vegetableBudget: "2,200",
+        handlingFee: "700",
+        features: [
+          "4 varieties of vegetables",
+          "1.5-2 kg of fresh produce",
+          "Weekly delivery",
+          "Free delivery",
+          "Seasonal recipe cards"
+        ],
+        popular: false,
+        planId: 'small'
+      },
+      {
+        name: "Medium Family",
+        price: "4,900",
+        description: "Great for 3-4 people",
+        vegetableCount: "7",
+        weight: "3-4 kg",
+        vegetableBudget: "4,000",
+        handlingFee: "900",
+        features: [
+          "7 varieties of vegetables",
+          "3-4 kg of fresh produce",
+          "Weekly delivery",
+          "Free delivery",
+          "Seasonal recipe cards",
+          "Priority customer support"
+        ],
+        popular: true,
+        planId: 'medium'
+      },
+      {
+        name: "Large Family",
+        price: "6,900",
+        description: "Ideal for 5+ people",
+        vegetableCount: "10",
+        weight: "5-6 kg",
+        vegetableBudget: "5,700",
+        handlingFee: "1,200",
+        features: [
+          "10 varieties of vegetables",
+          "5-6 kg of fresh produce",
+          "Weekly delivery",
+          "Free delivery",
+          "Seasonal recipe cards",
+          "Priority customer support",
+          "Exclusive chef recipes"
+        ],
+        popular: false,
+        planId: 'large'
+      }
+    ];
 
   // Get category icons
   const getCategoryIcon = (category: string) => {
@@ -218,8 +231,8 @@ const Pricing = () => {
                 <button
                   onClick={handleStartSubscription}
                   className={`w-full py-4 px-6 rounded-full font-semibold transition-all duration-200 ${plan.popular
-                      ? 'bg-white text-green-600 hover:bg-gray-100'
-                      : 'bg-green-600 text-white hover:bg-green-700'
+                    ? 'bg-white text-green-600 hover:bg-gray-100'
+                    : 'bg-green-600 text-white hover:bg-green-700'
                     }`}
                 >
                   Start Subscription

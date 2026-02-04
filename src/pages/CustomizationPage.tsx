@@ -271,9 +271,9 @@ const CustomizationPage = () => {
                 <div className="flex items-center space-x-3">
                   <Clock className="h-6 w-6 text-orange-600" />
                   <div>
-                    <div className="font-semibold text-orange-900">Customization Temporarily Closed</div>
+                    <div className="font-semibold text-orange-900">Customization Closed</div>
                     <div className="text-sm text-orange-700">
-                      For testing: Customization is currently enabled. In production, this would be closed on weekends.
+                      Opens Wednesday 00:01. Closes Friday end (Saturday 00:00).
                     </div>
                   </div>
                 </div>
@@ -365,7 +365,7 @@ const CustomizationPage = () => {
                       <div>
                         <div className="font-semibold text-orange-900">Customization Period Ended</div>
                         <div className="text-sm text-orange-700">
-                          This week's selection is finalized. Changes will be available next Monday.
+                          This week's selection is finalized. Changes will be available next Wednesday.
                         </div>
                       </div>
                     </div>
@@ -572,14 +572,14 @@ const CustomizationPage = () => {
                 })}
               </div>
 
-              {/* Exclude Vegetables */}
-              <div className="bg-white rounded-3xl p-8 shadow-lg">
+              {/* Exclude Vegetables - commented out for now */}
+              {/* <div className="bg-white rounded-3xl p-8 shadow-lg">
                 <h3 className="text-2xl font-bold text-gray-900 mb-6">4. Exclude Vegetables</h3>
 
                 {!isCustomizationAllowed && (
                   <div className="mb-4 p-3 bg-orange-50 border border-orange-200 rounded-lg">
                     <p className="text-sm text-orange-800">
-                      Exclusion preferences are locked until next Monday.
+                      Exclusion preferences are locked until next Wednesday.
                     </p>
                   </div>
                 )}
@@ -613,7 +613,7 @@ const CustomizationPage = () => {
                     );
                   })}
                 </div>
-              </div>
+              </div> */}
             </div>
 
             {/* Summary Sidebar */}

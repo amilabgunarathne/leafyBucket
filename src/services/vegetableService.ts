@@ -23,6 +23,7 @@ class VegetableService {
   private static instance: VegetableService;
   private vegetables: Map<string, Vegetable> = new Map();
   private initialized: boolean = false;
+  private initPromise: Promise<void> | null = null;
 
   static getInstance(): VegetableService {
     if (!VegetableService.instance) {
@@ -34,67 +35,67 @@ class VegetableService {
   // Initialize with vegetables from Supabase
   async initialize() {
     if (this.initialized) return;
+    if (this.initPromise) return this.initPromise;
 
-    try {
-      console.log('Initializing VegetableService with Supabase...');
-      // Initialize pricing service (safely)
+    this.initPromise = (async () => {
       try {
-        const pricingService = await import('./pricingService');
-        await pricingService.default.getInstance().initialize();
-      } catch (pricingError) {
-        console.warn('Failed to initialize PricingService (continuing without dynamic pricing):', pricingError);
+        console.log('Initializing VegetableService with Supabase...');
+
+        const { data, error } = await supabase
+          .from('vegetables')
+          .select('*');
+
+        if (error) {
+          console.error('VegetableService: Supabase error:', error);
+          throw error;
+        }
+
+        console.log('VegetableService: Raw data received:', data);
+        if (data && data.length > 0) {
+          console.log('First Item Keys:', Object.keys(data[0]));
+        }
+
+        if (data) {
+          this.vegetables.clear();
+          data.forEach((row: any) => {
+            // Verify critical fields
+            if (!row.id || !row.name) {
+              console.warn('Skipping invalid row:', row);
+              return;
+            }
+
+            const vegetable: Vegetable = {
+              id: row.id,
+              name: row.name,
+              category: row.category,
+              baseValue: row.base_value,
+              typicalWeight: row.typical_weight,
+              marketPricePer250g: row.market_price_per_250g,
+              description: row.description,
+              season: row.season,
+              benefits: row.benefits,
+              image: row.image,
+              weightPerValuePoint: row.weight_per_value_point,
+              isAvailable: row.is_available,
+              updatedAt: row.updated_at || new Date().toISOString(),
+              createdAt: row.created_at || new Date().toISOString(),
+              nutritionScore: row.nutrition_score
+            };
+            this.vegetables.set(vegetable.id, vegetable);
+          });
+          console.log('VegetableService: Loaded', this.vegetables.size, 'vegetables from Supabase');
+          this.notifyListeners();
+        }
+
+        this.initialized = true;
+      } catch (error) {
+        console.error('Error initializing vegetables:', error);
+      } finally {
+        this.initPromise = null;
       }
+    })();
 
-      const { data, error } = await supabase
-        .from('vegetables')
-        .select('*');
-
-      if (error) {
-        console.error('VegetableService: Supabase error:', error);
-        throw error;
-      }
-
-      console.log('VegetableService: Raw data received:', data);
-      if (data && data.length > 0) {
-        console.log('First Item Keys:', Object.keys(data[0]));
-      }
-
-      if (data) {
-        this.vegetables.clear();
-        data.forEach((row: any) => {
-          // Verify critical fields
-          if (!row.id || !row.name) {
-            console.warn('Skipping invalid row:', row);
-            return;
-          }
-
-          const vegetable: Vegetable = {
-            id: row.id,
-            name: row.name,
-            category: row.category,
-            baseValue: row.base_value,
-            typicalWeight: row.typical_weight,
-            marketPricePer250g: row.market_price_per_250g,
-            description: row.description,
-            season: row.season,
-            benefits: row.benefits,
-            image: row.image,
-            weightPerValuePoint: row.weight_per_value_point,
-            isAvailable: row.is_available,
-            updatedAt: row.updated_at || new Date().toISOString(),
-            createdAt: row.created_at || new Date().toISOString(),
-            nutritionScore: row.nutrition_score
-          };
-          this.vegetables.set(vegetable.id, vegetable);
-        });
-        console.log('VegetableService: Loaded', this.vegetables.size, 'vegetables from Supabase');
-        this.notifyListeners();
-      }
-
-      this.initialized = true;
-    } catch (error) {
-      console.error('Error initializing vegetables:', error);
-    }
+    return this.initPromise;
   }
 
   private notifyListeners(vegetableId?: string) {

@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Plus, Minus, ShoppingCart, Star, Leaf, Package, AlertCircle } from 'lucide-react';
-import { getMarketPrices } from '../data/vegetables';
+import VegetableService, { Vegetable } from '../services/vegetableService';
+import PricingService from '../services/pricingService';
 
 interface CartItem {
   id: string;
@@ -15,21 +16,38 @@ interface CartItem {
 const ShoppingSection = () => {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
+  const [products, setProducts] = useState<(Vegetable & { price: number })[]>([]);
 
-  // Use market prices per 250g for individual shopping
-  const products = getMarketPrices();
+  useEffect(() => {
+    const init = async () => {
+      const vegService = VegetableService.getInstance();
+      const pricingService = PricingService.getInstance();
 
-  const addToCart = (product: typeof products[0]) => {
+      await vegService.initialize();
+      await pricingService.initialize();
+
+      const activeVegs = vegService.getActiveVegetables();
+      const productsWithPrices = activeVegs.map(veg => ({
+        ...veg,
+        price: pricingService.getPrice(veg.id) || veg.marketPricePer250g
+      }));
+
+      setProducts(productsWithPrices);
+    };
+    init();
+  }, []);
+
+  const addToCart = (product: Vegetable & { price: number }) => {
     setCart(prevCart => {
       const existingItem = prevCart.find(item => item.id === product.id);
       if (existingItem) {
         return prevCart.map(item =>
           item.id === product.id
-            ? { 
-                ...item, 
-                quantity: item.quantity + 1,
-                totalWeight: (item.quantity + 1) * 250
-              }
+            ? {
+              ...item,
+              quantity: item.quantity + 1,
+              totalWeight: (item.quantity + 1) * 250
+            }
             : item
         );
       } else {
@@ -52,12 +70,12 @@ const ShoppingSection = () => {
     } else {
       setCart(prevCart =>
         prevCart.map(item =>
-          item.id === id 
-            ? { 
-                ...item, 
-                quantity: newQuantity,
-                totalWeight: newQuantity * 250
-              } 
+          item.id === id
+            ? {
+              ...item,
+              quantity: newQuantity,
+              totalWeight: newQuantity * 250
+            }
             : item
         )
       );
@@ -122,7 +140,7 @@ const ShoppingSection = () => {
 
         {/* Products Grid */}
         <div className="grid md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 mb-12">
-          {products.map((product) => (
+          {products.map((product: Vegetable & { price: number }) => (
             <div key={product.id} className="bg-white rounded-2xl overflow-hidden shadow-lg hover:shadow-xl transition-all duration-300 group">
               <div className="relative overflow-hidden">
                 <img
@@ -142,13 +160,13 @@ const ShoppingSection = () => {
                   </div>
                 </div>
               </div>
-              
+
               <div className="p-6">
                 <div className="mb-3">
                   <h3 className="text-lg font-semibold text-gray-900 mb-1">{product.name}</h3>
                   <p className="text-sm text-gray-600 leading-relaxed">{product.description}</p>
                 </div>
-                
+
                 <div className="flex items-center justify-between mb-4">
                   <div>
                     <span className="text-2xl font-bold text-green-600">LKR {product.price}</span>
@@ -293,7 +311,7 @@ const ShoppingSection = () => {
             <h3 className="text-2xl font-bold text-gray-900 mb-4">Why Shop Individual Vegetables?</h3>
             <p className="text-gray-600">Perfect for those who prefer to choose exactly what they want</p>
           </div>
-          
+
           <div className="grid md:grid-cols-3 gap-8">
             <div className="text-center">
               <div className="bg-green-100 rounded-full p-4 inline-flex items-center justify-center mb-4">

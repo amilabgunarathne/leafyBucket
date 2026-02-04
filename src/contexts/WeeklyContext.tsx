@@ -1,9 +1,9 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { 
-  WeeklySelection, 
-  WeeklyHistory, 
-  generateWeeklySelection, 
-  getCurrentWeekId, 
+import {
+  WeeklySelection,
+  WeeklyHistory,
+  generateWeeklySelection,
+  getCurrentWeekId,
   isCustomizationOpen,
   getCustomizationTimeRemaining,
   getMockWeeklyHistory
@@ -44,6 +44,18 @@ export const WeeklyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     isExpired: false
   });
 
+  const [serviceInitialized, setServiceInitialized] = useState(false);
+
+  // Initialize VegetableService
+  useEffect(() => {
+    const init = async () => {
+      const service = (await import('../services/vegetableService')).default.getInstance();
+      await service.initialize();
+      setServiceInitialized(true);
+    };
+    init();
+  }, []);
+
   // Update customization status and time remaining every minute
   useEffect(() => {
     const updateStatus = () => {
@@ -59,23 +71,29 @@ export const WeeklyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   // Load weekly selection from localStorage or generate new one
   useEffect(() => {
+    if (!serviceInitialized) return;
+
     const currentWeekId = getCurrentWeekId();
     const storedSelection = localStorage.getItem(`weekly_selection_${currentWeekId}`);
-    
+
     if (storedSelection) {
       setCurrentWeekSelection(JSON.parse(storedSelection));
     } else {
       // Generate default selection for medium plan
       const defaultSelection = generateWeeklySelection('medium', weeklyHistory);
-      setCurrentWeekSelection(defaultSelection);
-      localStorage.setItem(`weekly_selection_${currentWeekId}`, JSON.stringify(defaultSelection));
+
+      // Safety check: only save if we actually got vegetables
+      if (defaultSelection.vegetables.length > 0) {
+        setCurrentWeekSelection(defaultSelection);
+        localStorage.setItem(`weekly_selection_${currentWeekId}`, JSON.stringify(defaultSelection));
+      }
     }
-  }, [weeklyHistory]);
+  }, [weeklyHistory, serviceInitialized]);
 
   const refreshWeeklySelection = (planId: 'small' | 'medium' | 'large') => {
     const currentWeekId = getCurrentWeekId();
     const newSelection = generateWeeklySelection(planId, weeklyHistory);
-    
+
     setCurrentWeekSelection(newSelection);
     localStorage.setItem(`weekly_selection_${currentWeekId}`, JSON.stringify(newSelection));
   };

@@ -1,18 +1,31 @@
 import React from 'react';
 import { Shuffle, Lock, Leaf, TreePine, Flower, RefreshCw } from 'lucide-react';
 import { useWeekly } from '../contexts/WeeklyContext';
-import { vegetables } from '../data/vegetables';
+import VegetableService from '../services/vegetableService';
+import { Vegetable } from '../data/vegetables';
 
 interface WeeklyVegetableDisplayProps {
   planId: 'small' | 'medium' | 'large';
   showShuffleButton?: boolean;
 }
 
-const WeeklyVegetableDisplay: React.FC<WeeklyVegetableDisplayProps> = ({ 
-  planId, 
-  showShuffleButton = false 
+const WeeklyVegetableDisplay: React.FC<WeeklyVegetableDisplayProps> = ({
+  planId,
+  showShuffleButton = false
 }) => {
   const { currentWeekSelection, isCustomizationAllowed, refreshWeeklySelection } = useWeekly();
+  const [allVegetables, setAllVegetables] = React.useState<Vegetable[]>([]);
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    const init = async () => {
+      const service = VegetableService.getInstance();
+      await service.initialize();
+      setAllVegetables(service.getAllVegetables());
+      setLoading(false);
+    };
+    init();
+  }, []);
 
   const getCategoryIcon = (category: string) => {
     switch (category) {
@@ -38,7 +51,7 @@ const WeeklyVegetableDisplay: React.FC<WeeklyVegetableDisplayProps> = ({
     }
   };
 
-  if (!currentWeekSelection) {
+  if (!currentWeekSelection || loading) {
     return (
       <div className="bg-white rounded-2xl p-6 shadow-lg">
         <div className="text-center py-8">
@@ -50,7 +63,7 @@ const WeeklyVegetableDisplay: React.FC<WeeklyVegetableDisplayProps> = ({
   }
 
   const weekVegetables = currentWeekSelection.vegetables
-    .map(vegId => vegetables.find(v => v.id === vegId))
+    .map(vegId => allVegetables.find(v => v.id === vegId))
     .filter(Boolean);
 
   return (
@@ -65,16 +78,15 @@ const WeeklyVegetableDisplay: React.FC<WeeklyVegetableDisplayProps> = ({
             Week of {new Date(currentWeekSelection.startDate).toLocaleDateString()}
           </p>
         </div>
-        
+
         {showShuffleButton && (
           <button
             onClick={handleShuffle}
             disabled={!isCustomizationAllowed}
-            className={`flex items-center space-x-2 px-4 py-2 rounded-lg font-medium transition-colors ${
-              isCustomizationAllowed
-                ? 'bg-green-100 text-green-700 hover:bg-green-200'
-                : 'bg-gray-100 text-gray-400 cursor-not-allowed'
-            }`}
+            className={`flex items-center space-x-2 px-4 py-2 rounded-lg font-medium transition-colors ${isCustomizationAllowed
+              ? 'bg-green-100 text-green-700 hover:bg-green-200'
+              : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+              }`}
           >
             {isCustomizationAllowed ? (
               <>
@@ -96,7 +108,7 @@ const WeeklyVegetableDisplay: React.FC<WeeklyVegetableDisplayProps> = ({
           <div className="flex items-center space-x-2">
             <Lock className="h-4 w-4 text-orange-600" />
             <span className="text-sm text-orange-800">
-              Customization period has ended. Changes will be available next Monday.
+              Customization period has ended. Changes will be available next Wednesday.
             </span>
           </div>
         </div>
@@ -105,9 +117,9 @@ const WeeklyVegetableDisplay: React.FC<WeeklyVegetableDisplayProps> = ({
       <div className="grid md:grid-cols-2 gap-4">
         {weekVegetables.map((vegetable) => {
           if (!vegetable) return null;
-          
+
           const CategoryIcon = getCategoryIcon(vegetable.category);
-          
+
           return (
             <div
               key={vegetable.id}
@@ -139,7 +151,7 @@ const WeeklyVegetableDisplay: React.FC<WeeklyVegetableDisplayProps> = ({
           {['root', 'leafy', 'bushy'].map(category => {
             const categoryVegs = weekVegetables.filter(v => v?.category === category);
             const Icon = getCategoryIcon(category);
-            
+
             return (
               <div key={category} className={`p-3 rounded-lg ${getCategoryColor(category)}`}>
                 <Icon className="h-5 w-5 mx-auto mb-1" />

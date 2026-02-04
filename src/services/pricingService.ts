@@ -14,6 +14,8 @@ class PricingService {
   private prices: Map<string, VegetablePricing> = new Map();
   private lastFetch: Date | null = null;
   private cacheTimeout = 5 * 60 * 1000; // 5 minutes
+  private initialized: boolean = false;
+  private initPromise: Promise<void> | null = null;
 
   static getInstance(): PricingService {
     if (!PricingService.instance) {
@@ -22,39 +24,52 @@ class PricingService {
     return PricingService.instance;
   }
 
-  // Initialize with default prices from vegetables.ts
+  // Initialize with default prices from VegetableService
   async initialize() {
-    try {
-      const { vegetables } = await import('../data/vegetables');
-      console.log('Initializing pricing for vegetables:', vegetables.length);
-      
-      vegetables.forEach(veg => {
-        this.prices.set(veg.id, {
-          vegetableId: veg.id,
-          currentPrice: veg.marketPricePer250g,
-          source: 'manual',
-          lastUpdated: new Date().toISOString(),
-          isActive: true
-        });
-      });
+    if (this.initialized) return;
+    if (this.initPromise) return this.initPromise;
 
-      // Load from localStorage if available
-      const storedPrices = localStorage.getItem('vegetable_prices');
-      if (storedPrices) {
-        try {
-          const parsed = JSON.parse(storedPrices);
-          Object.entries(parsed).forEach(([id, pricing]) => {
-            this.prices.set(id, pricing as VegetablePricing);
+    this.initPromise = (async () => {
+      try {
+        const vegetableService = (await import('./vegetableService')).default.getInstance();
+        await vegetableService.initialize();
+        const vegetables = vegetableService.getAllVegetables();
+
+        console.log('Initializing pricing for vegetables:', vegetables.length);
+
+        vegetables.forEach(veg => {
+          this.prices.set(veg.id, {
+            vegetableId: veg.id,
+            currentPrice: veg.marketPricePer250g,
+            source: 'manual',
+            lastUpdated: new Date().toISOString(),
+            isActive: true
           });
-          console.log('Loaded stored prices:', this.prices.size);
-        } catch (error) {
-          console.error('Error loading stored prices:', error);
+        });
+
+        // Load from localStorage if available
+        const storedPrices = localStorage.getItem('vegetable_prices');
+        if (storedPrices) {
+          try {
+            const parsed = JSON.parse(storedPrices);
+            Object.entries(parsed).forEach(([id, pricing]) => {
+              this.prices.set(id, pricing as VegetablePricing);
+            });
+            console.log('Loaded stored prices:', this.prices.size);
+          } catch (error) {
+            console.error('Error loading stored prices:', error);
+          }
         }
+        console.log('Pricing service initialized with', this.prices.size, 'items');
+        this.initialized = true;
+      } catch (error) {
+        console.error('Error initializing pricing service:', error);
+      } finally {
+        this.initPromise = null;
       }
-      console.log('Pricing service initialized with', this.prices.size, 'items');
-    } catch (error) {
-      console.error('Error initializing pricing service:', error);
-    }
+    })();
+
+    return this.initPromise;
   }
 
   // Get current price for a vegetable
@@ -121,18 +136,18 @@ class PricingService {
 
           // Simulate price fluctuations (±10% of current price)
           const updatedPricing: VegetablePricing[] = [];
-          
+
           this.prices.forEach((pricing, vegetableId) => {
             const fluctuation = (Math.random() - 0.5) * 0.2; // ±10%
             const newPrice = Math.round(pricing.currentPrice * (1 + fluctuation));
-            
+
             const updated: VegetablePricing = {
               ...pricing,
               currentPrice: Math.max(50, newPrice), // Minimum price of 50
               source: 'market',
               lastUpdated: new Date().toISOString()
             };
-            
+
             this.prices.set(vegetableId, updated);
             updatedPricing.push(updated);
           });

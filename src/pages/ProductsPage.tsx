@@ -1,34 +1,10 @@
-import React from 'react';
-import { ArrowLeft, Star, Leaf, MapPin, Calendar } from 'lucide-react';
+import { ArrowLeft, Leaf, MapPin, Calendar } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import VegetableService from '../services/vegetableService';
-import { Vegetable } from '../data/vegetables';
+
 
 const ProductsPage = () => {
   // Get active vegetables from the admin-managed list
-  const [vegetables, setVegetables] = React.useState<Vegetable[]>([]);
-  const vegetableService = VegetableService.getInstance();
 
-  React.useEffect(() => {
-    const fetchVegetables = async () => {
-      await vegetableService.initialize();
-      setVegetables(vegetableService.getActiveVegetables());
-    };
-    fetchVegetables();
-  }, []);
-
-  const seasonalHighlights = [
-    {
-      season: "Current Season",
-      vegetables: ["Gotukola", "Mukunuwenna", "Carrots", "Sweet Potato"],
-      description: "Peak freshness and flavor from our hill country farms"
-    },
-    {
-      season: "Coming Soon",
-      vegetables: ["Kankun", "Radish", "Leeks"],
-      description: "Fresh varieties being prepared for next week's harvest"
-    }
-  ];
 
   return (
     <div className="pt-16">
@@ -73,78 +49,9 @@ const ProductsPage = () => {
         </div>
       </section>
 
-      {/* Seasonal Highlights */}
-      <section className="py-16 bg-white">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <h2 className="text-3xl font-bold text-gray-900 text-center mb-12">This Week's Seasonal Highlights</h2>
-          <div className="grid md:grid-cols-2 gap-8 mb-16">
-            {seasonalHighlights.map((highlight, index) => (
-              <div key={index} className="bg-gradient-to-br from-green-50 to-orange-50 rounded-2xl p-8">
-                <h3 className="text-2xl font-bold text-gray-900 mb-4">{highlight.season}</h3>
-                <p className="text-gray-600 mb-6">{highlight.description}</p>
-                <div className="flex flex-wrap gap-2">
-                  {highlight.vegetables.map((veg, vegIndex) => (
-                    <span key={vegIndex} className="bg-green-100 text-green-800 px-3 py-1 rounded-full text-sm font-medium">
-                      {veg}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
 
-      {/* Vegetables Grid */}
-      <section className="py-16 bg-gray-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <h2 className="text-3xl font-bold text-gray-900 text-center mb-12">Our Complete Vegetable Selection</h2>
 
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 mb-12">
-            {vegetables.map((vegetable, index) => (
-              <div key={index} className="bg-white rounded-2xl overflow-hidden shadow-lg hover:shadow-xl transition-all duration-300 group">
-                <div className="aspect-w-16 aspect-h-12 overflow-hidden">
-                  <img
-                    src={vegetable.image}
-                    alt={vegetable.name}
-                    className="w-full h-48 object-cover group-hover:scale-110 transition-transform duration-300"
-                  />
-                </div>
-                <div className="p-6">
-                  <div className="flex items-center justify-between mb-3">
-                    <h3 className="text-lg font-semibold text-gray-900">{vegetable.name}</h3>
-                    <div className="flex items-center">
-                      {[...Array(5)].map((_, i) => (
-                        <Star key={i} className="h-3 w-3 text-yellow-400 fill-current" />
-                      ))}
-                    </div>
-                  </div>
 
-                  <p className="text-gray-600 text-sm leading-relaxed mb-4">{vegetable.description}</p>
-
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-gray-500">Season:</span>
-                      <span className="font-medium text-green-600">{vegetable.season}</span>
-                    </div>
-
-                    <div>
-                      <span className="text-gray-500 text-sm block mb-2">Health Benefits:</span>
-                      <div className="flex flex-wrap gap-1">
-                        {vegetable.benefits.map((benefit, benefitIndex) => (
-                          <span key={benefitIndex} className="bg-blue-50 text-blue-700 text-xs px-2 py-1 rounded-full">
-                            {benefit}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
 
       {/* Farm Information */}
       <section className="py-16 bg-green-600 text-white">
