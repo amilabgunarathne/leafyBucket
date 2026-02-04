@@ -1,4 +1,3 @@
-import React from 'react';
 import { ArrowRight, Truck, Clock, Leaf, Settings } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -26,13 +25,13 @@ const Hero = () => {
                 <span className="text-green-600"> delivered</span> weekly
               </h1>
               <p className="text-xl text-gray-600 leading-relaxed">
-                Get the freshest, locally-sourced organic vegetables delivered to your door every week. 
-                <span className="font-semibold text-green-700"> Customize your Leafy Bucket</span> to match your family's preferences with our simple monthly subscription.
+                Get the freshest, up country vegetables delivered to your door every week.
+                <span className="font-semibold text-green-700"> Customize your Leafy Bucket</span> with our easy monthly subscription, or simply shop individual items and add them to your cart.
               </p>
             </div>
 
             <div className="flex flex-col sm:flex-row gap-4">
-              <button 
+              <button
                 onClick={handleStartSubscription}
                 className="bg-green-600 text-white px-8 py-4 rounded-full text-lg font-semibold hover:bg-green-700 transform hover:scale-105 transition-all duration-200 flex items-center justify-center space-x-2"
               >

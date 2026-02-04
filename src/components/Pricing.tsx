@@ -1,21 +1,8 @@
-import React from 'react';
-import { Check, Star, Package, Leaf, TreePine, Flower } from 'lucide-react';
+import { Star, Package, Check } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { calculatePlanAllocation, defaultPlanVegetables, Vegetable } from '../data/vegetables';
-import VegetableService from '../services/vegetableService';
 
 const Pricing = () => {
   const { user } = useAuth();
-  const [activeVegetables, setActiveVegetables] = React.useState<Vegetable[]>([]);
-  const vegetableService = VegetableService.getInstance();
-
-  React.useEffect(() => {
-    const init = async () => {
-      await vegetableService.initialize();
-      setActiveVegetables(vegetableService.getActiveVegetables());
-    };
-    init();
-  }, []);
 
   const handleStartSubscription = () => {
     if (user) {
@@ -100,25 +87,6 @@ const Pricing = () => {
       }
     ];
 
-  // Get category icons
-  const getCategoryIcon = (category: string) => {
-    switch (category) {
-      case 'root': return TreePine;
-      case 'leafy': return Leaf;
-      case 'bushy': return Flower;
-      default: return Package;
-    }
-  };
-
-  // Get category color
-  const getCategoryColor = (category: string) => {
-    switch (category) {
-      case 'root': return 'text-orange-600 bg-orange-100';
-      case 'leafy': return 'text-green-600 bg-green-100';
-      case 'bushy': return 'text-purple-600 bg-purple-100';
-      default: return 'text-gray-600 bg-gray-100';
-    }
-  };
 
   return (
     <section id="pricing" className="py-20 bg-white">
@@ -132,13 +100,6 @@ const Pricing = () => {
 
         <div className="grid md:grid-cols-3 gap-8 mb-12">
           {plans.map((plan, index) => {
-            const planVegetables = defaultPlanVegetables[plan.planId];
-            const allocation = calculatePlanAllocation(
-              parseInt(plan.vegetableBudget.replace(',', '')),
-              planVegetables,
-              activeVegetables // Pass dynamic vegetables list
-            );
-
             return (
               <div key={index} className={`rounded-3xl p-8 ${plan.popular ? 'bg-green-600 text-white ring-4 ring-green-200 scale-105' : 'bg-gray-50'} relative`}>
                 {plan.popular && (
@@ -172,51 +133,6 @@ const Pricing = () => {
                     <span className={`text-lg ml-2 ${plan.popular ? 'text-green-100' : 'text-gray-600'}`}>/month</span>
                   </div>
 
-                  {/* Budget Breakdown */}
-                  <div className={`mt-4 p-3 rounded-xl ${plan.popular ? 'bg-green-500' : 'bg-white border border-gray-200'}`}>
-                    <div className={`text-xs ${plan.popular ? 'text-green-100' : 'text-gray-600'} space-y-1`}>
-                      <div className="flex justify-between">
-                        <span>Vegetables:</span>
-                        <span className="font-semibold">LKR {plan.vegetableBudget}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span>Handling:</span>
-                        <span className="font-semibold">LKR {plan.handlingFee}</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Category Breakdown */}
-                <div className={`mb-6 p-4 rounded-xl ${plan.popular ? 'bg-green-500' : 'bg-white border border-gray-200'}`}>
-                  <h4 className={`text-sm font-semibold mb-3 ${plan.popular ? 'text-green-100' : 'text-gray-700'}`}>
-                    Value Distribution by Category:
-                  </h4>
-                  <div className="space-y-2">
-                    {['root', 'leafy', 'bushy'].map(category => {
-                      const categoryVegs = allocation.filter(v => v.category === category);
-                      const categoryBudget = categoryVegs.reduce((sum, v) => sum + v.allocatedBudget, 0);
-                      const categoryCount = categoryVegs.length;
-
-                      if (categoryCount === 0) return null;
-
-                      const Icon = getCategoryIcon(category);
-
-                      return (
-                        <div key={category} className="flex items-center justify-between">
-                          <div className="flex items-center space-x-2">
-                            <Icon className={`h-4 w-4 ${plan.popular ? 'text-green-200' : getCategoryColor(category).split(' ')[0]}`} />
-                            <span className={`text-xs ${plan.popular ? 'text-green-100' : 'text-gray-600'}`}>
-                              {categoryCount} {category}
-                            </span>
-                          </div>
-                          <span className={`text-xs font-semibold ${plan.popular ? 'text-green-100' : 'text-gray-700'}`}>
-                            LKR {categoryBudget}
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
                 </div>
 
                 <ul className="space-y-4 mb-8">
@@ -242,50 +158,6 @@ const Pricing = () => {
           })}
         </div>
 
-        {/* Detailed Breakdown */}
-        <div className="bg-white border-2 border-green-100 rounded-3xl p-8">
-          <h3 className="text-xl font-bold text-gray-900 text-center mb-6">Typical Weekly Allocation Examples</h3>
-          <div className="grid md:grid-cols-3 gap-8 text-sm">
-            {plans.map((plan) => {
-              const planVegetables = defaultPlanVegetables[plan.planId];
-              const allocation = calculatePlanAllocation(
-                parseInt(plan.vegetableBudget.replace(',', '')),
-                planVegetables,
-                activeVegetables
-              );
-
-              return (
-                <div key={plan.planId}>
-                  <h4 className="font-semibold text-green-600 mb-3">{plan.name}</h4>
-                  <div className="bg-green-50 p-4 rounded-lg mb-3">
-                    <div className="text-xs text-green-700 space-y-1">
-                      <div>Budget: LKR {plan.vegetableBudget} for vegetables</div>
-                      <div>Handling fee: LKR {plan.handlingFee}</div>
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    {allocation.map(veg => {
-                      const Icon = getCategoryIcon(veg.category);
-                      return (
-                        <div key={veg.id} className="flex items-center justify-between p-2 bg-gray-50 rounded">
-                          <div className="flex items-center space-x-2">
-                            <Icon className={`h-3 w-3 ${getCategoryColor(veg.category).split(' ')[0]}`} />
-                            <span className="text-xs">{veg.name}</span>
-                          </div>
-                          <div className="text-right">
-                            <div className="text-xs font-semibold">LKR {veg.allocatedBudget}</div>
-                            <div className="text-xs text-gray-500">{veg.typicalWeight}</div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
         <div className="text-center space-y-4 mt-8">
           <p className="text-gray-600">
             All plans include free delivery and can be paused or cancelled anytime.
@@ -295,7 +167,7 @@ const Pricing = () => {
           </p>
         </div>
       </div>
-    </section>
+    </section >
   );
 };
 

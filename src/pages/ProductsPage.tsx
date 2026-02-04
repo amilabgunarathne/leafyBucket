@@ -1,10 +1,66 @@
-import { ArrowLeft, Leaf, MapPin, Calendar } from 'lucide-react';
+import React from 'react';
+import { ArrowLeft, Leaf, MapPin, Calendar, Package, TreePine, Flower } from 'lucide-react';
 import { Link } from 'react-router-dom';
-
+import { calculatePlanAllocation, defaultPlanVegetables, Vegetable } from '../data/vegetables';
+import VegetableService from '../services/vegetableService';
 
 const ProductsPage = () => {
-  // Get active vegetables from the admin-managed list
+  const [activeVegetables, setActiveVegetables] = React.useState<Vegetable[]>([]);
+  const vegetableService = VegetableService.getInstance();
 
+  React.useEffect(() => {
+    const init = async () => {
+      await vegetableService.initialize();
+      setActiveVegetables(vegetableService.getActiveVegetables());
+    };
+    init();
+  }, []);
+
+  type PlanId = 'small' | 'medium' | 'large';
+
+  const plans: {
+    name: string;
+    vegetableBudget: string;
+    handlingFee: string;
+    planId: PlanId;
+  }[] = [
+      {
+        name: "Small Family",
+        vegetableBudget: "2,200",
+        handlingFee: "700",
+        planId: 'small'
+      },
+      {
+        name: "Medium Family",
+        vegetableBudget: "4,000",
+        handlingFee: "900",
+        planId: 'medium'
+      },
+      {
+        name: "Large Family",
+        vegetableBudget: "5,700",
+        handlingFee: "1,200",
+        planId: 'large'
+      }
+    ];
+
+  const getCategoryIcon = (category: string) => {
+    switch (category) {
+      case 'root': return TreePine;
+      case 'leafy': return Leaf;
+      case 'bushy': return Flower;
+      default: return Package;
+    }
+  };
+
+  const getCategoryColor = (category: string) => {
+    switch (category) {
+      case 'root': return 'text-orange-600 bg-orange-100';
+      case 'leafy': return 'text-green-600 bg-green-100';
+      case 'bushy': return 'text-purple-600 bg-purple-100';
+      default: return 'text-gray-600 bg-gray-100';
+    }
+  };
 
   return (
     <div className="pt-16">
@@ -49,9 +105,55 @@ const ProductsPage = () => {
         </div>
       </section>
 
+      {/* Typical Weekly Allocation Examples */}
+      <section className="py-16 bg-gray-50 border-y border-gray-100">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="bg-white border-2 border-green-100 rounded-3xl p-8 shadow-sm">
+            <h3 className="text-2xl font-bold text-gray-900 text-center mb-10">Typical Weekly Allocation Examples</h3>
+            <div className="grid lg:grid-cols-3 gap-12">
+              {plans.map((plan) => {
+                const planVegetables = defaultPlanVegetables[plan.planId];
+                const allocation = calculatePlanAllocation(
+                  parseInt(plan.vegetableBudget.replace(',', '')),
+                  planVegetables,
+                  activeVegetables
+                );
 
-
-
+                return (
+                  <div key={plan.planId} className="flex flex-col">
+                    <div className="mb-6">
+                      <h4 className="text-xl font-bold text-green-600 mb-2">{plan.name}</h4>
+                      <div className="inline-flex flex-col p-3 bg-green-50 rounded-xl w-full">
+                        <div className="text-xs text-green-700 font-medium">Vegetables: LKR {plan.vegetableBudget}</div>
+                        <div className="text-xs text-green-700 font-medium">Handling: LKR {plan.handlingFee}</div>
+                      </div>
+                    </div>
+                    <div className="space-y-3 flex-grow">
+                      {allocation.map(veg => {
+                        const Icon = getCategoryIcon(veg.category);
+                        return (
+                          <div key={veg.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl border border-gray-100 transition-hover hover:border-green-200">
+                            <div className="flex items-center space-x-3">
+                              <div className={`p-2 rounded-lg ${getCategoryColor(veg.category)}`}>
+                                <Icon className="h-4 w-4" />
+                              </div>
+                              <span className="text-sm font-medium text-gray-700">{veg.name}</span>
+                            </div>
+                            <div className="text-right">
+                              <div className="text-xs font-bold text-gray-900">LKR {veg.allocatedBudget}</div>
+                              <div className="text-xs text-gray-500">{veg.typicalWeight}</div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      </section>
 
       {/* Farm Information */}
       <section className="py-16 bg-green-600 text-white">
@@ -84,7 +186,7 @@ const ProductsPage = () => {
               Customize Your Leafy Bucket
             </Link>
             <Link
-              to="/"
+              to="/#pricing"
               className="inline-block border-2 border-white text-white px-8 py-3 rounded-full font-semibold hover:bg-white hover:text-green-600 transition-colors"
             >
               View Pricing Plans
