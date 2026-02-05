@@ -22,8 +22,8 @@ const Hero = () => {
           <div className="space-y-8">
             <div className="space-y-4">
               <h1 className="text-5xl lg:text-6xl font-bold text-gray-900 leading-tight">
-                Fresh vegetables
-                <span className="text-green-600"> delivered</span> weekly
+                Farm-fresh vegetables, at
+                <span className="text-green-600"> Your Door</span> every week
               </h1>
               <p className="text-xl text-gray-600 leading-relaxed">
                 Get the freshest, up country vegetables delivered to your door every week.
