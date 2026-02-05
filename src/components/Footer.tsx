@@ -9,18 +9,18 @@ const Footer = () => {
 
   const handleNavClick = (e: React.MouseEvent<HTMLAnchorElement>, targetId: string) => {
     e.preventDefault();
-    
+
     // If we're not on the home page, navigate to home first
     if (location.pathname !== '/') {
       window.location.href = `/#${targetId}`;
       return;
     }
-    
+
     const targetElement = document.getElementById(targetId);
     if (targetElement) {
       const headerHeight = 80; // Account for fixed header
       const elementPosition = targetElement.offsetTop - headerHeight;
-      
+
       window.scrollTo({
         top: elementPosition,
         behavior: 'smooth'
@@ -34,14 +34,14 @@ const Footer = () => {
         <div className="grid lg:grid-cols-4 md:grid-cols-2 gap-8">
           <div className="space-y-6">
             <Link to="/" className="flex items-center">
-              <img 
-                src="/full_logo_light-removebg-preview.png" 
-                alt="Leafy Bucket Logo" 
+              <img
+                src="/full_logo_light-removebg-preview.png"
+                alt="Leafy Bucket Logo"
                 className="h-12 w-auto object-contain"
               />
             </Link>
             <p className="text-gray-400 leading-relaxed">
-              Delivering the freshest organic vegetables from local farms in Bandarawela to your doorstep every week. 
+              Delivering the freshest vegetables from local farms in Bandarawela to your doorstep every week.
               Eat healthy, live better.
             </p>
             <div className="flex space-x-4">
@@ -61,8 +61,8 @@ const Footer = () => {
             <h3 className="text-lg font-semibold mb-6">Quick Links</h3>
             <ul className="space-y-3">
               <li>
-                <a 
-                  href="#how-it-works" 
+                <a
+                  href="#how-it-works"
                   onClick={(e) => handleNavClick(e, 'how-it-works')}
                   className="text-gray-400 hover:text-white transition-colors cursor-pointer"
                 >
@@ -70,7 +70,7 @@ const Footer = () => {
                 </a>
               </li>
               <li>
-                <Link 
+                <Link
                   to="/shop"
                   className="text-gray-400 hover:text-white transition-colors"
                 >
@@ -78,7 +78,7 @@ const Footer = () => {
                 </Link>
               </li>
               <li>
-                <Link 
+                <Link
                   to="/products"
                   className="text-gray-400 hover:text-white transition-colors"
                 >
@@ -88,7 +88,7 @@ const Footer = () => {
               {/* Only show Customize link for logged-in users */}
               {user && (
                 <li>
-                  <Link 
+                  <Link
                     to="/customize"
                     className="text-gray-400 hover:text-white transition-colors"
                   >
@@ -97,8 +97,8 @@ const Footer = () => {
                 </li>
               )}
               <li>
-                <a 
-                  href="#pricing" 
+                <a
+                  href="#pricing"
                   onClick={(e) => handleNavClick(e, 'pricing')}
                   className="text-gray-400 hover:text-white transition-colors cursor-pointer"
                 >
@@ -106,8 +106,8 @@ const Footer = () => {
                 </a>
               </li>
               <li>
-                <a 
-                  href="#testimonials" 
+                <a
+                  href="#testimonials"
                   onClick={(e) => handleNavClick(e, 'testimonials')}
                   className="text-gray-400 hover:text-white transition-colors cursor-pointer"
                 >
@@ -150,9 +150,10 @@ const Footer = () => {
 
         <div className="border-t border-gray-800 mt-12 pt-8">
           <div className="flex flex-col md:flex-row justify-between items-center space-y-4 md:space-y-0">
-            <p className="text-gray-400 text-sm">
-              © 2024 Leafy Bucket. All rights reserved.
-            </p>
+            <div className="text-gray-400 text-sm text-center md:text-left">
+              <p>© 2025 Leafy Bucket. All rights reserved.</p>
+              <p className="mt-1">Made in Bandarawela, Sri Lanka 🇱🇰</p>
+            </div>
             <div className="flex space-x-6 text-sm">
               <a href="#" className="text-gray-400 hover:text-white transition-colors">Terms of Service</a>
               <a href="#" className="text-gray-400 hover:text-white transition-colors">Privacy Policy</a>

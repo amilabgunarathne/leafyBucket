@@ -80,16 +80,14 @@ const ProductsPage = () => {
               What's in Your
               <span className="text-green-600"> Leafy Bucket</span>
             </h1>
-            <p className="text-xl text-gray-600 max-w-3xl mx-auto leading-relaxed">
-              Discover the fresh, organic vegetables we carefully select from local farms in Bandarawela and the surrounding hill country. Each week brings a curated selection of seasonal produce.
-            </p>
+            Discover the fresh vegetables we carefully select from local farms in Bandarawela and the surrounding hill country. Each week brings a curated selection of seasonal produce.
           </div>
 
           <div className="grid lg:grid-cols-3 gap-8 mb-16">
             <div className="bg-white rounded-2xl p-6 shadow-lg text-center">
               <Leaf className="h-12 w-12 text-green-600 mx-auto mb-4" />
-              <h3 className="text-xl font-bold text-gray-900 mb-2">100% Organic</h3>
-              <p className="text-gray-600">All vegetables grown without pesticides or chemicals</p>
+              <h3 className="text-xl font-bold text-gray-900 mb-2">100% Fresh</h3>
+              <p className="text-gray-600">All vegetables grown using traditional hilltop farming methods</p>
             </div>
             <div className="bg-white rounded-2xl p-6 shadow-lg text-center">
               <MapPin className="h-12 w-12 text-orange-600 mx-auto mb-4" />
@@ -159,9 +157,7 @@ const ProductsPage = () => {
       <section className="py-16 bg-green-600 text-white">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
           <h2 className="text-3xl font-bold mb-6">Fresh from Bandarawela Hill Country!</h2>
-          <p className="text-green-100 text-lg mb-8 max-w-3xl mx-auto">
-            Our vegetables are grown in the cool, fertile climate of Bandarawela, where traditional farming methods meet organic practices. The high altitude and rich soil create perfect conditions for nutrient-dense vegetables with authentic Sri Lankan flavors.
-          </p>
+          Our vegetables are grown in the cool, fertile climate of Bandarawela, where traditional farming methods meet sustainable practices. The high altitude and rich soil create perfect conditions for nutrient-dense vegetables with authentic Sri Lankan flavors.
 
           <div className="grid md:grid-cols-3 gap-8 mb-8">
             <div className="text-center">
@@ -174,7 +170,7 @@ const ProductsPage = () => {
             </div>
             <div className="text-center">
               <div className="text-3xl font-bold mb-2">100%</div>
-              <div className="text-green-100">Organic Certified</div>
+              <div className="text-green-100">Freshness Guaranteed</div>
             </div>
           </div>
 

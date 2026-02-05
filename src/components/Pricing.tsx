@@ -151,7 +151,7 @@ const Pricing = () => {
                     : 'bg-green-600 text-white hover:bg-green-700'
                     }`}
                 >
-                  Start Subscription
+                  Select Bucket
                 </button>
               </div>
             );

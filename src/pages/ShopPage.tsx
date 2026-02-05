@@ -216,7 +216,7 @@ const ShopPage = () => {
               </h1>
             </div>
             <p className="text-xl text-gray-600 max-w-3xl mx-auto leading-relaxed">
-              Choose exactly what you need from our fresh selection of organic vegetables.
+              Choose exactly what you need from our fresh selection of vegetables.
               <span className="font-semibold text-green-700"> All prices shown per 250g</span> with minimum order quantities for practical handling.
             </p>
           </div>

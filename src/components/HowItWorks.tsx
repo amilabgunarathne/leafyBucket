@@ -24,7 +24,7 @@ const HowItWorks = () => {
     {
       icon: Package,
       title: "We Pack Fresh",
-      description: "Our team carefully selects and packs the freshest seasonal vegetables from local organic farms."
+      description: "Our team carefully selects and packs the freshest seasonal vegetables from local farms."
     },
     {
       icon: Truck,
@@ -48,7 +48,7 @@ const HowItWorks = () => {
     <section id="how-it-works" className="py-20 bg-white">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="text-center space-y-4 mb-16">
-          <h2 className="text-4xl font-bold text-gray-900">How It Works</h2>
+          <h2 className="text-4xl font-bold text-gray-900">How Subscription Works</h2>
           <p className="text-xl text-gray-600 max-w-2xl mx-auto">
             Getting fresh vegetables delivered has never been easier. Follow these simple steps to start your healthy journey.
           </p>
@@ -68,7 +68,7 @@ const HowItWorks = () => {
                   <h3 className="text-xl font-semibold text-gray-900 mb-3">{step.title}</h3>
                   <p className="text-gray-600 leading-relaxed">{step.description}</p>
                 </div>
-                
+
                 {/* Arrow between steps (not after last step) */}
                 {index < steps.length - 1 && (
                   <div className="flex-shrink-0 mx-4">
@@ -94,7 +94,7 @@ const HowItWorks = () => {
                 <h3 className="text-xl font-semibold text-gray-900 mb-3">{steps[0].title}</h3>
                 <p className="text-gray-600 leading-relaxed">{steps[0].description}</p>
               </div>
-              
+
               <div className="text-center group">
                 <div className="relative mb-6">
                   <div className="bg-green-100 rounded-full p-6 inline-flex items-center justify-center group-hover:bg-green-200 transition-colors duration-300">
@@ -127,7 +127,7 @@ const HowItWorks = () => {
                 <h3 className="text-xl font-semibold text-gray-900 mb-3">{steps[2].title}</h3>
                 <p className="text-gray-600 leading-relaxed">{steps[2].description}</p>
               </div>
-              
+
               <div className="text-center group">
                 <div className="relative mb-6">
                   <div className="bg-green-100 rounded-full p-6 inline-flex items-center justify-center group-hover:bg-green-200 transition-colors duration-300">
@@ -159,7 +159,7 @@ const HowItWorks = () => {
                 <h3 className="text-xl font-semibold text-gray-900 mb-3">{step.title}</h3>
                 <p className="text-gray-600 leading-relaxed">{step.description}</p>
               </div>
-              
+
               {/* Arrow between steps (not after last step) */}
               {index < steps.length - 1 && (
                 <div className="flex justify-center">
@@ -171,7 +171,7 @@ const HowItWorks = () => {
         </div>
 
         <div className="text-center mt-16">
-          <button 
+          <button
             onClick={handleGetStarted}
             className="bg-green-600 text-white px-8 py-4 rounded-full text-lg font-semibold hover:bg-green-700 transform hover:scale-105 transition-all duration-200"
           >

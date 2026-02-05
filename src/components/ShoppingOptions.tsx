@@ -3,12 +3,12 @@ import { Link } from 'react-router-dom';
 
 const ShoppingOptions = () => {
   return (
-    <section className="py-20 bg-gradient-to-br from-green-50 to-orange-50">
+    <section id="shopping-options" className="py-20 bg-gradient-to-br from-green-50 to-orange-50">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="text-center space-y-4 mb-16">
           <h2 className="text-4xl font-bold text-gray-900">Choose Your Shopping Style</h2>
           <p className="text-xl text-gray-600 max-w-3xl mx-auto">
-            We understand everyone has different preferences. That's why we offer two convenient ways to get fresh, organic vegetables from Bandarawela farms.
+            We understand everyone has different preferences. That's why we offer two convenient ways to get fresh vegetables from Bandarawela farms.
           </p>
         </div>
 

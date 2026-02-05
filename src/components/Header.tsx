@@ -113,7 +113,7 @@ const Header = () => {
                 onClick={handleStartSubscription}
                 className="bg-green-600 text-white px-6 py-2 rounded-full hover:bg-green-700 transition-colors"
               >
-                Start Subscription
+                Select Bucket Size
               </button>
             )}
           </div>
@@ -191,7 +191,7 @@ const Header = () => {
                   onClick={handleStartSubscription}
                   className="w-full mt-2 bg-green-600 text-white px-6 py-2 rounded-full hover:bg-green-700 transition-colors"
                 >
-                  Start Subscription
+                  Select Bucket Size
                 </button>
               )}
             </div>

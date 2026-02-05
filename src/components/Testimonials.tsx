@@ -1,4 +1,3 @@
-import React from 'react';
 import { Star, Quote } from 'lucide-react';
 
 const Testimonials = () => {
@@ -20,7 +19,7 @@ const Testimonials = () => {
     {
       name: "Amara Fernando",
       location: "Galle, Sri Lanka",
-      text: "As a busy mom, Leafy Bucket has been a lifesaver. Organic, fresh vegetables delivered right to our door every week. Highly recommend!",
+      text: "As a busy mom, Leafy Bucket has been a lifesaver. Fresh vegetables delivered right to our door every week. Highly recommend!",
       rating: 5,
       image: "https://images.pexels.com/photos/1239291/pexels-photo-1239291.jpeg?auto=compress&cs=tinysrgb&w=150"
     }
@@ -40,7 +39,7 @@ const Testimonials = () => {
           {testimonials.map((testimonial, index) => (
             <div key={index} className="bg-white rounded-2xl p-8 shadow-lg relative">
               <Quote className="h-8 w-8 text-green-600 mb-4 opacity-50" />
-              
+
               <div className="flex items-center mb-4">
                 {[...Array(testimonial.rating)].map((_, i) => (
                   <Star key={i} className="h-5 w-5 text-yellow-400 fill-current" />
@@ -80,7 +79,7 @@ const Testimonials = () => {
               Based on 2,000+ reviews from satisfied customers
             </p>
             <div className="flex justify-center items-center space-x-8 text-sm text-gray-500">
-              <span>🏆 Best Organic Delivery 2024</span>
+              <span>🏆 Best Vegetable Delivery 2025</span>
               <span>✅ 100% Satisfaction Guarantee</span>
               <span>🚚 Free Delivery Always</span>
             </div>

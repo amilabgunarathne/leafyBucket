@@ -206,7 +206,7 @@ const SubscriptionPage = () => {
                   <div className="bg-white rounded-3xl shadow-lg p-8">
                     <div className="text-center mb-8">
                       <h2 className="text-3xl font-bold text-gray-900 mb-4">Choose Your Leafy Bucket Plan</h2>
-                      <p className="text-gray-600">Start your journey to healthier eating with fresh, organic vegetables delivered weekly</p>
+                      <p className="text-gray-600">Start your journey to healthier eating with fresh vegetables delivered weekly</p>
                     </div>
 
                     <div className="grid md:grid-cols-3 gap-6">
@@ -256,7 +256,7 @@ const SubscriptionPage = () => {
                               : 'bg-gray-100 text-gray-800 hover:bg-gray-200'
                               }`}
                           >
-                            Start Subscription
+                            Select Bucket Size
                           </button>
                         </div>
                       ))}

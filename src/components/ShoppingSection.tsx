@@ -150,7 +150,7 @@ const ShoppingSection = () => {
                 />
                 <div className="absolute top-3 left-3 bg-green-100 text-green-800 px-2 py-1 rounded-full text-xs font-semibold flex items-center space-x-1">
                   <Leaf className="h-3 w-3" />
-                  <span>Organic</span>
+                  <span>Fresh</span>
                 </div>
                 <div className="absolute top-3 right-3 bg-white/90 backdrop-blur-sm px-2 py-1 rounded-full">
                   <div className="flex items-center">

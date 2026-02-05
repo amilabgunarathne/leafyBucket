@@ -288,7 +288,7 @@ const AuthPage = () => {
             <div className="grid grid-cols-2 gap-4 text-center">
               <div>
                 <div className="text-2xl font-bold text-green-600">100%</div>
-                <div className="text-xs text-gray-600">Organic</div>
+                <div className="text-xs text-gray-600">Fresh</div>
               </div>
               <div>
                 <div className="text-2xl font-bold text-orange-600">Free</div>

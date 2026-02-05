@@ -1,5 +1,6 @@
-import { ArrowRight, Truck, Clock, Leaf, Settings } from 'lucide-react';
+import { ArrowRight, Truck, Clock, Leaf, Settings, ShoppingCart } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { Link } from 'react-router-dom';
 
 const Hero = () => {
   const { user } = useAuth();
@@ -35,12 +36,16 @@ const Hero = () => {
                 onClick={handleStartSubscription}
                 className="bg-green-600 text-white px-8 py-4 rounded-full text-lg font-semibold hover:bg-green-700 transform hover:scale-105 transition-all duration-200 flex items-center justify-center space-x-2"
               >
-                <span>{user ? 'Manage Subscription' : 'Start Your Subscription'}</span>
+                <span>{user ? 'Manage Subscription' : 'Select Bucket Size'}</span>
                 <ArrowRight className="h-5 w-5" />
               </button>
-              <button className="border-2 border-green-600 text-green-600 px-8 py-4 rounded-full text-lg font-semibold hover:bg-green-50 transition-colors">
-                Learn More
-              </button>
+              <Link
+                to="/shop"
+                className="border-2 border-green-600 text-green-600 px-8 py-4 rounded-full text-lg font-semibold hover:bg-green-50 transition-colors text-center flex items-center justify-center space-x-2"
+              >
+                <span>Shop Individually</span>
+                <ShoppingCart className="h-5 w-5" />
+              </Link>
             </div>
 
             <div className="flex items-center space-x-8 pt-4">
