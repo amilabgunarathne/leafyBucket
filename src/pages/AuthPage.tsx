@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ArrowLeft, Mail, Lock, User, Phone, MapPin, Eye, EyeOff, Loader2, Shield } from 'lucide-react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { supabase } from '../lib/supabase';
 
 const AuthPage = () => {
   const [isLogin, setIsLogin] = useState(true);
@@ -11,15 +12,28 @@ const AuthPage = () => {
     password: '',
     name: '',
     phone: '',
-    address: ''
+    address: '',
+    newPassword: ''
   });
+
+  const [isForgotPassword, setIsForgotPassword] = useState(false);
+  const [isResetStep, setIsResetStep] = useState(false);
 
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
 
-  const { login, signup, isLoading } = useAuth();
+  const { login, signup, resetPassword, isLoading } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+
+  React.useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get('reset') === 'true') {
+      setIsResetStep(true);
+      setIsLogin(false);
+      setIsForgotPassword(false);
+    }
+  }, [location.search]);
 
   // Get the intended destination or default to subscription page
   const from = location.state?.from?.pathname || '/subscription';
@@ -29,6 +43,36 @@ const AuthPage = () => {
     e.preventDefault();
     setError('');
     setSuccessMessage('');
+
+    if (isForgotPassword) {
+      if (!formData.email) {
+        setError('Email is required');
+        return;
+      }
+      const { success, error } = await resetPassword(formData.email);
+      if (success) {
+        setSuccessMessage('Password reset link sent! Please check your email.');
+      } else {
+        setError(error || 'Failed to send reset link');
+      }
+      return;
+    }
+
+    if (isResetStep) {
+      if (!formData.newPassword) {
+        setError('New password is required');
+        return;
+      }
+      const { error } = await supabase.auth.updateUser({ password: formData.newPassword });
+      if (error) {
+        setError(error.message);
+      } else {
+        setSuccessMessage('Password updated successfully! You can now sign in.');
+        setIsResetStep(false);
+        setIsLogin(true);
+      }
+      return;
+    }
 
     if (isLogin) {
       const { success, error } = await login(formData.email, formData.password);
@@ -42,8 +86,12 @@ const AuthPage = () => {
         setError('Name is required');
         return;
       }
+      if (!formData.phone.trim()) {
+        setError('Phone number is required');
+        return;
+      }
 
-      const { success, error, data } = await signup(formData.email, formData.password, formData.name);
+      const { success, error, data } = await signup(formData.email, formData.password, formData.name, formData.phone);
       if (success) {
         if (data?.session) {
           navigate('/subscription', { replace: true });
@@ -90,14 +138,24 @@ const AuthPage = () => {
             </div>
 
             <h2 className="text-xl font-semibold text-gray-900 mb-2">
-              {adminRequired ? 'Admin Access Required' : (isLogin ? 'Welcome Back!' : 'Join Leafy Bucket')}
+              {adminRequired ? 'Admin Access Required' : (
+                isResetStep ? 'Set New Password' : (
+                  isForgotPassword ? 'Reset Password' : (isLogin ? 'Welcome Back!' : 'Join Leafy Bucket')
+                )
+              )}
             </h2>
             <p className="text-gray-600">
               {adminRequired
                 ? 'Please sign in with admin credentials to access the admin panel'
-                : (isLogin
-                  ? 'Sign in to manage your fresh vegetable subscription'
-                  : 'Start your journey to healthier eating today'
+                : (isResetStep
+                  ? 'Enter your new password below'
+                  : (isForgotPassword
+                    ? 'Enter your email to receive a password reset link'
+                    : (isLogin
+                      ? 'Sign in to manage your fresh vegetable subscription'
+                      : 'Start your journey to healthier eating today'
+                    )
+                  )
                 )
               }
             </p>
@@ -136,109 +194,154 @@ const AuthPage = () => {
 
           {/* Form */}
           <form onSubmit={handleSubmit} className="space-y-6">
-            {!isLogin && (
+            {isResetStep ? (
               <div>
-                <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-2">
-                  Full Name
+                <label htmlFor="newPassword" className="block text-sm font-medium text-gray-700 mb-2">
+                  New Password
                 </label>
                 <div className="relative">
-                  <User className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+                  <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
                   <input
-                    type="text"
-                    id="name"
-                    name="name"
-                    value={formData.name}
+                    type={showPassword ? 'text' : 'password'}
+                    id="newPassword"
+                    name="newPassword"
+                    value={formData.newPassword}
                     onChange={handleInputChange}
-                    className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                    placeholder="Enter your full name"
-                    required={!isLogin}
+                    className="w-full pl-10 pr-12 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                    placeholder="Min. 6 characters"
+                    required
+                    minLength={6}
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  >
+                    {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                  </button>
                 </div>
               </div>
-            )}
-
-            <div>
-              <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
-                Email Address
-              </label>
-              <div className="relative">
-                <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
-                <input
-                  type="email"
-                  id="email"
-                  name="email"
-                  value={formData.email}
-                  onChange={handleInputChange}
-                  className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                  placeholder="Enter your email"
-                  required
-                />
-              </div>
-            </div>
-
-            <div>
-              <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-2">
-                Password
-              </label>
-              <div className="relative">
-                <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  id="password"
-                  name="password"
-                  value={formData.password}
-                  onChange={handleInputChange}
-                  className="w-full pl-10 pr-12 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                  placeholder="Enter your password"
-                  required
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                >
-                  {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
-                </button>
-              </div>
-            </div>
-
-            {!isLogin && (
+            ) : (
               <>
+                {!isForgotPassword && !isLogin && (
+                  <div>
+                    <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-2">
+                      Full Name
+                    </label>
+                    <div className="relative">
+                      <User className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+                      <input
+                        type="text"
+                        id="name"
+                        name="name"
+                        value={formData.name}
+                        onChange={handleInputChange}
+                        className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                        placeholder="Enter your full name"
+                        required={!isLogin && !isForgotPassword && !isResetStep}
+                      />
+                    </div>
+                  </div>
+                )}
+
                 <div>
-                  <label htmlFor="phone" className="block text-sm font-medium text-gray-700 mb-2">
-                    Phone Number (Optional)
+                  <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
+                    Email Address
                   </label>
                   <div className="relative">
-                    <Phone className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+                    <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
                     <input
-                      type="tel"
-                      id="phone"
-                      name="phone"
-                      value={formData.phone}
+                      type="email"
+                      id="email"
+                      name="email"
+                      value={formData.email}
                       onChange={handleInputChange}
                       className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                      placeholder="+94 77 123 4567"
+                      placeholder="Enter your email"
+                      required
                     />
                   </div>
                 </div>
 
-                <div>
-                  <label htmlFor="address" className="block text-sm font-medium text-gray-700 mb-2">
-                    Delivery Address (Optional)
-                  </label>
-                  <div className="relative">
-                    <MapPin className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
-                    <input
-                      type="text"
-                      id="address"
-                      name="address"
-                      value={formData.address}
-                      onChange={handleInputChange}
-                      className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                      placeholder="Enter your delivery address"
-                    />
+                {!isForgotPassword && (
+                  <div>
+                    <div className="flex justify-between items-center mb-2">
+                      <label htmlFor="password" className="block text-sm font-medium text-gray-700">
+                        Password
+                      </label>
+                      {isLogin && (
+                        <button
+                          type="button"
+                          onClick={() => setIsForgotPassword(true)}
+                          className="text-sm text-green-600 hover:text-green-700 font-medium"
+                        >
+                          Forgot Password?
+                        </button>
+                      )}
+                    </div>
+                    <div className="relative">
+                      <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+                      <input
+                        type={showPassword ? 'text' : 'password'}
+                        id="password"
+                        name="password"
+                        value={formData.password}
+                        onChange={handleInputChange}
+                        className="w-full pl-10 pr-12 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                        placeholder="Enter your password"
+                        required={!isForgotPassword && !isResetStep}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                      >
+                        {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                      </button>
+                    </div>
                   </div>
-                </div>
+                )}
+
+                {!isLogin && !isForgotPassword && (
+                  <>
+                    <div>
+                      <label htmlFor="phone" className="block text-sm font-medium text-gray-700 mb-2">
+                        Phone Number
+                      </label>
+                      <div className="relative">
+                        <Phone className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+                        <input
+                          type="tel"
+                          id="phone"
+                          name="phone"
+                          value={formData.phone}
+                          onChange={handleInputChange}
+                          className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                          placeholder="+94 77 123 4567"
+                          required={!isLogin && !isForgotPassword && !isResetStep}
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label htmlFor="address" className="block text-sm font-medium text-gray-700 mb-2">
+                        Delivery Address (Optional)
+                      </label>
+                      <div className="relative">
+                        <MapPin className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+                        <input
+                          type="text"
+                          id="address"
+                          name="address"
+                          value={formData.address}
+                          onChange={handleInputChange}
+                          className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                          placeholder="Enter your delivery address"
+                        />
+                      </div>
+                    </div>
+                  </>
+                )}
               </>
             )}
 
@@ -250,36 +353,60 @@ const AuthPage = () => {
               {isLoading ? (
                 <>
                   <Loader2 className="h-5 w-5 animate-spin" />
-                  <span>{isLogin ? 'Signing In...' : 'Creating Account...'}</span>
+                  <span>{isResetStep ? 'Updating...' : (isForgotPassword ? 'Sending...' : (isLogin ? 'Signing In...' : 'Creating Account...'))}</span>
                 </>
               ) : (
-                <span>{isLogin ? 'Sign In' : 'Create Account'}</span>
+                <span>{isResetStep ? 'Update Password' : (isForgotPassword ? 'Send Reset Link' : (isLogin ? 'Sign In' : 'Create Account'))}</span>
               )}
             </button>
           </form>
 
           {/* Toggle Form */}
           {!adminRequired && (
-            <div className="mt-8 text-center">
-              <p className="text-gray-600">
-                {isLogin ? "Don't have an account?" : "Already have an account?"}
+            <div className="mt-8 text-center text-sm">
+              {isResetStep ? (
                 <button
                   onClick={() => {
-                    setIsLogin(!isLogin);
+                    setIsResetStep(false);
+                    setIsLogin(true);
                     setError('');
-                    setFormData({
-                      email: '',
-                      password: '',
-                      name: '',
-                      phone: '',
-                      address: ''
-                    });
                   }}
-                  className="ml-2 text-green-600 hover:text-green-700 font-semibold"
+                  className="text-green-600 hover:text-green-700 font-semibold"
                 >
-                  {isLogin ? 'Sign Up' : 'Sign In'}
+                  Back to Sign In
                 </button>
-              </p>
+              ) : isForgotPassword ? (
+                <button
+                  onClick={() => {
+                    setIsForgotPassword(false);
+                    setError('');
+                  }}
+                  className="text-green-600 hover:text-green-700 font-semibold"
+                >
+                  Back to Sign In
+                </button>
+              ) : (
+                <p className="text-gray-600">
+                  {isLogin ? "Don't have an account?" : "Already have an account?"}
+                  <button
+                    onClick={() => {
+                      setIsLogin(!isLogin);
+                      setError('');
+                      setFormData({
+                        email: '',
+                        password: '',
+                        name: '',
+                        phone: '',
+                        address: '',
+                        newPassword: ''
+                      });
+                    }}
+                    className="ml-2 text-green-600 hover:text-green-700 font-semibold"
+                  >
+                    {isLogin ? 'Sign Up' : 'Sign In'}
+                  </button>
+                </p>
+              )}
             </div>
           )}
 

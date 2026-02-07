@@ -24,7 +24,8 @@ interface User {
 interface AuthContextType {
   user: User | null;
   login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
-  signup: (email: string, password: string, name: string) => Promise<{ success: boolean; error?: string; data?: any }>;
+  signup: (email: string, password: string, name: string, phone: string) => Promise<{ success: boolean; error?: string; data?: any }>;
+  resetPassword: (email: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
   updateUser: (userData: Partial<User>) => void;
   isLoading: boolean;
@@ -58,7 +59,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (profileError) throw profileError;
 
       // 2. Fetch Subscription
-      const { data: subscription, error: subError } = await supabase
+      const { data: subscription } = await supabase
         .from('subscriptions')
         .select('*')
         .eq('user_id', userId)
@@ -147,7 +148,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return { success: true };
   };
 
-  const signup = async (email: string, password: string, name: string): Promise<{ success: boolean; error?: string; data?: any }> => {
+  const signup = async (email: string, password: string, name: string, phone: string): Promise<{ success: boolean; error?: string; data?: any }> => {
     setIsLoading(true);
     const { data, error } = await supabase.auth.signUp({
       email,
@@ -155,6 +156,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       options: {
         data: {
           name: name,
+          phone: phone,
           role: 'user' // Default role
         }
       }
@@ -169,6 +171,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // Success response always returns data, but session might be null if email confirmation is on
     setIsLoading(false);
     return { success: true, data };
+  };
+
+  const resetPassword = async (email: string): Promise<{ success: boolean; error?: string }> => {
+    setIsLoading(true);
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/auth?reset=true`,
+    });
+
+    setIsLoading(false);
+    if (error) {
+      return { success: false, error: error.message };
+    }
+    return { success: true };
   };
 
   const logout = async () => {
@@ -231,6 +246,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       user,
       login,
       signup,
+      resetPassword,
       logout,
       updateUser,
       isLoading,
