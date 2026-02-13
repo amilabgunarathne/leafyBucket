@@ -1,5 +1,5 @@
 import React from 'react';
-import { Routes, Route } from 'react-router-dom';
+import { Routes, Route, useLocation, Navigate } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
 import { WeeklyProvider } from './contexts/WeeklyContext';
 import VegetableService from './services/vegetableService';
@@ -14,9 +14,22 @@ import ShopPage from './pages/ShopPage';
 import AuthPage from './pages/AuthPage';
 import SubscriptionPage from './pages/SubscriptionPage';
 import AdminPage from './pages/AdminPage';
+import AdminLoginPage from './pages/AdminLoginPage';
+
+function AppLayout({ children }: { children: React.ReactNode }) {
+  const location = useLocation();
+  const isAdminArea = location.pathname.startsWith('/manage');
+
+  return (
+    <div className="min-h-screen">
+      {!isAdminArea && <Header />}
+      {children}
+      {!isAdminArea && <Footer />}
+    </div>
+  );
+}
 
 function App() {
-  // Initialize vegetable service
   React.useEffect(() => {
     const initializeServices = async () => {
       try {
@@ -27,15 +40,13 @@ function App() {
         console.error('Failed to initialize services:', error);
       }
     };
-
     initializeServices();
   }, []);
 
   return (
     <AuthProvider>
       <WeeklyProvider>
-        <div className="min-h-screen">
-          <Header />
+        <AppLayout>
           <Routes>
             <Route path="/" element={<HomePage />} />
             <Route path="/products" element={<ProductsPage />} />
@@ -57,17 +68,20 @@ function App() {
                 </ProtectedRoute>
               }
             />
+            {/* Admin: secret URL — not linked from public site */}
+            <Route path="/manage" element={<AdminLoginPage />} />
             <Route
-              path="/admin"
+              path="/manage/dashboard"
               element={
                 <AdminProtectedRoute>
                   <AdminPage />
                 </AdminProtectedRoute>
               }
             />
+            {/* Legacy /admin redirects to new admin dashboard */}
+            <Route path="/admin" element={<Navigate to="/manage/dashboard" replace />} />
           </Routes>
-          <Footer />
-        </div>
+        </AppLayout>
       </WeeklyProvider>
     </AuthProvider>
   );

@@ -48,21 +48,24 @@ export const getWeekDates = (weekId: string) => {
 
 // Check if customization is currently allowed
 export const isCustomizationOpen = (): boolean => {
-  const now = new Date();
-  const dayOfWeek = now.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
-  const hours = now.getHours();
-  const minutes = now.getMinutes();
-
-  // Saturday, Sunday, Monday, Tuesday: closed
-  if (dayOfWeek === 0 || dayOfWeek === 1 || dayOfWeek === 2 || dayOfWeek === 6) {
-    return false;
-  }
-  // Wednesday: open from 00:01 only
-  if (dayOfWeek === 3) {
-    return hours > 0 || (hours === 0 && minutes >= 1);
-  }
-  // Thursday, Friday: open all day (close at Friday end = Saturday 00:00)
-  return true;
+  return true; // TEMPORARY OVERRIDE
+  /*
+    const now = new Date();
+    const dayOfWeek = now.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+    const hours = now.getHours();
+    const minutes = now.getMinutes();
+  
+    // Saturday, Sunday, Monday, Tuesday: closed
+    if (dayOfWeek === 0 || dayOfWeek === 1 || dayOfWeek === 2 || dayOfWeek === 6) {
+      return false;
+    }
+    // Wednesday: open from 00:01 only
+    if (dayOfWeek === 3) {
+      return hours > 0 || (hours === 0 && minutes >= 1);
+    }
+    // Thursday, Friday: open all day (close at Friday end = Saturday 00:00)
+    return true;
+  */
 };
 
 // Get next customization opening time (next Wednesday 00:01)
@@ -115,13 +118,17 @@ export const getDeliveryDate = (): Date => {
   return sunday;
 };
 
+/** Target count per category (from bucket_types). When provided, selection respects DB config. */
+export type TargetDistribution = { root: number; leafy: number; bushy: number };
+
 // Shuffle algorithm with history awareness
 export const shuffleVegetablesForWeek = (
   availableVegetables: string[],
   requiredCount: number,
   weeklyHistory: WeeklyHistory,
   currentWeekId: string,
-  lookBackWeeks: number = 4
+  lookBackWeeks: number = 4,
+  targetDistribution?: TargetDistribution
 ): string[] => {
   // Get vegetables used in recent weeks
   const vegetableService = VegetableService.getInstance();
@@ -174,8 +181,8 @@ export const shuffleVegetablesForWeek = (
     bushy: prioritizeByRecency(categorizedVegetables.bushy)
   };
 
-  // Calculate target distribution based on required count
-  const getTargetDistribution = (count: number) => {
+  // Use DB target distribution if provided; else fallback to hardcoded by count
+  const getTargetDistributionFallback = (count: number): TargetDistribution => {
     if (count <= 4) {
       return { root: 1, leafy: 1, bushy: count - 2 };
     } else if (count <= 7) {
@@ -185,7 +192,7 @@ export const shuffleVegetablesForWeek = (
     }
   };
 
-  const target = getTargetDistribution(requiredCount);
+  const target = targetDistribution ?? getTargetDistributionFallback(requiredCount);
   const selected: string[] = [];
 
   // Select vegetables by category
@@ -222,37 +229,50 @@ const shuffleArray = <T>(array: T[]): T[] => {
   return shuffled;
 };
 
-// Generate weekly selection for a plan
+export const PLAN_COUNTS = {
+  small: 4,
+  medium: 7,
+  large: 10
+};
+
+// Generate weekly selection for a plan (optionally use DB bucket type counts)
 export const generateWeeklySelection = (
   planId: 'small' | 'medium' | 'large',
   weeklyHistory: WeeklyHistory,
-  weekId?: string
+  weekId?: string,
+  options?: { targetDistribution?: TargetDistribution; requiredCount?: number }
 ): WeeklySelection => {
   const currentWeekId = weekId || getCurrentWeekId();
   const weekDates = getWeekDates(currentWeekId);
 
-  const planCounts = {
-    small: 4,
-    medium: 7,
-    large: 10
-  };
-
-  const requiredCount = planCounts[planId];
+  const requiredCount = options?.requiredCount ?? PLAN_COUNTS[planId];
   const vegetableService = VegetableService.getInstance();
-  const allVegetableIds = vegetableService.getActiveVegetables().map(v => v.id);
+  const allActiveVegetables = vegetableService.getActiveVegetables();
+  const allVegetableIds = allActiveVegetables.map(v => v.id);
+
+  if (allVegetableIds.length === 0) {
+    console.warn('generateWeeklySelection: No active vegetables found in service');
+  }
 
   const selectedVegetables = shuffleVegetablesForWeek(
     allVegetableIds,
     requiredCount,
     weeklyHistory,
-    currentWeekId
+    currentWeekId,
+    4,
+    options?.targetDistribution
+  );
+
+  // CRITICAL: Double-check that all selected IDs actually exist in the DB
+  const validatedVegetables = selectedVegetables.filter(id =>
+    allActiveVegetables.some(v => v.id === id)
   );
 
   return {
     weekId: currentWeekId,
     startDate: weekDates.monday.toISOString().split('T')[0],
     endDate: weekDates.weekEnd.toISOString().split('T')[0],
-    vegetables: selectedVegetables,
+    vegetables: validatedVegetables,
     isCustomizationOpen: isCustomizationOpen(),
     customizationDeadline: getCustomizationDeadline().toISOString(),
     deliveryDate: getDeliveryDate().toISOString().split('T')[0]
@@ -281,12 +301,12 @@ export const getCustomizationTimeRemaining = (): {
   return { days, hours, minutes, isExpired: false };
 };
 
-// Mock weekly history for demonstration
+// Mock weekly history for demonstration - Updated with valid IDs from seed data
 export const getMockWeeklyHistory = (): WeeklyHistory => {
   return {
     '2024-01': ['carrots', 'gotukola', 'bandakka', 'chilies'],
     '2024-02': ['radish', 'mukunuwenna', 'wambatu', 'beans'],
-    '2024-03': ['sweetpotato', 'kankun', 'karavila', 'gherkin'],
-    '2024-04': ['beetroot', 'leeks', 'pumpkin', 'cabbage']
+    '2024-03': ['sweetpotato', 'kankun', 'karavila', 'beetroot'],
+    '2024-04': ['nivithi', 'gotukola', 'bandakka', 'chilies']
   };
 };

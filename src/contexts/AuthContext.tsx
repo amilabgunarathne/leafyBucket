@@ -9,6 +9,7 @@ interface User {
   address?: string;
   role: 'user' | 'admin';
   subscription?: {
+    id: string; // New field
     plan: 'small' | 'medium' | 'large';
     status: 'active' | 'paused' | 'cancelled';
     nextDelivery: string;
@@ -42,6 +43,17 @@ export const useAuth = () => {
   return context;
 };
 
+// Helper to map DB bucket names to app plans
+const mapBucketTypeToPlan = (bucketName?: string): 'small' | 'medium' | 'large' => {
+  switch (bucketName) {
+    case 'Mini': return 'small';
+    case 'Family': return 'medium';
+    case 'Plus': return 'large';
+    default: return 'medium';
+  }
+};
+
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -58,11 +70,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (profileError) throw profileError;
 
-      // 2. Fetch Subscription
+      // 2. Fetch Latest Active Subscription
       const { data: subscription } = await supabase
         .from('subscriptions')
-        .select('*')
+        .select('*, bucket_type:bucket_types(*)')
         .eq('user_id', userId)
+        .eq('status', 'active')
+        .order('created_at', { ascending: false })
+        .limit(1)
         .maybeSingle();
 
       // Construct User Object
@@ -74,10 +89,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         address: profile.address || '',
         role: profile.role || 'user',
         subscription: subscription ? {
-          plan: subscription.plan,
+          id: subscription.id,
+          plan: mapBucketTypeToPlan(subscription.bucket_type?.name),
           status: subscription.status,
-          nextDelivery: subscription.next_delivery,
-          customizations: subscription.customizations || {
+          nextDelivery: subscription.next_delivery || new Date().toISOString(), // Fallback
+          // MOCK: Customizations (need to fetch from customisation_actions eventually)
+          customizations: {
             excludedVegetables: [],
             removedVegetables: [],
             addedVegetables: [],
@@ -209,27 +226,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       // Update Subscription Table
       if (userData.subscription) {
-        // Check if subscription exists first
-        const { data: existingSub } = await supabase
-          .from('subscriptions')
-          .select('id')
-          .eq('user_id', user.id)
-          .maybeSingle();
+        // NOTE: Complex subscription updates (plan changes, creation) should be handled 
+        // via SubscriptionService to ensure data integrity with bucket_types and deliveries.
+        // specific 'status' updates for pausing/cancelling can be done here or in service.
 
-        const subData = {
-          user_id: user.id,
-          plan: userData.subscription.plan,
-          status: userData.subscription.status,
-          next_delivery: userData.subscription.nextDelivery,
-          customizations: userData.subscription.customizations
-        };
-
-        if (existingSub) {
-          await supabase.from('subscriptions').update(subData).eq('user_id', user.id);
-        } else {
-          // Create new subscription if not exists
-          await supabase.from('subscriptions').insert(subData);
+        // For now, we only update the status if explicitly provided and separate from plan creation
+        if (userData.subscription.status && user.subscription?.id) {
+          await supabase
+            .from('subscriptions')
+            .update({ status: userData.subscription.status })
+            .eq('id', user.subscription.id);
         }
+
+        // We do NOT create new subscriptions here anymore as it requires looking up bucket_type_id.
+        // Use SubscriptionService.createSubscription() instead.
       }
     } catch (error) {
       console.error('Error updating user data:', error);

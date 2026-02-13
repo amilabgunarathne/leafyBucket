@@ -5,23 +5,31 @@ export interface Vegetable {
   id: string;
   name: string;
   category: 'root' | 'leafy' | 'bushy';
-  baseValue: number;
   typicalWeight: string;
   marketPricePer250g: number;
   description: string;
   season: string;
   benefits: string[];
   image: string;
-  weightPerValuePoint: number;
   isAvailable: boolean;
   nutritionScore: number;
   createdAt: string;
   updatedAt: string;
+  // New fields from schema
+  categoryId?: string;
+  unitType?: string;
+  isSubstitutable?: boolean;
 }
+
+/** Budget share per category as percentage (0–100). Sum should be 100. */
+export type CategoryRatios = { root: number; leafy: number; bushy: number };
+
+const DEFAULT_CATEGORY_PERCENTS: CategoryRatios = { root: 44, leafy: 22, bushy: 34 };
 
 class VegetableService {
   private static instance: VegetableService;
   private vegetables: Map<string, Vegetable> = new Map();
+  private categoryRatios: CategoryRatios = { ...DEFAULT_CATEGORY_PERCENTS };
   private initialized: boolean = false;
   private initPromise: Promise<void> | null = null;
 
@@ -43,7 +51,7 @@ class VegetableService {
 
         const { data, error } = await supabase
           .from('vegetables')
-          .select('*');
+          .select('*, category:veg_categories(name, soft_ratio_weight)');
 
         if (error) {
           console.error('VegetableService: Supabase error:', error);
@@ -58,33 +66,76 @@ class VegetableService {
         if (data) {
           this.vegetables.clear();
           data.forEach((row: any) => {
-            // Verify critical fields
             if (!row.id || !row.name) {
               console.warn('Skipping invalid row:', row);
               return;
             }
 
+            // Determine category string robustly
+            let categoryStr = 'leafy'; // Default fallback
+
+            // Check if 'category' is the join object from veg_categories
+            if (row.category && typeof row.category === 'object' && row.category.name) {
+              categoryStr = row.category.name.toLowerCase();
+            } else if (typeof row.category === 'string') {
+              categoryStr = row.category.toLowerCase();
+            } else if (row.category_id) {
+              // If we have ID but no join object, we might want to fetch it, 
+              // but for now let's hope the join worked.
+              console.warn(`Vegetable ${row.id} has category_id but no joined category name`);
+            }
+
             const vegetable: Vegetable = {
               id: row.id,
               name: row.name,
-              category: row.category,
-              baseValue: row.base_value,
               typicalWeight: row.typical_weight,
-              marketPricePer250g: row.market_price_per_250g,
-              description: row.description,
-              season: row.season,
-              benefits: row.benefits,
-              image: row.image,
-              weightPerValuePoint: row.weight_per_value_point,
-              isAvailable: row.is_available,
+              marketPricePer250g: row.market_price_per_250g || 0,
+              description: row.description || '',
+              season: row.season || 'All Year',
+              benefits: row.benefits || [],
+              image: row.image || '',
+              isAvailable: row.is_available !== undefined ? row.is_available : (row.is_active !== undefined ? row.is_active : true),
               updatedAt: row.updated_at || new Date().toISOString(),
               createdAt: row.created_at || new Date().toISOString(),
-              nutritionScore: row.nutrition_score
+              nutritionScore: row.nutrition_score || 0,
+              categoryId: row.category_id,
+              category: categoryStr as 'root' | 'leafy' | 'bushy',
+              unitType: row.unit_type || '250g',
+              isSubstitutable: row.is_substitutable !== undefined ? row.is_substitutable : true
             };
             this.vegetables.set(vegetable.id, vegetable);
           });
-          console.log('VegetableService: Loaded', this.vegetables.size, 'vegetables from Supabase');
+          console.log('VegetableService: Processed', this.vegetables.size, 'vegetables');
+          const stats = this.getStatistics();
+          console.log('VegetableService: Categories ->', stats.byCategory);
           this.notifyListeners();
+        }
+
+        // Load category budget share percentages from veg_categories (one row per name)
+        const { data: catRows } = await supabase.from('veg_categories').select('name, budget_share_percent, soft_ratio_weight');
+        if (catRows && catRows.length > 0) {
+          const seen = new Set<string>();
+          const byName = catRows.filter((r: { name?: string }) => {
+            const k = (r.name || '').toLowerCase();
+            if (seen.has(k)) return false;
+            seen.add(k);
+            return true;
+          });
+          const totalWeight = byName.reduce((s, r) => s + (Number((r as any).soft_ratio_weight) || 0), 0);
+          const ratios: CategoryRatios = { ...DEFAULT_CATEGORY_PERCENTS };
+          byName.forEach((r: { name?: string; budget_share_percent?: number | null; soft_ratio_weight?: number }) => {
+            const key = r.name?.toLowerCase();
+            if (key === 'root' || key === 'leafy' || key === 'bushy') {
+              const pct = r.budget_share_percent != null ? Number(r.budget_share_percent) : NaN;
+              if (!Number.isNaN(pct) && pct >= 0) {
+                ratios[key] = Math.round(Math.min(100, Math.max(0, pct)));
+              } else if (totalWeight > 0) {
+                const w = Number(r.soft_ratio_weight) || 0;
+                ratios[key] = Math.round(Math.min(100, Math.max(0, (100 * w) / totalWeight)));
+              }
+            }
+          });
+          this.categoryRatios = ratios;
         }
 
         this.initialized = true;
@@ -131,22 +182,31 @@ class VegetableService {
     const id = this.generateId(vegetableData.name);
     const now = new Date().toISOString();
 
-    const dbPayload = {
+    // Resolve category: DB may have category_id (FK to veg_categories) or category (text)
+    let categoryId: string | null = vegetableData.categoryId || null;
+    if (!categoryId) {
+      const { data: categories } = await supabase.from('veg_categories').select('id, name');
+      const byName = (categories || []).find((c: { name: string }) => c.name?.toLowerCase() === vegetableData.category?.toLowerCase());
+      if (byName) categoryId = byName.id;
+    }
+
+    const dbPayload: Record<string, unknown> = {
       id,
       name: vegetableData.name,
-      category: vegetableData.category,
-      base_value: vegetableData.baseValue,
       typical_weight: vegetableData.typicalWeight,
-      market_price_per_250g: vegetableData.marketPricePer250g,
-      description: vegetableData.description,
-      season: vegetableData.season,
-      benefits: vegetableData.benefits,
-      image: vegetableData.image,
-      weight_per_value_point: vegetableData.weightPerValuePoint,
-      is_available: vegetableData.isAvailable,
-      nutrition_score: vegetableData.nutritionScore,
-      // created_at and updated_at handled by DB defaults, but we can send if needed
+      market_price_per_250g: Math.round(Number(vegetableData.marketPricePer250g) || 0),
+      description: vegetableData.description || '',
+      season: vegetableData.season || 'All Year',
+      image: vegetableData.image || '',
+      nutrition_score: Math.min(10, Math.max(0, Math.round(Number(vegetableData.nutritionScore) || 5))),
     };
+
+    if (categoryId) {
+      dbPayload.category_id = categoryId;
+    } else {
+      // Fallback for schema with text category column
+      dbPayload.category = vegetableData.category || 'leafy';
+    }
 
     const { data, error } = await supabase
       .from('vegetables')
@@ -179,20 +239,23 @@ class VegetableService {
       throw new Error('Vegetable not found');
     }
 
-    // Map updates to DB columns
+    // Map updates to DB columns (table has category_id, not category)
     const dbUpdates: any = {};
     if (updates.name !== undefined) dbUpdates.name = updates.name;
-    if (updates.category !== undefined) dbUpdates.category = updates.category;
-    if (updates.baseValue !== undefined) dbUpdates.base_value = updates.baseValue;
-    if (updates.typicalWeight !== undefined) dbUpdates.typical_weight = updates.typicalWeight;
     if (updates.marketPricePer250g !== undefined) dbUpdates.market_price_per_250g = updates.marketPricePer250g;
     if (updates.description !== undefined) dbUpdates.description = updates.description;
     if (updates.season !== undefined) dbUpdates.season = updates.season;
-    if (updates.benefits !== undefined) dbUpdates.benefits = updates.benefits;
     if (updates.image !== undefined) dbUpdates.image = updates.image;
-    if (updates.weightPerValuePoint !== undefined) dbUpdates.weight_per_value_point = updates.weightPerValuePoint;
-    if (updates.isAvailable !== undefined) dbUpdates.is_available = updates.isAvailable;
     if (updates.nutritionScore !== undefined) dbUpdates.nutrition_score = updates.nutritionScore;
+
+    // Resolve category name to category_id when user changes category in edit
+    if (updates.categoryId !== undefined) {
+      dbUpdates.category_id = updates.categoryId;
+    } else if (updates.category !== undefined) {
+      const { data: categories } = await supabase.from('veg_categories').select('id, name');
+      const byName = (categories || []).find((c: { name: string }) => c.name?.toLowerCase() === updates.category?.toLowerCase());
+      if (byName) dbUpdates.category_id = byName.id;
+    }
 
     dbUpdates.updated_at = new Date().toISOString();
 
@@ -264,6 +327,41 @@ class VegetableService {
     }
 
     return id;
+  }
+
+  /** Category budget share as percentages 0–100 (from veg_categories.budget_share_percent). */
+  getCategoryRatios(): CategoryRatios {
+    return { ...this.categoryRatios };
+  }
+
+  /** Refetch category percentages from DB (e.g. after admin edit). */
+  async refreshCategoryRatios(): Promise<CategoryRatios> {
+    const { data: catRows } = await supabase.from('veg_categories').select('name, budget_share_percent, soft_ratio_weight');
+    if (catRows && catRows.length > 0) {
+      const seen = new Set<string>();
+      const byName = catRows.filter((r: { name?: string }) => {
+        const k = (r.name || '').toLowerCase();
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      });
+      const totalWeight = byName.reduce((s, r) => s + (Number((r as any).soft_ratio_weight) || 0), 0);
+      const ratios: CategoryRatios = { ...DEFAULT_CATEGORY_PERCENTS };
+      byName.forEach((r: { name?: string; budget_share_percent?: number | null; soft_ratio_weight?: number }) => {
+        const key = r.name?.toLowerCase();
+        if (key === 'root' || key === 'leafy' || key === 'bushy') {
+          const pct = r.budget_share_percent != null ? Number(r.budget_share_percent) : NaN;
+          if (!Number.isNaN(pct) && pct >= 0) {
+            ratios[key] = Math.round(Math.min(100, Math.max(0, pct)));
+          } else if (totalWeight > 0) {
+            const w = Number(r.soft_ratio_weight) || 0;
+            ratios[key] = Math.round(Math.min(100, Math.max(0, (100 * w) / totalWeight)));
+          }
+        }
+      });
+      this.categoryRatios = ratios;
+    }
+    return this.getCategoryRatios();
   }
 
   // Get statistics

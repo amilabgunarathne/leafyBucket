@@ -22,8 +22,8 @@ const AdminProtectedRoute: React.FC<AdminProtectedRouteProps> = ({ children }) =
   }
 
   if (!user) {
-    // Not logged in, redirect to auth page
-    return <Navigate to="/auth" state={{ from: location, adminRequired: true }} replace />;
+    // Not logged in — redirect to admin-only sign-in (not public /auth)
+    return <Navigate to="/manage" state={{ from: location }} replace />;
   }
 
   if (!isAdmin()) {

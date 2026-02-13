@@ -1,3 +1,5 @@
+import { supabase } from '../lib/supabase';
+
 // Pricing service to handle dynamic vegetable prices
 export interface VegetablePricing {
   vegetableId: string;
@@ -37,29 +39,38 @@ class PricingService {
 
         console.log('Initializing pricing for vegetables:', vegetables.length);
 
-        vegetables.forEach(veg => {
-          this.prices.set(veg.id, {
-            vegetableId: veg.id,
-            currentPrice: veg.marketPricePer250g,
-            source: 'manual',
-            lastUpdated: new Date().toISOString(),
-            isActive: true
+        // Try to fetch active market prices first
+        const { data: marketPrices, error } = await supabase
+          .from('market_prices')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (!error && marketPrices && marketPrices.length > 0) {
+          // Map DB prices
+          marketPrices.forEach((mp: any) => {
+            this.prices.set(mp.vegetable_id, {
+              vegetableId: mp.vegetable_id,
+              currentPrice: mp.price_per_unit,
+              source: 'market',
+              lastUpdated: mp.created_at,
+              isActive: true
+            });
           });
+        }
+
+        // Fill missing with defaults
+        vegetables.forEach(veg => {
+          if (!this.prices.has(veg.id)) {
+            this.prices.set(veg.id, {
+              vegetableId: veg.id,
+              currentPrice: veg.marketPricePer250g,
+              source: 'manual',
+              lastUpdated: new Date().toISOString(),
+              isActive: true
+            });
+          }
         });
 
-        // Load from localStorage if available
-        const storedPrices = localStorage.getItem('vegetable_prices');
-        if (storedPrices) {
-          try {
-            const parsed = JSON.parse(storedPrices);
-            Object.entries(parsed).forEach(([id, pricing]) => {
-              this.prices.set(id, pricing as VegetablePricing);
-            });
-            console.log('Loaded stored prices:', this.prices.size);
-          } catch (error) {
-            console.error('Error loading stored prices:', error);
-          }
-        }
         console.log('Pricing service initialized with', this.prices.size, 'items');
         this.initialized = true;
       } catch (error) {

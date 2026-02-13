@@ -13,7 +13,7 @@ const WeeklyVegetableDisplay: React.FC<WeeklyVegetableDisplayProps> = ({
   planId,
   showShuffleButton = false
 }) => {
-  const { currentWeekSelection, isCustomizationAllowed, refreshWeeklySelection } = useWeekly();
+  const { getSelectionForPlan, isCustomizationAllowed, refreshWeeklySelection } = useWeekly();
   const [allVegetables, setAllVegetables] = React.useState<Vegetable[]>([]);
   const [loading, setLoading] = React.useState(true);
 
@@ -50,6 +50,8 @@ const WeeklyVegetableDisplay: React.FC<WeeklyVegetableDisplayProps> = ({
       refreshWeeklySelection(planId);
     }
   };
+
+  const currentWeekSelection = getSelectionForPlan(planId);
 
   if (!currentWeekSelection || loading) {
     return (

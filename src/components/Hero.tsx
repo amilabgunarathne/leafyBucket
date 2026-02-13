@@ -36,7 +36,7 @@ const Hero = () => {
                 onClick={handleStartSubscription}
                 className="bg-green-600 text-white px-8 py-4 rounded-full text-lg font-semibold hover:bg-green-700 transform hover:scale-105 transition-all duration-200 flex items-center justify-center space-x-2"
               >
-                <span>{user ? 'Manage Subscription' : 'Select Bucket Size'}</span>
+                <span>{user ? 'Manage Your Bucket' : 'Select Bucket Size'}</span>
                 <ArrowRight className="h-5 w-5" />
               </button>
               <Link

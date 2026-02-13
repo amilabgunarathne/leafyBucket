@@ -1,3 +1,4 @@
+import React from 'react';
 import { Star, Package, Check } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -14,78 +15,45 @@ const Pricing = () => {
     }
   };
 
-  type PlanId = 'small' | 'medium' | 'large';
+  const [plans, setPlans] = React.useState<any[]>([]);
+  const [loading, setLoading] = React.useState(true);
 
-  const plans: {
-    name: string;
-    price: string;
-    description: string;
-    vegetableCount: string;
-    weight: string;
-    vegetableBudget: string;
-    handlingFee: string;
-    features: string[];
-    popular: boolean;
-    planId: PlanId;
-  }[] = [
-      {
-        name: "Small Family",
-        price: "2,900",
-        description: "Perfect for 1-2 people",
-        vegetableCount: "4",
-        weight: "1.5-2 kg",
-        vegetableBudget: "2,200",
-        handlingFee: "700",
-        features: [
-          "4 varieties of vegetables",
-          "1.5-2 kg of fresh produce",
-          "Weekly delivery",
-          "Free delivery",
-          "Seasonal recipe cards"
-        ],
-        popular: false,
-        planId: 'small'
-      },
-      {
-        name: "Medium Family",
-        price: "4,900",
-        description: "Great for 3-4 people",
-        vegetableCount: "7",
-        weight: "3-4 kg",
-        vegetableBudget: "4,000",
-        handlingFee: "900",
-        features: [
-          "7 varieties of vegetables",
-          "3-4 kg of fresh produce",
-          "Weekly delivery",
-          "Free delivery",
-          "Seasonal recipe cards",
-          "Priority customer support"
-        ],
-        popular: true,
-        planId: 'medium'
-      },
-      {
-        name: "Large Family",
-        price: "6,900",
-        description: "Ideal for 5+ people",
-        vegetableCount: "10",
-        weight: "5-6 kg",
-        vegetableBudget: "5,700",
-        handlingFee: "1,200",
-        features: [
-          "10 varieties of vegetables",
-          "5-6 kg of fresh produce",
-          "Weekly delivery",
-          "Free delivery",
-          "Seasonal recipe cards",
-          "Priority customer support",
-          "Exclusive chef recipes"
-        ],
-        popular: false,
-        planId: 'large'
+  React.useEffect(() => {
+    const fetchPlans = async () => {
+      try {
+        const { default: SubscriptionService } = await import('../services/SubscriptionService');
+        const bucketTypes = await SubscriptionService.getInstance().getBucketTypes();
+
+        const mappedPlans = bucketTypes.map(bt => ({
+          name: bt.name + (bt.name === 'Mini' ? ' Family' : bt.name === 'Family' ? '' : ' Family'), // Adjust name for UI consistency if needed
+          price: bt.monthly_price.toLocaleString(),
+          description: bt.description,
+          vegetableCount: bt.display_item_range.replace(/\D/g, ''), // Extract number roughly or use string
+          weight: "TBD", // Weight isn't in bucket_types yet, maybe add to DB or guess
+          vegetableBudget: (bt.monthly_price - bt.handling_fee).toLocaleString(),
+          features: [
+            `${bt.display_item_range} varieties weekly`,
+            "Free weekly delivery",
+            "Seasonal recipe cards"
+          ],
+          popular: bt.name === 'Family', // Hardcode popular for now or add flag to DB
+          planId: bt.name.toLowerCase() === 'mini' ? 'small' : bt.name.toLowerCase() === 'family' ? 'medium' : 'large'
+        }));
+
+        setPlans(mappedPlans);
+      } catch (error) {
+        console.error("Error loading plans:", error);
+      } finally {
+        setLoading(false);
       }
-    ];
+    };
+
+    fetchPlans();
+  }, []);
+
+  if (loading) {
+    return <div className="py-20 text-center">Loading plans...</div>;
+  }
 
 
   return (
@@ -136,7 +104,7 @@ const Pricing = () => {
                 </div>
 
                 <ul className="space-y-4 mb-8">
-                  {plan.features.map((feature, featureIndex) => (
+                  {plan.features.map((feature: string, featureIndex: number) => (
                     <li key={featureIndex} className="flex items-start space-x-3">
                       <Check className={`h-5 w-5 mt-0.5 ${plan.popular ? 'text-green-200' : 'text-green-600'} flex-shrink-0`} />
                       <span className={`${plan.popular ? 'text-green-50' : 'text-gray-700'}`}>{feature}</span>

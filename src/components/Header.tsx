@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
-import { Menu, X, User, Settings } from 'lucide-react';
+import { Menu, X, User } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
 const Header = () => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const location = useLocation();
-  const { user, isAdmin } = useAuth();
+  const { user } = useAuth();
 
   const handleNavClick = (e: React.MouseEvent<HTMLAnchorElement>, targetId: string) => {
     e.preventDefault();
@@ -88,18 +88,6 @@ const Header = () => {
               Reviews
             </a>
 
-            {/* Admin Link - Only show for admin users */}
-            {isAdmin() && (
-              <Link
-                to="/admin"
-                className="text-orange-600 hover:text-orange-700 transition-colors flex items-center space-x-1"
-                title="Admin Panel"
-              >
-                <Settings className="h-4 w-4" />
-                <span className="text-sm font-medium">Admin</span>
-              </Link>
-            )}
-
             {user ? (
               <Link
                 to="/subscription"
@@ -166,17 +154,6 @@ const Header = () => {
               >
                 Reviews
               </a>
-
-              {/* Admin Link for Mobile - Only show for admin users */}
-              {isAdmin() && (
-                <Link
-                  to="/admin"
-                  className="block px-3 py-2 text-orange-600 hover:text-orange-700 transition-colors font-medium"
-                  onClick={() => setIsMenuOpen(false)}
-                >
-                  Admin Panel
-                </Link>
-              )}
 
               {user ? (
                 <Link

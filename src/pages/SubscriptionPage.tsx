@@ -3,6 +3,7 @@ import { ArrowLeft, Package, Settings, User, Edit3, MapPin, Phone, Mail, Pause, 
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import ConfirmationModal from '../components/ConfirmationModal';
+import SubscriptionService from '../services/SubscriptionService';
 import VegetableService from '../services/vegetableService';
 
 const SubscriptionPage = () => {
@@ -17,7 +18,35 @@ const SubscriptionPage = () => {
   });
 
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
-  const [pendingAction, setPendingAction] = useState<'pause' | 'resume' | null>(null);
+  const [pendingAction, setPendingAction] = useState<'pause' | 'resume' | 'change_plan' | null>(null);
+  const [isChangingPlan, setIsChangingPlan] = useState(false);
+  const [pendingNewPlan, setPendingNewPlan] = useState<string | null>(null);
+
+  const [activeSubscription, setActiveSubscription] = useState<any>(null);
+  const [currentDelivery, setCurrentDelivery] = useState<any>(null);
+  const bucketTypesRef = React.useRef<any[]>([]);
+
+  // Fetch real subscription details
+  React.useEffect(() => {
+    if (user) {
+      const fetchSub = async () => {
+        const { default: SubscriptionService } = await import('../services/SubscriptionService');
+        const data = await SubscriptionService.getInstance().getActiveSubscription(user.id);
+        if (data) {
+          setActiveSubscription(data.subscription);
+          setCurrentDelivery(data.currentDelivery);
+        }
+      };
+      fetchSub();
+    }
+  }, [user]);
+
+  // Using activeSubscription to suppress lint (will be used for detailed view later)
+  React.useEffect(() => {
+    if (activeSubscription) {
+      console.log("Loaded active subscription:", activeSubscription.id);
+    }
+  }, [activeSubscription]);
 
   // Redirect if not logged in
   React.useEffect(() => {
@@ -30,29 +59,62 @@ const SubscriptionPage = () => {
     return null;
   }
 
+
   const handleProfileUpdate = () => {
     updateUser(profileData);
     setIsEditingProfile(false);
   };
 
-  const handleStartSubscription = (plan: 'small' | 'medium' | 'large') => {
-    const nextDelivery = new Date();
-    nextDelivery.setDate(nextDelivery.getDate() + 7);
+  const handleStartSubscriptionRequest = (planId: string) => {
+    setPendingNewPlan(planId);
+    setPendingAction('change_plan'); // Re-use for initial selection too
+    setIsConfirmModalOpen(true);
+  };
 
-    updateUser({
-      subscription: {
-        plan,
-        status: 'active',
-        nextDelivery: nextDelivery.toISOString().split('T')[0],
-        customizations: {
-          excludedVegetables: [],
-          removedVegetables: [],
-          addedVegetables: [],
-          deliveryDay: 'sunday'
+  const handleConfirmStatusChange = async () => {
+    if (!user || (!user.subscription && pendingAction !== 'change_plan')) return;
+
+    try {
+      const subService = SubscriptionService.getInstance();
+
+      if (pendingAction === 'change_plan' && pendingNewPlan) {
+        // Find the bucket type for this plan
+        const bucketType = bucketTypesRef.current.find(bt => {
+          const mappedId = bt.name.toLowerCase() === 'mini' ? 'small' : bt.name.toLowerCase() === 'family' ? 'medium' : 'large';
+          return mappedId === pendingNewPlan;
+        });
+
+        if (!bucketType) throw new Error("Bucket type not found");
+
+        if (!user.subscription) {
+          // INITIAL SUBSCRIPTION
+          await subService.createSubscription(user.id, bucketType.id);
+
+          // Force refresh everything to ensure AuthContext picks up the new record
+          window.location.reload();
+        } else {
+          // PLAN CHANGE
+          await subService.updateSubscriptionPlan(user.subscription.id, bucketType.id);
+
+          // Force refresh
+          window.location.reload();
         }
+        setPendingNewPlan(null);
+      } else if (user.subscription && (pendingAction === 'pause' || pendingAction === 'resume')) {
+        // STATUS UPDATE
+        const newStatus = pendingAction === 'pause' ? 'paused' : 'active';
+        await subService.updateSubscriptionStatus(user.subscription.id, newStatus);
+
+        // Force refresh
+        window.location.reload();
       }
-    });
-    setActiveTab('overview');
+    } catch (error) {
+      console.error("Error updating subscription:", error);
+      alert("Failed to update subscription. Please try again.");
+    } finally {
+      setIsConfirmModalOpen(false);
+      setPendingAction(null);
+    }
   };
 
   const toggleSubscriptionStatus = () => {
@@ -63,44 +125,75 @@ const SubscriptionPage = () => {
     }
   };
 
-  const handleConfirmStatusChange = () => {
-    if (user.subscription && pendingAction) {
-      updateUser({
-        subscription: {
-          ...user.subscription,
-          status: pendingAction === 'pause' ? 'paused' : 'active'
-        }
-      });
-      setPendingAction(null);
+  const handlePlanChangeInitiate = (planId: string) => {
+    if (planId === user.subscription?.plan) {
+      setIsChangingPlan(false);
+      return;
     }
+    setPendingNewPlan(planId);
+    setPendingAction('change_plan');
+    setIsConfirmModalOpen(true);
   };
 
-  const plans = [
-    {
-      id: 'small',
-      name: 'Small Family',
-      price: 2900,
-      description: 'Perfect for 1-2 people',
-      vegetables: 4,
-      weight: '1.5-2 kg'
-    },
-    {
-      id: 'medium',
-      name: 'Medium Family',
-      price: 4900,
-      description: 'Great for 3-4 people',
-      vegetables: 7,
-      weight: '3-4 kg'
-    },
-    {
-      id: 'large',
-      name: 'Large Family',
-      price: 6900,
-      description: 'Ideal for 5+ people',
-      vegetables: 10,
-      weight: '5-6 kg'
-    }
-  ];
+  /* 
+   * Dynamic Plans Fetching 
+   */
+  const [plans, setPlans] = useState<any[]>([]);
+  const [loadingPlans, setLoadingPlans] = useState(true);
+
+  React.useEffect(() => {
+    const fetchPlans = async () => {
+      try {
+        console.log("Fetching plans...");
+        const bucketTypes = await SubscriptionService.getInstance().getBucketTypes();
+        console.log("Fetched bucket types:", bucketTypes);
+
+        if (bucketTypes.length === 0) {
+          console.warn("No bucket types found in DB. Using fallback.");
+          setPlans([
+            { id: 'small', name: 'Mini Family', price: 11600, description: 'Perfect for 1-2 people', vegetables: 4, weight: "1.5 - 2 kg" },
+            { id: 'medium', name: 'Family', price: 19600, description: 'Great for 3-4 people', vegetables: 7, weight: "3 - 3.5 kg" },
+            { id: 'large', name: 'Plus Family', price: 27600, description: 'Ideal for 5+ people', vegetables: 10, weight: "4.5 - 5 kg" }
+          ]);
+          return;
+        }
+
+        const validBucketTypes = bucketTypes.filter(bt => ['mini', 'family', 'plus'].includes(bt.name.toLowerCase()));
+        bucketTypesRef.current = bucketTypes;
+
+        const mappedPlans = await Promise.all(validBucketTypes.map(async (bt) => {
+          const id = bt.name.toLowerCase() === 'mini' ? 'small' : bt.name.toLowerCase() === 'family' ? 'medium' : 'large';
+
+          let weight = "1.5 - 2 kg";
+          if (id === 'medium') weight = "3 - 3.5 kg";
+          if (id === 'large') weight = "4.5 - 5 kg";
+
+          return {
+            id,
+            name: bt.name + (bt.name === 'Mini' ? ' Family' : bt.name === 'Family' ? '' : ' Family'),
+            price: bt.monthly_price,
+            description: bt.description,
+            vegetables: parseInt(bt.display_item_range.replace(/\D/g, '')) || 7,
+            weight
+          };
+        }));
+
+        mappedPlans.sort((a, b) => a.price - b.price);
+        setPlans(mappedPlans);
+      } catch (error) {
+        console.error("Error loading plans:", error);
+        setPlans([
+          { id: 'small', name: 'Mini Family', price: 11600, description: 'Perfect for 1-2 people', vegetables: 4, weight: "1.5 - 2 kg" },
+          { id: 'medium', name: 'Family', price: 19600, description: 'Great for 3-4 people', vegetables: 7, weight: "3 - 3.5 kg" },
+          { id: 'large', name: 'Plus Family', price: 27600, description: 'Ideal for 5+ people', vegetables: 10, weight: "4.5 - 5 kg" }
+        ]);
+      } finally {
+        setLoadingPlans(false);
+      }
+    };
+
+    fetchPlans();
+  }, []);
 
   const currentPlan = plans.find(p => p.id === user.subscription?.plan);
 
@@ -201,7 +294,7 @@ const SubscriptionPage = () => {
             {/* Overview Tab */}
             {activeTab === 'overview' && (
               <div className="space-y-8">
-                {!user.subscription ? (
+                {(!user.subscription || user.subscription.status === 'cancelled') ? (
                   /* No Subscription - Plan Selection */
                   <div className="bg-white rounded-3xl shadow-lg p-8">
                     <div className="text-center mb-8">
@@ -209,58 +302,65 @@ const SubscriptionPage = () => {
                       <p className="text-gray-600">Start your journey to healthier eating with fresh vegetables delivered weekly</p>
                     </div>
 
-                    <div className="grid md:grid-cols-3 gap-6">
-                      {plans.map((plan) => (
-                        <div key={plan.id} className={`border-2 rounded-2xl p-6 transition-all hover:shadow-lg ${plan.id === 'medium' ? 'border-green-600 bg-green-50' : 'border-gray-200'
-                          }`}>
-                          {plan.id === 'medium' && (
-                            <div className="text-center mb-4">
-                              <span className="bg-green-600 text-white px-3 py-1 rounded-full text-sm font-semibold">
-                                Most Popular
-                              </span>
-                            </div>
-                          )}
+                    {loadingPlans ? (
+                      <div className="text-center py-12">
+                        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto mb-4"></div>
+                        <p className="text-gray-500">Loading plans...</p>
+                      </div>
+                    ) : (
+                      <div className="grid md:grid-cols-3 gap-6">
+                        {plans.map((plan) => (
+                          <div key={plan.id} className={`border-2 rounded-2xl p-6 transition-all hover:shadow-lg ${plan.id === 'medium' ? 'border-green-600 bg-green-50' : 'border-gray-200'
+                            }`}>
+                            {plan.id === 'medium' && (
+                              <div className="text-center mb-4">
+                                <span className="bg-green-600 text-white px-3 py-1 rounded-full text-sm font-semibold">
+                                  Most Popular
+                                </span>
+                              </div>
+                            )}
 
-                          <div className="text-center mb-6">
-                            <h3 className="text-xl font-bold text-gray-900 mb-2">{plan.name}</h3>
-                            <p className="text-gray-600 mb-4">{plan.description}</p>
-                            <div className="text-3xl font-bold text-green-600 mb-2">
-                              LKR {plan.price.toLocaleString()}
+                            <div className="text-center mb-6">
+                              <h3 className="text-xl font-bold text-gray-900 mb-2">{plan.name}</h3>
+                              <p className="text-gray-600 mb-4">{plan.description}</p>
+                              <div className="text-3xl font-bold text-green-600 mb-2">
+                                LKR {plan.price.toLocaleString()}
+                              </div>
+                              <div className="text-sm text-gray-600">per month</div>
                             </div>
-                            <div className="text-sm text-gray-600">per month</div>
+
+                            <div className="space-y-3 mb-6">
+                              <div className="flex items-center space-x-2">
+                                <Check className="h-4 w-4 text-green-600" />
+                                <span className="text-sm">{plan.vegetables} varieties of vegetables</span>
+                              </div>
+                              <div className="flex items-center space-x-2">
+                                <Check className="h-4 w-4 text-green-600" />
+                                <span className="text-sm">{plan.weight} of fresh produce</span>
+                              </div>
+                              <div className="flex items-center space-x-2">
+                                <Check className="h-4 w-4 text-green-600" />
+                                <span className="text-sm">Weekly delivery</span>
+                              </div>
+                              <div className="flex items-center space-x-2">
+                                <Check className="h-4 w-4 text-green-600" />
+                                <span className="text-sm">Free delivery</span>
+                              </div>
+                            </div>
+
+                            <button
+                              onClick={() => handleStartSubscriptionRequest(plan.id)}
+                              className={`w-full py-3 px-6 rounded-xl font-semibold transition-colors ${plan.id === 'medium'
+                                ? 'bg-green-600 text-white hover:bg-green-700'
+                                : 'bg-gray-100 text-gray-800 hover:bg-gray-200'
+                                }`}
+                            >
+                              Select Bucket Size
+                            </button>
                           </div>
-
-                          <div className="space-y-3 mb-6">
-                            <div className="flex items-center space-x-2">
-                              <Check className="h-4 w-4 text-green-600" />
-                              <span className="text-sm">{plan.vegetables} varieties of vegetables</span>
-                            </div>
-                            <div className="flex items-center space-x-2">
-                              <Check className="h-4 w-4 text-green-600" />
-                              <span className="text-sm">{plan.weight} of fresh produce</span>
-                            </div>
-                            <div className="flex items-center space-x-2">
-                              <Check className="h-4 w-4 text-green-600" />
-                              <span className="text-sm">Weekly delivery</span>
-                            </div>
-                            <div className="flex items-center space-x-2">
-                              <Check className="h-4 w-4 text-green-600" />
-                              <span className="text-sm">Free delivery</span>
-                            </div>
-                          </div>
-
-                          <button
-                            onClick={() => handleStartSubscription(plan.id as 'small' | 'medium' | 'large')}
-                            className={`w-full py-3 px-6 rounded-xl font-semibold transition-colors ${plan.id === 'medium'
-                              ? 'bg-green-600 text-white hover:bg-green-700'
-                              : 'bg-gray-100 text-gray-800 hover:bg-gray-200'
-                              }`}
-                          >
-                            Select Bucket Size
-                          </button>
-                        </div>
-                      ))}
-                    </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 ) : (
                   /* Active Subscription Overview */
@@ -292,6 +392,18 @@ const SubscriptionPage = () => {
                             <div className="flex justify-between">
                               <span className="text-gray-600">Weight:</span>
                               <span className="font-semibold">{currentPlan?.weight}</span>
+                            </div>
+                            <div className="flex justify-between items-center py-2 border-t border-gray-100 mt-2">
+                              <span className="text-gray-600">Plan Size:</span>
+                              <div className="flex items-center space-x-2">
+                                <span className="font-bold text-green-700">{currentPlan?.name}</span>
+                                <button
+                                  onClick={() => setIsChangingPlan(!isChangingPlan)}
+                                  className="text-xs text-blue-600 hover:text-blue-800 font-medium underline"
+                                >
+                                  {isChangingPlan ? 'Cancel' : 'Change Plan'}
+                                </button>
+                              </div>
                             </div>
                             <div className="flex justify-between">
                               <span className="text-gray-600">Next Delivery:</span>
@@ -332,22 +444,50 @@ const SubscriptionPage = () => {
                           </Link>
                         </div>
                       </div>
+
+                      {/* Plan Change Selection Grid */}
+                      {isChangingPlan && (
+                        <div className="mt-8 border-t border-gray-200 pt-8 animate-in fade-in slide-in-from-top-4 duration-300">
+                          <h3 className="text-lg font-bold text-gray-900 mb-6">Select New Plan Size</h3>
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            {plans.map((plan) => (
+                              <button
+                                key={plan.id}
+                                onClick={() => handlePlanChangeInitiate(plan.id)}
+                                className={`p-4 rounded-xl border-2 text-left transition-all ${plan.id === user.subscription?.plan
+                                  ? 'border-green-600 bg-green-50'
+                                  : 'border-gray-100 hover:border-blue-200 hover:bg-blue-50'
+                                  }`}
+                              >
+                                <div className="font-bold text-gray-900">{plan.name}</div>
+                                <div className="text-sm text-green-600 font-semibold mb-2">LKR {plan.price.toLocaleString()}</div>
+                                <div className="text-xs text-gray-600">{plan.vegetables} varieties • {plan.weight}</div>
+                                {plan.id === user.subscription?.plan && (
+                                  <div className="mt-2 text-[10px] uppercase tracking-wider font-bold text-green-700">Current Plan</div>
+                                )}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
 
-                    {/* Next Delivery */}
+                    {/* Next Delivery from Real DB or Context Fallback */}
                     <div className="bg-gradient-to-r from-green-50 to-orange-50 rounded-3xl p-8">
                       <h3 className="text-xl font-bold text-gray-900 mb-6">Next Delivery</h3>
                       <div className="grid md:grid-cols-3 gap-6">
                         <div className="text-center">
                           <Calendar className="h-8 w-8 text-green-600 mx-auto mb-2" />
                           <div className="font-semibold text-gray-900">
-                            {new Date(user.subscription.nextDelivery).toLocaleDateString('en-US', {
+                            {new Date(currentDelivery?.scheduled_date || user.subscription.nextDelivery).toLocaleDateString('en-US', {
                               weekday: 'long',
                               month: 'long',
                               day: 'numeric'
                             })}
                           </div>
-                          <div className="text-sm text-gray-600">Delivery Date</div>
+                          <div className="text-sm text-gray-600">
+                            {currentDelivery ? `Delivery #${currentDelivery.delivery_index} of 4` : 'Delivery Date'}
+                          </div>
                         </div>
                         <div className="text-center">
                           <Clock className="h-8 w-8 text-orange-600 mx-auto mb-2" />
@@ -573,13 +713,23 @@ const SubscriptionPage = () => {
           setPendingAction(null);
         }}
         onConfirm={handleConfirmStatusChange}
-        title={pendingAction === 'pause' ? 'Pause Subscription?' : 'Resume Subscription?'}
+        title={
+          pendingAction === 'pause' ? 'Pause Subscription?' :
+            pendingAction === 'resume' ? 'Resume Subscription?' :
+              'Change Plan Size?'
+        }
         message={
           pendingAction === 'pause'
             ? 'Are you sure you want to pause your subscription? You will not receive any vegetable boxes until you resume.'
-            : 'Are you sure you want to resume your subscription? Your vegetable deliveries will restart from the next scheduled date.'
+            : pendingAction === 'resume'
+              ? 'Are you sure you want to resume your subscription? Your vegetable deliveries will restart from the next scheduled date.'
+              : `Are you sure you want to change your plan to ${plans.find(p => p.id === pendingNewPlan)?.name}? Your next bill and vegetable allocation will update immediately.`
         }
-        confirmText={pendingAction === 'pause' ? 'Yes, Pause It' : 'Yes, Resume It'}
+        confirmText={
+          pendingAction === 'pause' ? 'Yes, Pause It' :
+            pendingAction === 'resume' ? 'Yes, Resume It' :
+              'Confirm New Plan'
+        }
         cancelText="No, Keep It"
         isDangerous={pendingAction === 'pause'}
       />

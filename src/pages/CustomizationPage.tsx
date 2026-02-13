@@ -1,98 +1,155 @@
-import React, { useState } from 'react';
-import { ArrowLeft, Check, X, Plus, Minus, Settings, AlertCircle, Calendar, Package, Wallet, RefreshCw, TrendingUp, Lock, Shield, TreePine, Leaf, Flower, Scale, Clock } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { ArrowLeft, Check, X, Plus, Settings, Package, RefreshCw, Lock, TreePine, Leaf, Flower, Clock } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { Vegetable, calculatePlanAllocation, defaultPlanVegetables, CATEGORY_VALUES, calculateTotalPlanWeight, getWeightBreakdownByCategory } from '../data/vegetables';
+import { Vegetable, calculatePlanAllocation, defaultPlanVegetables, getWeightBreakdownByCategory } from '../data/vegetables';
 import VegetableService from '../services/vegetableService';
 import { useWeekly } from '../contexts/WeeklyContext';
+import { useAuth } from '../contexts/AuthContext';
 import WeeklyScheduleInfo from '../components/WeeklyScheduleInfo';
-import WeeklyVegetableDisplay from '../components/WeeklyVegetableDisplay';
 
 const CustomizationPage = () => {
-  const [selectedPlan, setSelectedPlan] = useState<string>('medium');
+  const { user, updateUser } = useAuth();
+  const [selectedPlan, setSelectedPlan] = useState<string>(user?.subscription?.plan || 'medium');
   const [customizations, setCustomizations] = useState<{
     excludedVegetables: string[];
     removedVegetables: string[];
     addedVegetables: string[];
     deliveryDay: string;
   }>({
-    excludedVegetables: [],
-    removedVegetables: [],
-    addedVegetables: [],
-    deliveryDay: 'sunday'
+    excludedVegetables: user?.subscription?.customizations?.excludedVegetables || [],
+    removedVegetables: user?.subscription?.customizations?.removedVegetables || [],
+    addedVegetables: user?.subscription?.customizations?.addedVegetables || [],
+    deliveryDay: user?.subscription?.customizations?.deliveryDay || 'sunday'
   });
+
+  // Sync state if user subscription changes (e.g., plan updated in account page)
+  useEffect(() => {
+    if (user?.subscription) {
+      setSelectedPlan(user.subscription.plan);
+      setCustomizations({
+        excludedVegetables: user.subscription.customizations.excludedVegetables || [],
+        removedVegetables: user.subscription.customizations.removedVegetables || [],
+        addedVegetables: user.subscription.customizations.addedVegetables || [],
+        deliveryDay: user.subscription.customizations.deliveryDay || 'sunday'
+      });
+    }
+  }, [user?.subscription?.plan, user?.subscription?.customizations]);
 
   const [vegetables, setVegetables] = useState<Vegetable[]>([]);
   const vegetableService = VegetableService.getInstance();
 
-  React.useEffect(() => {
+  useEffect(() => {
     const fetchVegetables = async () => {
       await vegetableService.initialize();
       setVegetables(vegetableService.getAllVegetables());
     };
     fetchVegetables();
+  }, [vegetableService]);
+
+  const { getSelectionForPlan, isCustomizationAllowed, timeRemaining } = useWeekly();
+
+
+  // Fetch dynamic limits from DB
+  const [adminLimits, setAdminLimits] = useState<any>(null);
+  const [loadingLimits, setLoadingLimits] = useState(true);
+
+  useEffect(() => {
+    const fetchLimits = async () => {
+      try {
+        const { default: SubscriptionService } = await import('../services/SubscriptionService');
+        const bucketTypes = await SubscriptionService.getInstance().getBucketTypes();
+
+        const limits: any = {};
+        bucketTypes.forEach(bt => {
+          const n = bt.name.toLowerCase();
+          const id = n === 'mini' || n === 'small' ? 'small' : n === 'family' || n === 'medium' ? 'medium' : 'large';
+          const match = bt.display_item_range.match(/\d+/);
+          const count = match ? parseInt(match[0]) : 7;
+
+          limits[id] = {
+            current: count,
+            range: [count - 1, count + 1],
+            fixedPrice: bt.monthly_price,
+            monthlyHandlingFee: bt.handling_fee,
+            vegetableBudget: (bt.monthly_price - bt.handling_fee) / 4,
+            counts: {
+              root: bt.root_count || 0,
+              bushy: bt.bushy_count || 0,
+              leafy: bt.leafy_count || 0
+            }
+          };
+        });
+        setAdminLimits(limits);
+      } catch (error) {
+        console.error("Error loading limits:", error);
+      } finally {
+        setLoadingLimits(false);
+      }
+    };
+    fetchLimits();
   }, []);
 
-  const { isCustomizationAllowed, timeRemaining } = useWeekly();
-
-  // ADMIN-CONTROLLED WEEKLY LIMITS (simulating admin dashboard settings)
-  const WEEKLY_ADMIN_LIMITS = {
-    small: {
-      current: 4,
-      range: [3, 5],
-      fixedPrice: 2900,
-      vegetableBudget: 2200
-    },
-    medium: {
-      current: 7,
-      range: [6, 8],
-      fixedPrice: 4900,
-      vegetableBudget: 4000
-    },
-    large: {
-      current: 10,
-      range: [8, 12],
-      fixedPrice: 6900,
-      vegetableBudget: 5700
-    }
-  };
-
-  // Base plan configurations with FIXED PRICING
+  // Base plan configurations
   const basePlans = {
     small: {
       name: 'Small Family',
       defaultVegetableCount: 4,
       description: 'Perfect for 1-2 people',
-      fixedPrice: WEEKLY_ADMIN_LIMITS.small.fixedPrice
     },
     medium: {
       name: 'Medium Family',
       defaultVegetableCount: 7,
       description: 'Great for 3-4 people',
-      fixedPrice: WEEKLY_ADMIN_LIMITS.medium.fixedPrice
     },
     large: {
       name: 'Large Family',
       defaultVegetableCount: 10,
       description: 'Ideal for 5+ people',
-      fixedPrice: WEEKLY_ADMIN_LIMITS.large.fixedPrice
     }
+  };
+
+  const CATEGORICAL_FALLBACKS: Record<string, { root: number, bushy: number, leafy: number }> = {
+    small: { root: 1, bushy: 2, leafy: 1 },
+    medium: { root: 2, bushy: 3, leafy: 2 },
+    large: { root: 3, bushy: 4, leafy: 3 }
   };
 
   // Get current week's admin-set limits
   const getCurrentWeekLimits = () => {
-    return WEEKLY_ADMIN_LIMITS[selectedPlan as keyof typeof WEEKLY_ADMIN_LIMITS];
+    if (!adminLimits) return null;
+    return adminLimits[selectedPlan as keyof typeof adminLimits];
   };
 
   // Calculate current vegetable count in bucket
   const getCurrentVegetableCount = () => {
-    const defaultVegs = getDefaultVegetables();
-    const finalCount = defaultVegs.length - customizations.removedVegetables.length + customizations.addedVegetables.length;
-    return finalCount;
+    return getCurrentVegetables().length;
   };
 
   const getCurrentPlan = () => {
-    const basePlan = basePlans[selectedPlan as keyof typeof basePlans];
+    const basePlan = basePlans[selectedPlan as keyof typeof basePlans] || basePlans.medium;
     const weekLimits = getCurrentWeekLimits();
+
+    if (!weekLimits) {
+      // Fallback while loading
+      return {
+        ...basePlan,
+        currentVegetableCount: 0,
+        maxLimit: basePlan.defaultVegetableCount,
+        adminRange: [basePlan.defaultVegetableCount, basePlan.defaultVegetableCount],
+        fixedPrice: 0,
+        monthlyHandlingFee: 0,
+        vegetableBudget: 0,
+        categoricalLimits: CATEGORICAL_FALLBACKS[selectedPlan] || { root: 0, bushy: 0, leafy: 0 }
+      };
+    }
+
+    const btCounts = weekLimits.counts || {};
+
+    const categoricalLimits = {
+      root: btCounts.root || CATEGORICAL_FALLBACKS[selectedPlan]?.root || 0,
+      bushy: btCounts.bushy || CATEGORICAL_FALLBACKS[selectedPlan]?.bushy || 0,
+      leafy: btCounts.leafy || CATEGORICAL_FALLBACKS[selectedPlan]?.leafy || 0
+    };
 
     return {
       ...basePlan,
@@ -100,18 +157,26 @@ const CustomizationPage = () => {
       maxLimit: weekLimits.current,
       adminRange: weekLimits.range,
       fixedPrice: weekLimits.fixedPrice,
-      vegetableBudget: weekLimits.vegetableBudget
+      monthlyHandlingFee: weekLimits.monthlyHandlingFee,
+      vegetableBudget: weekLimits.vegetableBudget,
+      categoricalLimits
     };
   };
 
-  const getDefaultVegetables = () => defaultPlanVegetables[selectedPlan as keyof typeof defaultPlanVegetables];
+  const getDefaultVegetables = () => {
+    const selection = getSelectionForPlan(selectedPlan as any);
+    return selection ? selection.vegetables : defaultPlanVegetables[selectedPlan as keyof typeof defaultPlanVegetables] || [];
+  };
 
   const getCurrentVegetables = () => {
     const defaultVegs = getDefaultVegetables();
     const finalVegetables = defaultVegs
       .filter(vegId => !customizations.removedVegetables.includes(vegId))
       .concat(customizations.addedVegetables);
-    return finalVegetables;
+
+    // DEFENSIVE: Filter out any IDs that don't exist in our DB-fetched list
+    const validVegIds = vegetables.map(v => v.id);
+    return finalVegetables.filter(id => validVegIds.includes(id));
   };
 
   const getAvailableVegetables = () => {
@@ -119,48 +184,145 @@ const CustomizationPage = () => {
     return vegetables.filter(veg => !currentVegetables.includes(veg.id));
   };
 
-  // Check if we can add more vegetables (within admin-set limit)
-  const canAddMoreVegetables = () => {
-    return getCurrentVegetableCount() < getCurrentPlan().maxLimit && isCustomizationAllowed;
+  // Check if we can add more vegetables of a specific category (must not exceed total quota)
+  const canAddMoreOfCategory = (category: 'root' | 'leafy' | 'bushy') => {
+    if (!isCustomizationAllowed) return false;
+
+    const currentPlan = getCurrentPlan();
+    const currentCount = getCurrentVegetableCount();
+    // Never allow exceeding total bucket quota (e.g. 5/4)
+    if (currentCount >= currentPlan.maxLimit) return false;
+
+    if (!currentPlan.categoricalLimits) return true; // Fallback if no limits loaded
+
+    const currentVegs = getCurrentVegetables();
+    const countInCategory = currentVegs.filter(id => {
+      const veg = vegetables.find(v => v.id === id);
+      return veg?.category === category;
+    }).length;
+
+    const limitForCategory = currentPlan.categoricalLimits[category] || 0;
+    return countInCategory < limitForCategory;
   };
 
-  const getRemainingSlots = () => {
-    return getCurrentPlan().maxLimit - getCurrentVegetableCount();
+  const handleSavePreferences = async () => {
+    if (!user) return;
+
+    try {
+      const { default: SubscriptionService } = await import('../services/SubscriptionService');
+      const subService = SubscriptionService.getInstance();
+      const activeSub = await subService.getActiveSubscription(user.id);
+
+      if (activeSub && activeSub.currentDelivery) {
+        // Log removed items
+        for (const removedId of customizations.removedVegetables) {
+          await subService.logCustomization(activeSub.currentDelivery.id, {
+            action_type: 'remove',
+            removed_vegetable_id: removedId
+          });
+        }
+        // Log added items
+        for (const addedId of customizations.addedVegetables) {
+          await subService.logCustomization(activeSub.currentDelivery.id, {
+            action_type: 'add',
+            added_vegetable_id: addedId
+          });
+        }
+      }
+    } catch (e) {
+      console.error("Error saving customizations:", e);
+    }
+
+    // Keep updating local state for fallback/UI speed
+    updateUser({
+      subscription: {
+        ...user.subscription!,
+        plan: selectedPlan as 'small' | 'medium' | 'large',
+        customizations: {
+          ...customizations
+        }
+      }
+    });
+
+    alert('Preferences saved successfully!');
+  };
+
+  const handleStartSubscription = async () => {
+    if (!user) return;
+
+    const nextDelivery = new Date();
+    nextDelivery.setDate(nextDelivery.getDate() + 7);
+
+    try {
+      // Create actual subscription if none exists
+      if (!user.subscription || user.subscription.id === 'temp-id') {
+        // Placeholder: In a real app we'd call the service here
+        // const { default: SubscriptionService } = await import('../services/SubscriptionService');
+        // await SubscriptionService.getInstance().createSubscription(user.id, 'BUCKET_ID_HERE');
+        console.log("Mocking subscription creation...");
+      }
+    } catch (e) {
+      console.error("Error starting subscription:", e);
+    }
+
+    updateUser({
+      subscription: {
+        id: (user.subscription?.id && user.subscription.id !== 'temp-id') ? user.subscription.id : 'temp-id',
+        plan: selectedPlan as 'small' | 'medium' | 'large',
+        status: 'active',
+        nextDelivery: nextDelivery.toISOString().split('T')[0],
+        customizations: {
+          ...customizations
+        }
+      }
+    });
+
+    alert('Subscription started successfully!');
   };
 
   const toggleVegetableRemoval = (vegetableId: string) => {
     if (!isCustomizationAllowed) return;
 
-    setCustomizations(prev => {
+    setCustomizations((prev: any) => {
       const isCurrentlyRemoved = prev.removedVegetables.includes(vegetableId);
 
       if (isCurrentlyRemoved) {
         return {
           ...prev,
-          removedVegetables: prev.removedVegetables.filter(id => id !== vegetableId)
+          removedVegetables: prev.removedVegetables.filter((id: string) => id !== vegetableId)
         };
       } else {
-        return {
-          ...prev,
-          removedVegetables: [...prev.removedVegetables, vegetableId]
-        };
+        // When removing a default vegetable, it should be added to removedVegetables
+        // If it was previously added by the user, it should be removed from addedVegetables
+        const isCurrentlyAddedByUser = prev.addedVegetables.includes(vegetableId);
+        if (isCurrentlyAddedByUser) {
+          return {
+            ...prev,
+            addedVegetables: prev.addedVegetables.filter((id: string) => id !== vegetableId)
+          };
+        } else {
+          return {
+            ...prev,
+            removedVegetables: [...prev.removedVegetables, vegetableId]
+          };
+        }
       }
     });
   };
 
-  const toggleVegetableAddition = (vegetableId: string) => {
+  const toggleVegetableAddition = (vegetableId: string, category: 'root' | 'leafy' | 'bushy') => {
     if (!isCustomizationAllowed) return;
 
-    setCustomizations(prev => {
+    setCustomizations((prev: any) => {
       const isCurrentlyAdded = prev.addedVegetables.includes(vegetableId);
 
       if (isCurrentlyAdded) {
         return {
           ...prev,
-          addedVegetables: prev.addedVegetables.filter(id => id !== vegetableId)
+          addedVegetables: prev.addedVegetables.filter((id: string) => id !== vegetableId)
         };
       } else {
-        if (canAddMoreVegetables()) {
+        if (canAddMoreOfCategory(category)) {
           return {
             ...prev,
             addedVegetables: [...prev.addedVegetables, vegetableId]
@@ -169,17 +331,6 @@ const CustomizationPage = () => {
         return prev;
       }
     });
-  };
-
-  const toggleVegetableExclusion = (vegetableId: string) => {
-    if (!isCustomizationAllowed) return;
-
-    setCustomizations(prev => ({
-      ...prev,
-      excludedVegetables: prev.excludedVegetables.includes(vegetableId)
-        ? prev.excludedVegetables.filter(id => id !== vegetableId)
-        : [...prev.excludedVegetables, vegetableId]
-    }));
   };
 
   const resetCustomizations = () => {
@@ -212,17 +363,28 @@ const CustomizationPage = () => {
     }
   };
 
-  // Calculate current allocation
+  // Calculate current allocation (uses plan's category counts so e.g. 1 root gets 50%, 1 leafy 17%, 2 bushy share 33%)
   const getCurrentAllocation = () => {
     const currentVegetables = getCurrentVegetables();
     const currentPlan = getCurrentPlan();
-    return calculatePlanAllocation(currentPlan.vegetableBudget, currentVegetables, vegetables);
+    return calculatePlanAllocation(
+      currentPlan.vegetableBudget,
+      currentVegetables,
+      vegetables,
+      currentPlan.categoricalLimits
+    );
   };
 
   // Calculate weight breakdown
   const getWeightBreakdown = () => {
     const currentVegetables = getCurrentVegetables();
-    return getWeightBreakdownByCategory(currentVegetables, vegetables);
+    const currentPlan = getCurrentPlan();
+    return getWeightBreakdownByCategory(
+      currentPlan.vegetableBudget,
+      currentVegetables,
+      vegetables,
+      currentPlan.categoricalLimits
+    );
   };
 
   const formatTimeRemaining = () => {
@@ -241,515 +403,409 @@ const CustomizationPage = () => {
 
   return (
     <div className="pt-16">
-      {/* Hero Section */}
-      <section className="bg-gradient-to-br from-green-50 via-white to-orange-50 py-20">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center space-y-6">
-            <Link
-              to="/"
-              className="inline-flex items-center space-x-2 text-green-600 hover:text-green-700 transition-colors mb-4"
-            >
-              <ArrowLeft className="h-5 w-5" />
-              <span>Back to Home</span>
-            </Link>
-
-            <div className="flex items-center justify-center space-x-3 mb-6">
-              <Settings className="h-10 w-10 text-green-600" />
-              <h1 className="text-5xl lg:text-6xl font-bold text-gray-900 leading-tight">
-                Customize Your
-                <span className="text-green-600"> Leafy Bucket</span>
-              </h1>
-            </div>
-            <p className="text-xl text-gray-600 max-w-3xl mx-auto leading-relaxed">
-              <span className="font-semibold text-green-700">Fixed monthly pricing, smart value & weight allocation!</span>
-              Choose your vegetables within this week's limit. Our system automatically balances variety and adjusts weights based on vegetable categories.
-            </p>
-
-            {/* Customization Status Banner */}
-            {!isCustomizationAllowed ? (
-              <div className="max-w-2xl mx-auto bg-orange-50 border-2 border-orange-200 rounded-xl p-4">
-                <div className="flex items-center space-x-3">
-                  <Clock className="h-6 w-6 text-orange-600" />
-                  <div>
-                    <div className="font-semibold text-orange-900">Customization Closed</div>
-                    <div className="text-sm text-orange-700">
-                      Opens Wednesday 00:01. Closes Friday end (Saturday 00:00).
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="max-w-2xl mx-auto bg-green-50 border-2 border-green-200 rounded-xl p-4">
-                <div className="flex items-center space-x-3">
-                  <Check className="h-6 w-6 text-green-600" />
-                  <div>
-                    <div className="font-semibold text-green-900">Customization Available</div>
-                    <div className="text-sm text-green-700">
-                      {formatTimeRemaining()}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
+      {loadingLimits ? (
+        <div className="min-h-screen flex items-center justify-center bg-gray-50">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto mb-4"></div>
+            <p className="text-gray-500">Loading your bucket configuration...</p>
           </div>
         </div>
-      </section>
+      ) : (
+        <>
+          {/* Hero Section */}
+          <section className="bg-gradient-to-br from-green-50 via-white to-orange-50 py-20">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+              <div className="text-center space-y-6">
+                <Link
+                  to="/"
+                  className="inline-flex items-center space-x-2 text-green-600 hover:text-green-700 transition-colors mb-4"
+                >
+                  <ArrowLeft className="h-5 w-5" />
+                  <span>Back to Home</span>
+                </Link>
 
-      {/* Customization Content */}
-      <section className="py-20 bg-gray-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid lg:grid-cols-4 gap-8">
-            {/* Weekly Schedule Sidebar */}
-            <div className="lg:col-span-1">
-              <div className="space-y-6">
-                <WeeklyScheduleInfo />
-                <WeeklyVegetableDisplay planId={selectedPlan as 'small' | 'medium' | 'large'} showShuffleButton={true} />
-              </div>
-            </div>
+                <div className="flex items-center justify-center space-x-3 mb-6">
+                  <Settings className="h-10 w-10 text-green-600" />
+                  <h1 className="text-5xl lg:text-6xl font-bold text-gray-900 leading-tight">
+                    Customize Your
+                    <span className="text-green-600"> Leafy Bucket</span>
+                  </h1>
+                </div>
+                <p className="text-xl text-gray-600 max-w-3xl mx-auto leading-relaxed">
+                  <span className="font-semibold text-green-700">Fixed monthly pricing, smart budget & weight allocation!</span>
+                  Choose your vegetables within this week's limit. Our system automatically balances variety and adjusts weights based on vegetable categories.
+                </p>
 
-            {/* Main Customization Content */}
-            <div className="lg:col-span-2 space-y-8">
-              {/* Base Plan Selection */}
-              <div className="bg-white rounded-3xl p-8 shadow-lg">
-                <h3 className="text-2xl font-bold text-gray-900 mb-6">1. Choose Your Fixed-Price Plan</h3>
-
-                <div className="grid md:grid-cols-3 gap-4">
-                  {(Object.entries(basePlans) as [string, typeof basePlans['small']][]).map(([planId, plan]) => {
-                    const weekLimits = WEEKLY_ADMIN_LIMITS[planId as keyof typeof WEEKLY_ADMIN_LIMITS];
-                    const defaultVegs = defaultPlanVegetables[planId as keyof typeof defaultPlanVegetables];
-                    const totalWeight = calculateTotalPlanWeight(defaultVegs, vegetables);
-
-                    return (
-                      <div
-                        key={planId}
-                        onClick={() => isCustomizationAllowed && setSelectedPlan(planId)}
-                        className={`p-4 rounded-2xl border-2 transition-all ${selectedPlan === planId
-                          ? 'border-green-600 bg-green-50'
-                          : isCustomizationAllowed
-                            ? 'border-gray-200 hover:border-green-300 cursor-pointer'
-                            : 'border-gray-200 opacity-50 cursor-not-allowed'
-                          }`}
-                      >
-                        <h4 className="font-semibold text-gray-900">{plan.name}</h4>
-                        <p className="text-2xl font-bold text-green-600">LKR {plan.fixedPrice.toLocaleString()}</p>
-                        <p className="text-sm text-gray-600">{plan.description}</p>
-                        <p className="text-sm text-gray-600">~{Math.round(totalWeight / 1000 * 10) / 10}kg total</p>
-
-                        <div className="mt-2 p-2 bg-blue-50 rounded-lg">
-                          <div className="flex items-center space-x-1">
-                            <Package className="h-3 w-3 text-blue-600" />
-                            <span className="text-xs text-blue-700 font-medium">
-                              This week: Up to {weekLimits.current} vegetables
-                            </span>
-                          </div>
+                {/* Customization Status Banner */}
+                {!isCustomizationAllowed ? (
+                  <div className="max-w-2xl mx-auto bg-orange-50 border-2 border-orange-200 rounded-xl p-4">
+                    <div className="flex items-center space-x-3">
+                      <Clock className="h-6 w-6 text-orange-600" />
+                      <div>
+                        <div className="font-semibold text-orange-900">Customization Closed</div>
+                        <div className="text-sm text-orange-700">
+                          Opens Wednesday 00:01. Closes Friday end (Saturday 00:00).
                         </div>
                       </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Current Bucket Contents */}
-              <div className="bg-white rounded-3xl p-8 shadow-lg">
-                <div className="flex items-center justify-between mb-6">
-                  <h3 className="text-2xl font-bold text-gray-900">2. Your Weekly Leafy Bucket</h3>
-                  <div className="text-sm text-gray-600">
-                    {getCurrentVegetableCount()}/{getCurrentPlan().maxLimit} vegetables this week
+                    </div>
                   </div>
-                </div>
-
-                {!isCustomizationAllowed && (
-                  <div className="mb-6 p-4 bg-orange-50 border-2 border-orange-200 rounded-xl">
+                ) : (
+                  <div className="max-w-2xl mx-auto bg-green-50 border-2 border-green-200 rounded-xl p-4">
                     <div className="flex items-center space-x-3">
-                      <Clock className="h-5 w-5 text-orange-600" />
+                      <Check className="h-6 w-6 text-green-600" />
                       <div>
-                        <div className="font-semibold text-orange-900">Customization Period Ended</div>
-                        <div className="text-sm text-orange-700">
-                          This week's selection is finalized. Changes will be available next Wednesday.
+                        <div className="font-semibold text-green-900">Customization Available</div>
+                        <div className="text-sm text-green-700">
+                          {formatTimeRemaining()}
                         </div>
                       </div>
                     </div>
                   </div>
                 )}
-
-                {/* Weight & Value Allocation Summary */}
-                <div className="mb-6 p-4 bg-gradient-to-r from-green-50 to-orange-50 rounded-xl">
-                  <h4 className="font-semibold text-gray-900 mb-3">Smart Value & Weight Allocation</h4>
-
-                  {/* Total Weight Display */}
-                  <div className="mb-4 p-3 bg-white rounded-lg border-2 border-blue-200">
-                    <div className="flex items-center justify-center space-x-2">
-                      <Scale className="h-5 w-5 text-blue-600" />
-                      <span className="text-lg font-bold text-blue-600">
-                        Total Weight: {Math.round(getWeightBreakdown().totalWeight)}g
-                        ({Math.round(getWeightBreakdown().totalWeight / 1000 * 10) / 10}kg)
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-3 gap-4 text-center">
-                    {(['root', 'leafy', 'bushy'] as const).map(category => {
-                      const allocation = getCurrentAllocation();
-                      const weightBreakdown = getWeightBreakdown();
-                      const categoryVegs = allocation.filter(v => v.category === category);
-                      const categoryBudget = categoryVegs.reduce((sum, v) => sum + v.allocatedBudget, 0);
-                      const categoryWeight = weightBreakdown.breakdown[category].weight;
-                      const Icon = getCategoryIcon(category);
-
-                      return (
-                        <div key={category} className={`p-3 rounded-lg ${getCategoryColor(category)}`}>
-                          <Icon className="h-6 w-6 mx-auto mb-2" />
-                          <div className="text-sm font-medium capitalize">{category}</div>
-                          <div className="text-lg font-bold">LKR {categoryBudget}</div>
-                          <div className="text-xs">{categoryVegs.length} vegetables</div>
-                          <div className="text-xs font-medium mt-1">
-                            {categoryWeight}g ({Math.round(categoryWeight / 10) / 100}kg)
-                          </div>
-                          <div className="text-xs">
-                            {weightBreakdown.percentages[category]}% of weight
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div className="grid md:grid-cols-2 gap-4">
-                  {getDefaultVegetables()
-                    .filter(vegId => !customizations.removedVegetables.includes(vegId))
-                    .map((vegetableId) => {
-                      const vegetable = vegetables.find(v => v.id === vegetableId);
-                      const allocation = getCurrentAllocation().find(v => v.id === vegetableId);
-                      const CategoryIcon = getCategoryIcon(vegetable?.category);
-
-                      return (
-                        <div
-                          key={vegetableId}
-                          className="p-4 rounded-xl border-2 border-green-200 bg-green-50 transition-all"
-                        >
-                          <div className="flex items-center justify-between">
-                            <div className="flex-1">
-                              <div className="flex items-center space-x-2 mb-1">
-                                <h4 className="font-semibold text-gray-900">{vegetable?.name}</h4>
-                                <CategoryIcon className={`h-4 w-4 ${getCategoryColor(vegetable?.category).split(' ')[0]}`} />
-                              </div>
-                              <p className="text-sm text-gray-600">~{allocation?.allocatedWeight || 0}g</p>
-                              <p className="text-xs text-green-600">
-                                Allocated: LKR {allocation?.allocatedBudget || 0}
-                              </p>
-                            </div>
-                            <button
-                              onClick={() => toggleVegetableRemoval(vegetableId)}
-                              disabled={!isCustomizationAllowed}
-                              className={`p-2 rounded-full transition-colors ${isCustomizationAllowed
-                                ? 'bg-red-100 text-red-600 hover:bg-red-200'
-                                : 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                                }`}
-                            >
-                              <X className="h-4 w-4" />
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-
-                  {/* Show added vegetables */}
-                  {customizations.addedVegetables.map((vegetableId) => {
-                    const vegetable = vegetables.find(v => v.id === vegetableId);
-                    const allocation = getCurrentAllocation().find(v => v.id === vegetableId);
-                    const CategoryIcon = getCategoryIcon(vegetable?.category);
-
-                    return (
-                      <div
-                        key={vegetableId}
-                        className="p-4 rounded-xl border-2 border-blue-200 bg-blue-50 transition-all"
-                      >
-                        <div className="flex items-center justify-between">
-                          <div className="flex-1">
-                            <div className="flex items-center space-x-2 mb-1">
-                              <h4 className="font-semibold text-gray-900">{vegetable?.name}</h4>
-                              <CategoryIcon className={`h-4 w-4 ${getCategoryColor(vegetable?.category).split(' ')[0]}`} />
-                            </div>
-                            <p className="text-sm text-gray-600">~{allocation?.allocatedWeight || 0}g</p>
-                            <p className="text-xs text-blue-600">
-                              ADDED • Allocated: LKR {allocation?.allocatedBudget || 0}
-                            </p>
-                          </div>
-                          <button
-                            onClick={() => toggleVegetableAddition(vegetableId)}
-                            disabled={!isCustomizationAllowed}
-                            className={`p-2 rounded-full transition-colors ${isCustomizationAllowed
-                              ? 'bg-red-100 text-red-600 hover:bg-red-200'
-                              : 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                              }`}
-                          >
-                            <X className="h-4 w-4" />
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
               </div>
+            </div>
+          </section>
 
-              {/* Add More Vegetables */}
-              <div className="bg-white rounded-3xl p-8 shadow-lg">
-                <div className="flex items-center justify-between mb-6">
-                  <h3 className="text-2xl font-bold text-gray-900 flex items-center space-x-2">
-                    <Plus className="h-6 w-6 text-green-500" />
-                    <span>3. Add More Vegetables</span>
-                  </h3>
-                  <div className="flex items-center space-x-4">
-                    {!canAddMoreVegetables() && (
-                      <span className="text-sm text-red-600 font-medium">
-                        {!isCustomizationAllowed ? 'Customization Closed' : 'Weekly Limit Reached'}
-                      </span>
-                    )}
-                    <button
-                      onClick={resetCustomizations}
-                      disabled={!isCustomizationAllowed}
-                      className={`flex items-center space-x-1 text-sm ${isCustomizationAllowed
-                        ? 'text-green-600 hover:text-green-700'
-                        : 'text-gray-400 cursor-not-allowed'
-                        }`}
-                    >
-                      <RefreshCw className="h-4 w-4" />
-                      <span>Reset All</span>
-                    </button>
+          {/* Customization Content */}
+          {/* Customization Content */}
+          <section className="py-20 bg-gray-50">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+              <div className="grid lg:grid-cols-4 gap-8">
+                {/* Weekly Schedule Sidebar */}
+                <div className="lg:col-span-1">
+                  <div className="space-y-6">
+                    <WeeklyScheduleInfo />
                   </div>
                 </div>
 
-                {/* Group vegetables by category */}
-                {(['root', 'leafy', 'bushy'] as const).map(category => {
-                  const categoryVegetables = getAvailableVegetables().filter(v => v.category === category);
-                  if (categoryVegetables.length === 0) return null;
-
-                  const CategoryIcon = getCategoryIcon(category);
-
-                  return (
-                    <div key={category} className="mb-6">
-                      <div className={`flex items-center space-x-2 mb-3 p-2 rounded-lg ${getCategoryColor(category)}`}>
-                        <CategoryIcon className="h-5 w-5" />
-                        <h4 className="font-semibold capitalize">{category} Vegetables (Value: {CATEGORY_VALUES[category]})</h4>
+                {/* Main Customization Content */}
+                <div className="lg:col-span-2 space-y-8">
+                  {/* Current Bucket Contents */}
+                  <div className="bg-white rounded-3xl p-8 shadow-lg">
+                    <div className="flex items-center justify-between mb-6">
+                      <div>
+                        <h3 className="text-2xl font-bold text-gray-900">1. Your Weekly Leafy Bucket</h3>
+                        <div className="text-sm text-gray-600 mt-1">
+                          {getCurrentVegetableCount()}/{getCurrentPlan().maxLimit} vegetables this week
+                        </div>
                       </div>
+                    </div>
 
-                      <div className="grid md:grid-cols-2 gap-3">
-                        {categoryVegetables.map((vegetable) => {
-                          const canAdd = canAddMoreVegetables();
+                    {!isCustomizationAllowed && (
+                      <div className="mb-6 p-4 bg-orange-50 border-2 border-orange-200 rounded-xl">
+                        <div className="flex items-center space-x-3">
+                          <Clock className="h-5 w-5 text-orange-600" />
+                          <div>
+                            <div className="font-semibold text-orange-900">Customization Period Ended</div>
+                            <div className="text-sm text-orange-700">
+                              This week's selection is finalized. Changes will be available next Wednesday.
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+
+                    <div className="grid md:grid-cols-2 gap-4">
+                      {getDefaultVegetables()
+                        .filter(vegId => !customizations.removedVegetables.includes(vegId))
+                        .filter(id => vegetables.some(v => v.id === id)) // Ensure valid data
+                        .map((vegetableId) => {
+                          const vegetable = vegetables.find(v => v.id === vegetableId);
+                          const allocation = getCurrentAllocation().find(v => v.id === vegetableId);
+                          const CategoryIcon = getCategoryIcon(vegetable?.category || 'leafy');
 
                           return (
-                            <button
-                              key={vegetable.id}
-                              onClick={() => canAdd && toggleVegetableAddition(vegetable.id)}
-                              disabled={!canAdd}
-                              className={`p-4 rounded-xl border-2 text-left transition-all ${canAdd
-                                ? 'border-gray-200 hover:border-green-300'
-                                : 'border-gray-100 bg-gray-50 text-gray-400 cursor-not-allowed'
-                                }`}
+                            <div
+                              key={vegetableId}
+                              className="p-4 rounded-xl border-2 border-green-200 bg-green-50 transition-all"
                             >
                               <div className="flex items-center justify-between">
                                 <div className="flex-1">
-                                  <h4 className="font-medium">{vegetable.name}</h4>
-                                  <p className="text-sm text-gray-600">~{Math.round(vegetable.weightPerValuePoint * vegetable.baseValue)}g</p>
-                                  <p className="text-xs text-green-600">Value: {vegetable.baseValue} points</p>
-                                  {!canAdd && (
-                                    <p className="text-xs text-red-500 mt-1">
-                                      {!isCustomizationAllowed ? 'Customization closed' : 'Weekly limit reached'}
-                                    </p>
-                                  )}
+                                  <div className="flex items-center space-x-2 mb-1">
+                                    <h4 className="font-semibold text-gray-900">{vegetable?.name}</h4>
+                                    <CategoryIcon className={`h-4 w-4 ${getCategoryColor(vegetable?.category || 'leafy').split(' ')[0]}`} />
+                                  </div>
+                                  <p className="text-sm text-gray-600">~{allocation?.allocatedWeight || 0}g</p>
+                                  <p className="text-xs text-green-600">
+                                    Allocated: LKR {allocation?.allocatedBudget || 0}
+                                  </p>
                                 </div>
-                                <div className="flex items-center space-x-2">
-                                  {!canAdd && <Lock className="h-4 w-4 text-gray-400" />}
-                                  {canAdd && <Plus className="h-4 w-4 text-green-500" />}
-                                </div>
+                                <button
+                                  onClick={() => toggleVegetableRemoval(vegetableId)}
+                                  disabled={!isCustomizationAllowed}
+                                  className={`p-2 rounded-full transition-colors ${isCustomizationAllowed
+                                    ? 'bg-red-100 text-red-600 hover:bg-red-200'
+                                    : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                    }`}
+                                >
+                                  <X className="h-4 w-4" />
+                                </button>
                               </div>
-                            </button>
+                            </div>
+                          );
+                        })}
+
+                      {/* Show added vegetables */}
+                      {customizations.addedVegetables.map((vegetableId) => {
+                        const vegetable = vegetables.find(v => v.id === vegetableId);
+                        const CategoryIcon = getCategoryIcon(vegetable?.category || 'leafy');
+                        const allocation = getCurrentAllocation().find(v => v.id === vegetableId);
+
+                        return (
+                          <div
+                            key={vegetableId}
+                            className="p-4 rounded-xl border-2 border-blue-200 bg-blue-50 transition-all"
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="flex-1">
+                                <div className="flex items-center space-x-2 mb-1">
+                                  <h4 className="font-semibold text-gray-900">{vegetable?.name}</h4>
+                                  <CategoryIcon className={`h-4 w-4 ${getCategoryColor(vegetable?.category || 'leafy').split(' ')[0]}`} />
+                                </div>
+                                <p className="text-sm text-gray-600">~{allocation?.allocatedWeight || 0}g</p>
+                                <p className="text-xs text-blue-600">
+                                  ADDED • Allocated: LKR {allocation?.allocatedBudget || 0}
+                                </p>
+                              </div>
+                              <button
+                                onClick={() => vegetable && toggleVegetableAddition(vegetableId, vegetable.category as any)}
+                                disabled={!isCustomizationAllowed}
+                                className={`p-2 rounded-full transition-colors ${isCustomizationAllowed
+                                  ? 'bg-red-100 text-red-600 hover:bg-red-200'
+                                  : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                  }`}
+                              >
+                                <X className="h-4 w-4" />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Add More Vegetables */}
+                  <div className="bg-white rounded-3xl p-8 shadow-lg">
+                    <div className="flex items-center justify-between mb-6">
+                      <h3 className="text-2xl font-bold text-gray-900 flex items-center space-x-2">
+                        <Plus className="h-6 w-6 text-green-500" />
+                        <span>3. Add More Vegetables</span>
+                      </h3>
+                      <div className="flex items-center space-x-4">
+                        {getCurrentVegetableCount() >= getCurrentPlan().maxLimit && (
+                          <span className="text-sm text-red-600 font-medium">
+                            {!isCustomizationAllowed ? 'Customization Closed' : 'Weekly Limit Reached'}
+                          </span>
+                        )}
+                        <button
+                          onClick={resetCustomizations}
+                          disabled={!isCustomizationAllowed}
+                          className={`flex items-center space-x-1 text-sm ${isCustomizationAllowed
+                            ? 'text-green-600 hover:text-green-700'
+                            : 'text-gray-400 cursor-not-allowed'
+                            }`}
+                        >
+                          <RefreshCw className="h-4 w-4" />
+                          <span>Reset All</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Group vegetables by category */}
+                    {(['root', 'leafy', 'bushy'] as const).map(category => {
+                      const categoryVegetables = getAvailableVegetables().filter(v => v.category === category);
+                      if (categoryVegetables.length === 0) return null;
+
+                      const CategoryIcon = getCategoryIcon(category);
+
+                      return (
+                        <div key={category} className="mb-6">
+                          <div className={`flex items-center space-x-2 mb-3 p-2 rounded-lg ${getCategoryColor(category)}`}>
+                            <CategoryIcon className="h-5 w-5" />
+                            <h4 className="font-semibold capitalize">{category} Vegetables</h4>
+                          </div>
+
+                          <div className="grid md:grid-cols-2 gap-3">
+                            {categoryVegetables.map((vegetable) => {
+                              const canAdd = canAddMoreOfCategory(category);
+                              const plan = getCurrentPlan();
+                              const hypotheticalAllocation = calculatePlanAllocation(
+                                plan.vegetableBudget,
+                                [...getCurrentVegetables(), vegetable.id],
+                                vegetables,
+                                plan.categoricalLimits
+                              ).find(v => v.id === vegetable.id);
+
+                              return (
+                                <button
+                                  key={vegetable.id}
+                                  onClick={() => canAdd && toggleVegetableAddition(vegetable.id, category)}
+                                  disabled={!canAdd}
+                                  className={`p-4 rounded-xl border-2 text-left transition-all ${canAdd
+                                    ? 'border-gray-200 hover:border-green-300'
+                                    : 'border-gray-100 bg-gray-50 text-gray-400 cursor-not-allowed'
+                                    }`}
+                                >
+                                  <div className="flex items-center justify-between">
+                                    <div className="flex-1">
+                                      <h4 className="font-medium">{vegetable.name}</h4>
+                                      <p className="text-sm text-gray-600">~{hypotheticalAllocation?.allocatedWeight || 0}g</p>
+                                      <p className="text-xs text-green-600">
+                                        Allocated: LKR {hypotheticalAllocation?.allocatedBudget || 0}
+                                      </p>
+                                      {!canAdd && (
+                                        <p className="text-xs text-red-500 mt-1">
+                                          {!isCustomizationAllowed ? 'Customization closed' : 'Weekly limit reached'}
+                                        </p>
+                                      )}
+                                    </div>
+                                    <div className="flex items-center space-x-2">
+                                      {!canAdd && <Lock className="h-4 w-4 text-gray-400" />}
+                                      {canAdd && <Plus className="h-4 w-4 text-green-500" />}
+                                    </div>
+                                  </div>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Summary Sidebar */}
+                <div className="lg:col-span-1">
+                  <div className="bg-white rounded-3xl p-8 shadow-lg sticky top-8">
+                    <h3 className="text-2xl font-bold text-gray-900 mb-6">Your Custom Leafy Bucket</h3>
+
+                    <div className="space-y-4 mb-6">
+                      <div className="flex justify-between items-center">
+                        <span className="text-gray-600">Plan:</span>
+                        <span className="font-semibold">{getCurrentPlan().name}</span>
+                      </div>
+
+                      <div className="flex justify-between items-center">
+                        <span className="text-gray-600">This Week:</span>
+                        <span className={`font-semibold px-2 py-1 rounded-full text-sm ${getCurrentVegetableCount() >= getCurrentPlan().maxLimit
+                          ? 'bg-red-100 text-red-800'
+                          : 'bg-green-100 text-green-800'
+                          }`}>
+                          {getCurrentVegetableCount()}/{getCurrentPlan().maxLimit} vegetables
+                        </span>
+                      </div>
+
+                      <div className="flex justify-between items-center">
+                        <span className="text-gray-600">Total Weight:</span>
+                        <span className="font-semibold text-blue-600">
+                          {Math.round(getWeightBreakdown().totalWeight / 1000 * 10) / 10}kg
+                        </span>
+                      </div>
+
+                      <div className="flex justify-between items-center pt-2 border-t border-gray-100">
+                        <span className="text-gray-900 font-bold">Total (Monthly):</span>
+                        <span className="font-bold text-gray-900">
+                          LKR {getCurrentPlan().fixedPrice.toLocaleString()}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Budget Allocation Summary */}
+                    <div className="mb-6 p-4 bg-gray-50 rounded-xl">
+                      <h4 className="font-semibold text-gray-900 mb-3">Budget Distribution:</h4>
+                      <div className="space-y-2">
+                        {(['root', 'leafy', 'bushy'] as const).map(category => {
+                          const allocation = getCurrentAllocation();
+                          const categoryVegs = allocation.filter(v => v.category === category);
+                          const categoryBudget = categoryVegs.reduce((sum, v) => sum + v.allocatedBudget, 0);
+                          const Icon = getCategoryIcon(category);
+
+                          if (categoryVegs.length === 0) return null;
+
+                          return (
+                            <div key={category} className="flex items-center justify-between">
+                              <div className="flex items-center space-x-2">
+                                <Icon className={`h-4 w-4 ${getCategoryColor(category).split(' ')[0]}`} />
+                                <span className="text-sm capitalize">{category} ({categoryVegs.length})</span>
+                              </div>
+                              <div className="text-right">
+                                <span className="font-semibold text-sm">LKR {categoryBudget}</span>
+                              </div>
+                            </div>
                           );
                         })}
                       </div>
                     </div>
-                  );
-                })}
-              </div>
 
-              {/* Exclude Vegetables - commented out for now */}
-              {/* <div className="bg-white rounded-3xl p-8 shadow-lg">
-                <h3 className="text-2xl font-bold text-gray-900 mb-6">4. Exclude Vegetables</h3>
+                    {/* Weight Allocation Summary */}
+                    <div className="mb-6 p-4 bg-gray-50 rounded-xl">
+                      <h4 className="font-semibold text-gray-900 mb-3">Weight Distribution:</h4>
+                      <div className="space-y-2">
+                        {(['root', 'leafy', 'bushy'] as const).map(category => {
+                          const weightBreakdown = getWeightBreakdown();
+                          const categoryWeight = weightBreakdown.breakdown[category].weight;
+                          const categoryCount = weightBreakdown.breakdown[category].count;
+                          const Icon = getCategoryIcon(category);
 
-                {!isCustomizationAllowed && (
-                  <div className="mb-4 p-3 bg-orange-50 border border-orange-200 rounded-lg">
-                    <p className="text-sm text-orange-800">
-                      Exclusion preferences are locked until next Wednesday.
-                    </p>
-                  </div>
-                )}
+                          if (categoryCount === 0) return null;
 
-                <div className="grid md:grid-cols-2 gap-3">
-                  {vegetables.map((vegetable) => {
-                    const CategoryIcon = getCategoryIcon(vegetable.category);
+                          return (
+                            <div key={category} className="flex items-center justify-between">
+                              <div className="flex items-center space-x-2">
+                                <Icon className={`h-4 w-4 ${getCategoryColor(category).split(' ')[0]}`} />
+                                <span className="text-sm capitalize">{category} ({categoryCount})</span>
+                              </div>
+                              <div className="text-right">
+                                <span className="font-semibold text-sm">{categoryWeight}g</span>
+                                <div className="text-xs text-gray-500">
+                                  {weightBreakdown.percentages[category]}%
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
 
-                    return (
+                    <div className="border-t border-gray-200 pt-6 mb-6">
+                      <div className="text-center bg-green-50 rounded-2xl p-6">
+                        <div className="text-sm text-green-700 mb-2">Fixed Monthly Price</div>
+                        <div className="text-3xl font-bold text-green-600 mb-2">
+                          LKR {getCurrentPlan().fixedPrice.toLocaleString()}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
                       <button
-                        key={vegetable.id}
-                        onClick={() => toggleVegetableExclusion(vegetable.id)}
+                        onClick={handleStartSubscription}
                         disabled={!isCustomizationAllowed}
-                        className={`p-3 rounded-xl border-2 text-left transition-all ${customizations.excludedVegetables.includes(vegetable.id)
-                          ? 'border-red-600 bg-red-50 text-red-800'
-                          : isCustomizationAllowed
-                            ? 'border-gray-200 hover:border-red-300'
-                            : 'border-gray-200 bg-gray-50 text-gray-400 cursor-not-allowed'
+                        className={`w-full py-4 px-6 rounded-full font-semibold transition-colors ${isCustomizationAllowed
+                          ? 'bg-green-600 text-white hover:bg-green-700'
+                          : 'bg-gray-300 text-gray-500 cursor-not-allowed'
                           }`}
                       >
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center space-x-2">
-                            <CategoryIcon className={`h-4 w-4 ${getCategoryColor(vegetable.category).split(' ')[0]}`} />
-                            <span className="font-medium">{vegetable.name}</span>
-                          </div>
-                          {customizations.excludedVegetables.includes(vegetable.id) && (
-                            <X className="h-4 w-4 text-red-500" />
-                          )}
-                        </div>
+                        {isCustomizationAllowed ? 'Start Smart Subscription' : 'Customization Closed'}
                       </button>
-                    );
-                  })}
-                </div>
-              </div> */}
-            </div>
-
-            {/* Summary Sidebar */}
-            <div className="lg:col-span-1">
-              <div className="bg-white rounded-3xl p-8 shadow-lg sticky top-8">
-                <h3 className="text-2xl font-bold text-gray-900 mb-6">Your Custom Leafy Bucket</h3>
-
-                <div className="space-y-4 mb-6">
-                  <div className="flex justify-between items-center">
-                    <span className="text-gray-600">Plan:</span>
-                    <span className="font-semibold">{getCurrentPlan().name}</span>
-                  </div>
-
-                  <div className="flex justify-between items-center">
-                    <span className="text-gray-600">This Week:</span>
-                    <span className={`font-semibold px-2 py-1 rounded-full text-sm ${getCurrentVegetableCount() >= getCurrentPlan().maxLimit
-                      ? 'bg-red-100 text-red-800'
-                      : 'bg-green-100 text-green-800'
-                      }`}>
-                      {getCurrentVegetableCount()}/{getCurrentPlan().maxLimit} vegetables
-                    </span>
-                  </div>
-
-                  <div className="flex justify-between items-center">
-                    <span className="text-gray-600">Total Weight:</span>
-                    <span className="font-semibold text-blue-600">
-                      {Math.round(getWeightBreakdown().totalWeight / 1000 * 10) / 10}kg
-                    </span>
-                  </div>
-                </div>
-
-                {/* Weight Allocation Summary */}
-                <div className="mb-6 p-4 bg-gray-50 rounded-xl">
-                  <h4 className="font-semibold text-gray-900 mb-3">Weight Distribution:</h4>
-                  <div className="space-y-2">
-                    {(['root', 'leafy', 'bushy'] as const).map(category => {
-                      const weightBreakdown = getWeightBreakdown();
-                      const categoryWeight = weightBreakdown.breakdown[category].weight;
-                      const categoryCount = weightBreakdown.breakdown[category].count;
-                      const Icon = getCategoryIcon(category);
-
-                      if (categoryCount === 0) return null;
-
-                      return (
-                        <div key={category} className="flex items-center justify-between">
-                          <div className="flex items-center space-x-2">
-                            <Icon className={`h-4 w-4 ${getCategoryColor(category).split(' ')[0]}`} />
-                            <span className="text-sm capitalize">{category} ({categoryCount})</span>
-                          </div>
-                          <div className="text-right">
-                            <span className="font-semibold text-sm">{categoryWeight}g</span>
-                            <div className="text-xs text-gray-500">
-                              {weightBreakdown.percentages[category]}%
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* Value Allocation Summary */}
-                <div className="mb-6 p-4 bg-gray-50 rounded-xl">
-                  <h4 className="font-semibold text-gray-900 mb-3">Value Allocation:</h4>
-                  <div className="space-y-2">
-                    {(['root', 'leafy', 'bushy'] as const).map(category => {
-                      const allocation = getCurrentAllocation();
-                      const categoryVegs = allocation.filter(v => v.category === category);
-                      const categoryBudget = categoryVegs.reduce((sum, v) => sum + v.allocatedBudget, 0);
-                      const Icon = getCategoryIcon(category);
-
-                      if (categoryVegs.length === 0) return null;
-
-                      return (
-                        <div key={category} className="flex items-center justify-between">
-                          <div className="flex items-center space-x-2">
-                            <Icon className={`h-4 w-4 ${getCategoryColor(category).split(' ')[0]}`} />
-                            <span className="text-sm capitalize">{category} ({categoryVegs.length})</span>
-                          </div>
-                          <span className="font-semibold text-sm">LKR {categoryBudget}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* Fixed Price Display */}
-                <div className="border-t border-gray-200 pt-6 mb-6">
-                  <div className="text-center bg-green-50 rounded-2xl p-6">
-                    <div className="text-sm text-green-700 mb-2">Fixed Monthly Price</div>
-                    <div className="text-3xl font-bold text-green-600 mb-2">
-                      LKR {getCurrentPlan().fixedPrice.toLocaleString()}
-                    </div>
-                    <div className="text-xs text-green-600">
-                      Smart value & weight allocation
-                    </div>
-                  </div>
-                </div>
-
-                <div className="space-y-3">
-                  <button
-                    disabled={!isCustomizationAllowed}
-                    className={`w-full py-4 px-6 rounded-full font-semibold transition-colors ${isCustomizationAllowed
-                      ? 'bg-green-600 text-white hover:bg-green-700'
-                      : 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                      }`}
-                  >
-                    {isCustomizationAllowed ? 'Start Smart Subscription' : 'Customization Closed'}
-                  </button>
-                  <button
-                    disabled={!isCustomizationAllowed}
-                    className={`w-full py-3 px-6 rounded-full font-semibold transition-colors ${isCustomizationAllowed
-                      ? 'border-2 border-green-600 text-green-600 hover:bg-green-50'
-                      : 'border-2 border-gray-300 text-gray-500 cursor-not-allowed'
-                      }`}
-                  >
-                    Save Preferences
-                  </button>
-                </div>
-
-                <div className="mt-6 p-4 bg-blue-50 rounded-xl">
-                  <div className="flex items-start space-x-2">
-                    <Shield className="h-5 w-5 text-blue-600 mt-0.5 flex-shrink-0" />
-                    <div>
-                      <p className="text-sm text-blue-800 font-medium">Smart Allocation System</p>
-                      <p className="text-xs text-blue-700 mt-1">
-                        Our system automatically allocates budget (4:2:3 ratio) and calculates weights based on vegetable categories for optimal value and quantity.
-                      </p>
+                      <button
+                        onClick={handleSavePreferences}
+                        disabled={!isCustomizationAllowed}
+                        className={`w-full py-3 px-6 rounded-full font-semibold transition-colors ${isCustomizationAllowed
+                          ? 'border-2 border-green-600 text-green-600 hover:bg-green-50'
+                          : 'border-2 border-gray-300 text-gray-500 cursor-not-allowed'
+                          }`}
+                      >
+                        Save Preferences
+                      </button>
                     </div>
                   </div>
                 </div>
               </div>
             </div>
-          </div>
-        </div>
-      </section>
+          </section>
+        </>
+      )}
     </div>
   );
 };

@@ -6,8 +6,10 @@ import {
   getCurrentWeekId,
   isCustomizationOpen,
   getCustomizationTimeRemaining,
-  getMockWeeklyHistory
+  getMockWeeklyHistory,
+  PLAN_COUNTS
 } from '../utils/weeklyShuffling';
+import VegetableService from '../services/vegetableService';
 
 interface WeeklyContextType {
   currentWeekSelection: WeeklySelection | null;
@@ -19,6 +21,7 @@ interface WeeklyContextType {
     minutes: number;
     isExpired: boolean;
   };
+  getSelectionForPlan: (planId: 'small' | 'medium' | 'large') => WeeklySelection | null;
   refreshWeeklySelection: (planId: 'small' | 'medium' | 'large') => void;
   updateWeeklyHistory: (weekId: string, vegetables: string[]) => void;
 }
@@ -43,8 +46,15 @@ export const WeeklyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     minutes: 0,
     isExpired: false
   });
+  const [allSelections, setAllSelections] = useState<Record<string, WeeklySelection | null>>({
+    small: null,
+    medium: null,
+    large: null
+  });
 
   const [serviceInitialized, setServiceInitialized] = useState(false);
+  /** DB-driven: items per category and total count per plan (from bucket_types) */
+  const [planLimits, setPlanLimits] = useState<Record<string, { current: number; counts: { root: number; leafy: number; bushy: number } }>>({});
 
   // Initialize VegetableService
   useEffect(() => {
@@ -69,33 +79,124 @@ export const WeeklyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return () => clearInterval(interval);
   }, []);
 
-  // Load weekly selection from localStorage or generate new one
+  // Fetch bucket types from DB for per-plan category counts (same mapping as CustomizationPage)
+  useEffect(() => {
+    if (!serviceInitialized) return;
+    const fetchPlanLimits = async () => {
+      try {
+        const { default: SubscriptionService } = await import('../services/SubscriptionService');
+        const bucketTypes = await SubscriptionService.getInstance().getBucketTypes();
+        const limits: Record<string, { current: number; counts: { root: number; leafy: number; bushy: number } }> = {};
+        bucketTypes.forEach((bt: { name: string; display_item_range?: string; root_count?: number; leafy_count?: number; bushy_count?: number }) => {
+          const n = bt.name.toLowerCase();
+          const id = n === 'mini' || n === 'small' ? 'small' : n === 'family' || n === 'medium' ? 'medium' : 'large';
+          const match = (bt.display_item_range || '').match(/\d+/);
+          const count = match ? parseInt(match[0], 10) : (bt.root_count ?? 0) + (bt.leafy_count ?? 0) + (bt.bushy_count ?? 0) || 4;
+          limits[id] = {
+            current: count,
+            counts: {
+              root: bt.root_count ?? 1,
+              leafy: bt.leafy_count ?? 1,
+              bushy: bt.bushy_count ?? 2
+            }
+          };
+        });
+        setPlanLimits(limits);
+      } catch (e) {
+        console.error('WeeklyContext: failed to fetch bucket types', e);
+      }
+    };
+    fetchPlanLimits();
+  }, [serviceInitialized]);
+
+  // Fetch Weekly Context: build selections using DB plan limits when available
   useEffect(() => {
     if (!serviceInitialized) return;
 
-    const currentWeekId = getCurrentWeekId();
-    const storedSelection = localStorage.getItem(`weekly_selection_${currentWeekId}`);
+    const fetchWeeklyContext = async () => {
+      const currentWeekId = getCurrentWeekId();
+      const newSelections: Record<string, WeeklySelection | null> = {};
+      const vegetableService = VegetableService.getInstance();
+      const allVegetables = vegetableService.getActiveVegetables();
+      const allActiveIds = allVegetables.map(v => v.id);
 
-    if (storedSelection) {
-      setCurrentWeekSelection(JSON.parse(storedSelection));
-    } else {
-      // Generate default selection for medium plan
-      const defaultSelection = generateWeeklySelection('medium', weeklyHistory);
+      const getOptions = (planId: 'small' | 'medium' | 'large') => {
+        const limits = planLimits[planId];
+        if (!limits) return undefined;
+        return {
+          requiredCount: limits.current,
+          targetDistribution: limits.counts
+        };
+      };
 
-      // Safety check: only save if we actually got vegetables
-      if (defaultSelection.vegetables.length > 0) {
-        setCurrentWeekSelection(defaultSelection);
-        localStorage.setItem(`weekly_selection_${currentWeekId}`, JSON.stringify(defaultSelection));
+      for (const planId of ['small', 'medium', 'large'] as const) {
+        const key = `weekly_selection_${currentWeekId}_${planId}`;
+        const stored = localStorage.getItem(key);
+        const options = getOptions(planId);
+        const targetCount = options?.requiredCount ?? PLAN_COUNTS[planId];
+
+        const categoryCounts = (vegIds: string[]) => {
+          const r = { root: 0, leafy: 0, bushy: 0 };
+          vegIds.forEach(id => {
+            const veg = allVegetables.find(v => v.id === id);
+            if (veg?.category === 'root') r.root++;
+            else if (veg?.category === 'leafy') r.leafy++;
+            else if (veg?.category === 'bushy') r.bushy++;
+          });
+          return r;
+        };
+
+        const matchesTargetDistribution = (vegIds: string[]) => {
+          if (!options?.targetDistribution) return true;
+          const counts = categoryCounts(vegIds);
+          const t = options.targetDistribution;
+          return counts.root === t.root && counts.leafy === t.leafy && counts.bushy === t.bushy;
+        };
+
+        if (stored) {
+          const selection: WeeklySelection = JSON.parse(stored);
+          const validVegs = selection.vegetables.filter(id => allActiveIds.includes(id));
+
+          const incomplete = validVegs.length < targetCount;
+          const wrongMix = options && validVegs.length >= targetCount && !matchesTargetDistribution(validVegs);
+
+          if (incomplete || wrongMix) {
+            const newSelection = generateWeeklySelection(planId, weeklyHistory, undefined, options);
+            localStorage.setItem(key, JSON.stringify(newSelection));
+            newSelections[planId] = newSelection;
+          } else {
+            if (validVegs.length !== selection.vegetables.length) {
+              selection.vegetables = validVegs;
+              localStorage.setItem(key, JSON.stringify(selection));
+            }
+            newSelections[planId] = selection;
+          }
+        } else {
+          const selection = generateWeeklySelection(planId, weeklyHistory, undefined, options);
+          localStorage.setItem(key, JSON.stringify(selection));
+          newSelections[planId] = selection;
+        }
       }
-    }
-  }, [weeklyHistory, serviceInitialized]);
+
+      setAllSelections(newSelections);
+      setCurrentWeekSelection(newSelections.medium);
+    };
+
+    fetchWeeklyContext();
+  }, [weeklyHistory, serviceInitialized, planLimits]);
 
   const refreshWeeklySelection = (planId: 'small' | 'medium' | 'large') => {
     const currentWeekId = getCurrentWeekId();
-    const newSelection = generateWeeklySelection(planId, weeklyHistory);
+    const options = planLimits[planId] ? { requiredCount: planLimits[planId].current, targetDistribution: planLimits[planId].counts } : undefined;
+    const newSelection = generateWeeklySelection(planId, weeklyHistory, undefined, options);
 
     setCurrentWeekSelection(newSelection);
-    localStorage.setItem(`weekly_selection_${currentWeekId}`, JSON.stringify(newSelection));
+    setAllSelections((prev: any) => ({ ...prev, [planId]: newSelection }));
+    localStorage.setItem(`weekly_selection_${currentWeekId}_${planId}`, JSON.stringify(newSelection));
+  };
+
+  const getSelectionForPlan = (planId: 'small' | 'medium' | 'large') => {
+    return allSelections[planId] || null;
   };
 
   const updateWeeklyHistory = (weekId: string, vegetables: string[]) => {
@@ -110,6 +211,7 @@ export const WeeklyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       weeklyHistory,
       isCustomizationAllowed,
       timeRemaining,
+      getSelectionForPlan,
       refreshWeeklySelection,
       updateWeeklyHistory
     }}>

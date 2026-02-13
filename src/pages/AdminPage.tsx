@@ -1,30 +1,93 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Save, RefreshCw, Upload, Download, Settings, AlertCircle, CheckCircle, ExternalLink, Copy, Eye, EyeOff, Shield, User, Plus, Edit, Trash2, ToggleLeft, ToggleRight, Package } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Upload, Download, Settings, AlertCircle, CheckCircle, ExternalLink, Copy, Eye, EyeOff, Shield, User, Plus, Edit, Trash2, ToggleLeft, ToggleRight, Package, DollarSign, Users, LayoutGrid, Calendar, Percent } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import VegetableService, { Vegetable } from '../services/vegetableService';
+import { supabase } from '../lib/supabase';
+import type { BucketType } from '../services/SubscriptionService';
+
+export interface MarketWeek {
+  id: string;
+  week_start_date: string;
+  week_end_date: string;
+  is_locked: boolean;
+  created_at?: string;
+}
 
 const AdminPage = () => {
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState('vegetables');
   const [vegetables, setVegetables] = useState<Vegetable[]>([]);
+  const [bucketTypes, setBucketTypes] = useState<BucketType[]>([]);
+  const [profiles, setProfiles] = useState<{ id: string; email: string; full_name: string | null; role: string }[]>([]);
+  const [marketWeeks, setMarketWeeks] = useState<MarketWeek[]>([]);
+  const [selectedMarketWeekId, setSelectedMarketWeekId] = useState<string | null>(null);
+  const [marketPricesByWeek, setMarketPricesByWeek] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [showApiKey, setShowApiKey] = useState(false);
   const [apiKey, setApiKey] = useState('');
   const [selectedVegetable, setSelectedVegetable] = useState<Vegetable | null>(null);
   const [showVegetableModal, setShowVegetableModal] = useState(false);
+  const [vegCategories, setVegCategories] = useState<{ id: string; name: string; budget_share_percent: number }[]>([]);
 
   useEffect(() => {
     loadData();
   }, []);
 
+  useEffect(() => {
+    if (!selectedMarketWeekId) return;
+    const loadPricesForWeek = async () => {
+      const { data } = await supabase
+        .from('market_prices')
+        .select('vegetable_id, price_per_unit')
+        .eq('market_week_id', selectedMarketWeekId);
+      const map: Record<string, number> = {};
+      (data || []).forEach((r: any) => { map[r.vegetable_id] = r.price_per_unit; });
+      setMarketPricesByWeek(map);
+    };
+    loadPricesForWeek();
+  }, [selectedMarketWeekId]);
+
   const loadData = async () => {
     setLoading(true);
     try {
-      const vegetablesResponse = await VegetableService.getAllVegetables();
-      setVegetables(vegetablesResponse);
+      await VegetableService.getInstance().initialize();
+      const vegList = VegetableService.getInstance().getAllVegetables();
+
+      let btList: BucketType[] = [];
+      try {
+        const { default: SubscriptionService } = await import('../services/SubscriptionService');
+        btList = await SubscriptionService.getInstance().getBucketTypes();
+      } catch {
+        const { data } = await supabase.from('bucket_types').select('*').order('monthly_price');
+        btList = (data || []) as BucketType[];
+      }
+
+      const { data: profData } = await supabase.from('profiles').select('id, email, full_name, role');
+      const { data: weeksData } = await supabase.from('market_weeks').select('id, week_start_date, week_end_date, is_locked, created_at').order('week_start_date', { ascending: false });
+      const { data: catData } = await supabase.from('veg_categories').select('id, name, budget_share_percent').order('name');
+      // Dedupe by name so we show one row per category (DB may have had duplicate seeds)
+      const byName = new Map<string, { id: string; name: string; budget_share_percent: number }>();
+      (catData || []).forEach((r: { id: string; name: string; budget_share_percent?: number | null }) => {
+        const key = (r.name || '').toLowerCase();
+        if (!byName.has(key)) {
+          const pct = r.budget_share_percent != null ? Number(r.budget_share_percent) : NaN;
+          byName.set(key, {
+            id: r.id,
+            name: r.name,
+            budget_share_percent: !Number.isNaN(pct) && pct >= 0 ? Math.round(Math.min(100, pct)) : 34
+          });
+        }
+      });
+      setVegCategories(Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name)));
+      const weeks = (weeksData || []) as MarketWeek[];
+      setMarketWeeks(weeks);
+      if (weeks.length > 0 && !selectedMarketWeekId) setSelectedMarketWeekId(weeks[0].id);
+
+      setVegetables(vegList);
+      setBucketTypes(btList);
+      setProfiles(profData || []);
     } catch (error) {
       setMessage({ type: 'error', text: 'Failed to load data' });
     } finally {
@@ -91,8 +154,10 @@ const AdminPage = () => {
       }
       setShowVegetableModal(false);
       setSelectedVegetable(null);
-    } catch (error) {
-      setMessage({ type: 'error', text: 'Failed to save vegetable' });
+    } catch (error: unknown) {
+      const err = error as { message?: string };
+      const errMsg = err?.message ?? (error instanceof Error ? error.message : String(error));
+      setMessage({ type: 'error', text: `Failed to save vegetable: ${errMsg}` });
     }
   };
 
@@ -143,7 +208,7 @@ const AdminPage = () => {
             <div className="flex items-center space-x-4">
               <Link to="/" className="flex items-center text-gray-600 hover:text-gray-900 transition-colors">
                 <ArrowLeft className="w-5 h-5 mr-2" />
-                Back to Site
+                Back to site
               </Link>
               <div className="h-6 w-px bg-gray-300" />
               <div className="flex items-center space-x-2">
@@ -187,8 +252,13 @@ const AdminPage = () => {
           <div className="border-b border-gray-200">
             <nav className="-mb-px flex space-x-8 px-6">
               {[
-                { id: 'vegetables', label: 'Vegetable Catalog & Pricing', icon: Package },
-                { id: 'system', label: 'System Settings', icon: Settings }
+                { id: 'vegetables', label: 'Vegetables', icon: Package },
+                { id: 'buckets', label: 'Bucket types', icon: LayoutGrid },
+                { id: 'ratios', label: 'Category ratios', icon: Percent },
+                { id: 'prices', label: 'Market prices', icon: DollarSign },
+                { id: 'weeks', label: 'Market weeks', icon: Calendar },
+                { id: 'users', label: 'Users', icon: Users },
+                { id: 'system', label: 'System', icon: Settings }
               ].map(tab => (
                 <button
                   key={tab.id}
@@ -299,6 +369,233 @@ const AdminPage = () => {
                     </div>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {activeTab === 'buckets' && (
+              <div className="space-y-6">
+                <h2 className="text-lg font-semibold text-gray-900">Bucket types</h2>
+                <p className="text-sm text-gray-600">Edit plan sizes and pricing. Changes affect new subscriptions.</p>
+                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                  {bucketTypes.map((bt) => (
+                    <BucketTypeCard
+                      key={bt.id}
+                      bucketType={bt}
+                      onSave={async (updates) => {
+                        const payload: Record<string, unknown> = {
+                          name: updates.name,
+                          description: updates.description,
+                          display_item_range: updates.display_item_range,
+                          monthly_price: updates.monthly_price,
+                          handling_fee: updates.handling_fee,
+                          is_active: updates.is_active
+                        };
+                        if (updates.root_count !== undefined) payload.root_count = updates.root_count;
+                        if (updates.bushy_count !== undefined) payload.bushy_count = updates.bushy_count;
+                        if (updates.leafy_count !== undefined) payload.leafy_count = updates.leafy_count;
+                        const { error } = await supabase.from('bucket_types').update(payload).eq('id', bt.id);
+                        if (error) throw error;
+                        setMessage({ type: 'success', text: 'Bucket type updated' });
+                        loadData();
+                      }}
+                    />
+                  ))}
+                </div>
+                {bucketTypes.length === 0 && !loading && (
+                  <p className="text-gray-500">No bucket types. Add them in Supabase or run migrations.</p>
+                )}
+              </div>
+            )}
+
+            {activeTab === 'ratios' && (
+              <div className="space-y-6">
+                <h2 className="text-lg font-semibold text-gray-900">Category budget share (%)</h2>
+                <p className="text-sm text-gray-600">
+                  Percentage of the bucket budget for each category (root, leafy, bushy). Values should sum to 100%.
+                </p>
+                <div className="max-w-md space-y-4">
+                  {vegCategories.map((cat) => (
+                    <div key={cat.id} className="flex items-center justify-between gap-4 p-4 border border-gray-200 rounded-lg bg-white">
+                      <span className="font-medium text-gray-900 capitalize">{cat.name}</span>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          min={0}
+                          max={100}
+                          value={cat.budget_share_percent}
+                          onChange={(e) => {
+                            const v = parseInt(e.target.value, 10);
+                            if (!Number.isNaN(v)) setVegCategories(prev => prev.map(c => c.id === cat.id ? { ...c, budget_share_percent: Math.max(0, Math.min(100, v)) } : c));
+                          }}
+                          className="w-20 px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-green-500 focus:border-transparent text-sm"
+                        />
+                        <span className="text-sm text-gray-500 w-6">%</span>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              const { error } = await supabase.from('veg_categories').update({ budget_share_percent: cat.budget_share_percent }).eq('id', cat.id);
+                              if (error) throw error;
+                              await VegetableService.getInstance().refreshCategoryRatios();
+                              setMessage({ type: 'success', text: `Budget share for ${cat.name} saved` });
+                            } catch (err: unknown) {
+                              const e = err as { message?: string };
+                              setMessage({ type: 'error', text: e?.message || 'Failed to save' });
+                            }
+                          }}
+                          className="px-3 py-2 bg-green-600 text-white rounded-md text-sm hover:bg-green-700"
+                        >
+                          Save
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  {vegCategories.length > 0 && (
+                    <p className="text-sm text-gray-600 pt-2">
+                      Total: <strong>{vegCategories.reduce((s, c) => s + c.budget_share_percent, 0)}%</strong>
+                      {vegCategories.reduce((s, c) => s + c.budget_share_percent, 0) !== 100 && (
+                        <span className="text-amber-600 ml-2">(should be 100%)</span>
+                      )}
+                    </p>
+                  )}
+                </div>
+                {vegCategories.length === 0 && !loading && (
+                  <p className="text-gray-500">No categories found. Run the migration that creates veg_categories and seeds root, leafy, bushy.</p>
+                )}
+              </div>
+            )}
+
+            {activeTab === 'prices' && (
+              <div className="space-y-6">
+                <h2 className="text-lg font-semibold text-gray-900">Market prices (per 250g, per week)</h2>
+                <p className="text-sm text-gray-600">Select a market week, then set prices per vegetable. Used for allocation when that week is active.</p>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Market week</label>
+                  <select
+                    value={selectedMarketWeekId || ''}
+                    onChange={(e) => setSelectedMarketWeekId(e.target.value || null)}
+                    className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 max-w-xs"
+                  >
+                    <option value="">Select week</option>
+                    {marketWeeks.map((w) => (
+                      <option key={w.id} value={w.id}>
+                        {w.week_start_date} → {w.week_end_date} {w.is_locked ? '(locked)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {selectedMarketWeekId && (
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full divide-y divide-gray-200">
+                      <thead>
+                        <tr>
+                          <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">Vegetable</th>
+                          <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">Price (LKR)</th>
+                          <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-200">
+                        {vegetables.map((v) => (
+                          <tr key={v.id}>
+                            <td className="px-4 py-2 text-sm text-gray-900">{v.name}</td>
+                            <td className="px-4 py-2">
+                              <input
+                                type="number"
+                                min="0"
+                                step="1"
+                                className="w-24 px-2 py-1 border rounded"
+                                value={marketPricesByWeek[v.id] ?? v.marketPricePer250g ?? ''}
+                                onChange={(e) => {
+                                  const val = parseInt(e.target.value, 10);
+                                  if (!Number.isNaN(val)) setMarketPricesByWeek((prev) => ({ ...prev, [v.id]: val }));
+                                }}
+                              />
+                            </td>
+                            <td className="px-4 py-2">
+                              <button
+                                type="button"
+                                className="text-sm text-green-600 hover:text-green-800"
+                                onClick={async () => {
+                                  const price = marketPricesByWeek[v.id] ?? v.marketPricePer250g;
+                                  if (price == null) return;
+                                  const row = { market_week_id: selectedMarketWeekId, vegetable_id: v.id, price_per_unit: price };
+                                  const { error } = await supabase.from('market_prices').upsert(row, { onConflict: 'market_week_id,vegetable_id' });
+                                  if (error) {
+                                    setMessage({ type: 'error', text: error.message });
+                                    return;
+                                  }
+                                  setMessage({ type: 'success', text: `Price for ${v.name} saved` });
+                                  setMarketPricesByWeek((prev) => ({ ...prev, [v.id]: price }));
+                                }}
+                              >
+                                Save
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {activeTab === 'weeks' && (
+              <div className="space-y-6">
+                <h2 className="text-lg font-semibold text-gray-900">Market weeks</h2>
+                <p className="text-sm text-gray-600">Define week windows for pricing and delivery. Lock a week to prevent further changes.</p>
+                <MarketWeeksSection marketWeeks={marketWeeks} onRefresh={loadData} setMessage={setMessage} />
+              </div>
+            )}
+
+            {activeTab === 'users' && (
+              <div className="space-y-6">
+                <h2 className="text-lg font-semibold text-gray-900">Users & roles</h2>
+                <p className="text-sm text-gray-600">Change role to admin to grant access to this panel.</p>
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead>
+                      <tr>
+                        <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">Email</th>
+                        <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">Name</th>
+                        <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">Role</th>
+                        <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-200">
+                      {profiles.map((p) => (
+                        <tr key={p.id}>
+                          <td className="px-4 py-2 text-sm text-gray-900">{p.email}</td>
+                          <td className="px-4 py-2 text-sm text-gray-600">{p.full_name || '—'}</td>
+                          <td className="px-4 py-2 text-sm">
+                            <span className={`px-2 py-0.5 rounded text-xs ${p.role === 'admin' ? 'bg-amber-100 text-amber-800' : 'bg-gray-100 text-gray-700'}`}>
+                              {p.role || 'user'}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2">
+                            <button
+                              type="button"
+                              className="text-sm text-green-600 hover:text-green-800"
+                              onClick={async () => {
+                                const newRole = p.role === 'admin' ? 'user' : 'admin';
+                                const { error } = await supabase.from('profiles').update({ role: newRole, updated_at: new Date().toISOString() }).eq('id', p.id);
+                                if (error) {
+                                  setMessage({ type: 'error', text: error.message });
+                                  return;
+                                }
+                                setMessage({ type: 'success', text: `Role set to ${newRole}` });
+                                loadData();
+                              }}
+                            >
+                              {p.role === 'admin' ? 'Set as user' : 'Set as admin'}
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {profiles.length === 0 && !loading && <p className="text-gray-500">No profiles found.</p>}
               </div>
             )}
 
@@ -419,6 +716,153 @@ const AdminPage = () => {
   );
 };
 
+// Bucket type card: name, description, display_item_range, monthly_price, handling_fee, is_active, root_count, leafy_count, bushy_count
+const BucketTypeCard: React.FC<{
+  bucketType: BucketType;
+  onSave: (updates: Partial<BucketType> & { is_active?: boolean }) => Promise<void>;
+}> = ({ bucketType, onSave }) => {
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState({
+    name: bucketType.name,
+    description: bucketType.description || '',
+    display_item_range: bucketType.display_item_range || '',
+    monthly_price: bucketType.monthly_price,
+    handling_fee: bucketType.handling_fee,
+    is_active: (bucketType as any).is_active !== false,
+    root_count: bucketType.root_count ?? 1,
+    leafy_count: bucketType.leafy_count ?? 1,
+    bushy_count: bucketType.bushy_count ?? 2
+  });
+
+  const handleSave = async () => {
+    await onSave(form);
+    setEditing(false);
+  };
+
+  return (
+    <div className="border rounded-lg p-4 bg-white shadow-sm">
+      {!editing ? (
+        <div className="flex justify-between items-start">
+          <div>
+            <h3 className="font-semibold text-gray-900">{bucketType.name}</h3>
+            <p className="text-sm text-gray-600">LKR {bucketType.monthly_price} / mo</p>
+            <p className="text-xs text-gray-500">Handling: LKR {bucketType.handling_fee} · Items: {bucketType.display_item_range}</p>
+            <p className="text-xs text-gray-500 mt-1">Root: {bucketType.root_count ?? 1} · Leafy: {bucketType.leafy_count ?? 1} · Bushy: {bucketType.bushy_count ?? 2}</p>
+          </div>
+          <button type="button" onClick={() => setEditing(true)} className="text-green-600 hover:text-green-800 text-sm">Edit</button>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <input className="w-full px-2 py-1 border rounded text-sm" placeholder="Name" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
+          <input className="w-full px-2 py-1 border rounded text-sm" placeholder="Description" value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} />
+          <input className="w-full px-2 py-1 border rounded text-sm" placeholder="Display range e.g. 4-6" value={form.display_item_range} onChange={(e) => setForm((f) => ({ ...f, display_item_range: e.target.value }))} />
+          <div className="grid grid-cols-2 gap-2">
+            <input type="number" className="w-full px-2 py-1 border rounded text-sm" placeholder="Monthly price" value={form.monthly_price} onChange={(e) => setForm((f) => ({ ...f, monthly_price: Number(e.target.value) || 0 }))} />
+            <input type="number" className="w-full px-2 py-1 border rounded text-sm" placeholder="Handling fee" value={form.handling_fee} onChange={(e) => setForm((f) => ({ ...f, handling_fee: Number(e.target.value) || 0 }))} />
+          </div>
+          <p className="text-xs text-gray-600 mt-2">Vegetables per bucket (for budget split):</p>
+          <div className="grid grid-cols-3 gap-2">
+            <div>
+              <label className="block text-xs text-gray-500">Root</label>
+              <input type="number" min={0} className="w-full px-2 py-1 border rounded text-sm" value={form.root_count} onChange={(e) => setForm((f) => ({ ...f, root_count: Math.max(0, parseInt(e.target.value, 10) || 0) }))} />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500">Leafy</label>
+              <input type="number" min={0} className="w-full px-2 py-1 border rounded text-sm" value={form.leafy_count} onChange={(e) => setForm((f) => ({ ...f, leafy_count: Math.max(0, parseInt(e.target.value, 10) || 0) }))} />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500">Bushy</label>
+              <input type="number" min={0} className="w-full px-2 py-1 border rounded text-sm" value={form.bushy_count} onChange={(e) => setForm((f) => ({ ...f, bushy_count: Math.max(0, parseInt(e.target.value, 10) || 0) }))} />
+            </div>
+          </div>
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={form.is_active} onChange={(e) => setForm((f) => ({ ...f, is_active: e.target.checked }))} />
+            Active
+          </label>
+          <div className="flex gap-2 pt-2">
+            <button type="button" onClick={handleSave} className="px-3 py-1.5 bg-green-600 text-white rounded text-sm">Save</button>
+            <button type="button" onClick={() => setEditing(false)} className="px-3 py-1.5 bg-gray-200 rounded text-sm">Cancel</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Market weeks: list, add, edit (week_start_date, week_end_date, is_locked)
+const MarketWeeksSection: React.FC<{
+  marketWeeks: MarketWeek[];
+  onRefresh: () => void;
+  setMessage: (m: { type: 'success' | 'error'; text: string } | null) => void;
+}> = ({ marketWeeks, onRefresh, setMessage }) => {
+  const [adding, setAdding] = useState(false);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [form, setForm] = useState({ week_start_date: '', week_end_date: '', is_locked: false });
+
+  const handleCreate = async () => {
+    const { error } = await supabase.from('market_weeks').insert({
+      week_start_date: form.week_start_date,
+      week_end_date: form.week_end_date,
+      is_locked: form.is_locked
+    });
+    if (error) {
+      setMessage({ type: 'error', text: error.message });
+      return;
+    }
+    setMessage({ type: 'success', text: 'Market week created' });
+    setForm({ week_start_date: '', week_end_date: '', is_locked: false });
+    setAdding(false);
+    onRefresh();
+  };
+
+  const handleUpdate = async (id: string) => {
+    const { error } = await supabase.from('market_weeks').update({
+      week_start_date: form.week_start_date,
+      week_end_date: form.week_end_date,
+      is_locked: form.is_locked
+    }).eq('id', id);
+    if (error) {
+      setMessage({ type: 'error', text: error.message });
+      return;
+    }
+    setMessage({ type: 'success', text: 'Market week updated' });
+    setEditId(null);
+    onRefresh();
+  };
+
+  return (
+    <div className="space-y-4">
+      <button
+        type="button"
+        onClick={() => { setAdding(true); setForm({ week_start_date: '', week_end_date: '', is_locked: false }); }}
+        className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm"
+      >
+        Add week
+      </button>
+      {(adding || editId) && (
+        <div className="p-4 border rounded-lg bg-gray-50 space-y-2 max-w-md">
+          <input type="date" className="w-full px-2 py-1 border rounded text-sm" placeholder="Start date" value={form.week_start_date} onChange={(e) => setForm((f) => ({ ...f, week_start_date: e.target.value }))} />
+          <input type="date" className="w-full px-2 py-1 border rounded text-sm" placeholder="End date" value={form.week_end_date} onChange={(e) => setForm((f) => ({ ...f, week_end_date: e.target.value }))} />
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.is_locked} onChange={(e) => setForm((f) => ({ ...f, is_locked: e.target.checked }))} /> Locked</label>
+          <div className="flex gap-2">
+            <button type="button" onClick={() => editId ? handleUpdate(editId) : handleCreate()} className="px-3 py-1.5 bg-green-600 text-white rounded text-sm">Save</button>
+            <button type="button" onClick={() => { setAdding(false); setEditId(null); }} className="px-3 py-1.5 bg-gray-200 rounded text-sm">Cancel</button>
+          </div>
+        </div>
+      )}
+      <ul className="divide-y divide-gray-200">
+        {marketWeeks.map((w) => (
+          <li key={w.id} className="py-2 flex items-center justify-between">
+            <span className="text-sm">{w.week_start_date} → {w.week_end_date} {w.is_locked ? '(locked)' : ''}</span>
+            <button type="button" onClick={() => { setEditId(w.id); setForm({ week_start_date: w.week_start_date, week_end_date: w.week_end_date, is_locked: w.is_locked }); }} className="text-green-600 text-sm">Edit</button>
+          </li>
+        ))}
+      </ul>
+      {marketWeeks.length === 0 && !adding && <p className="text-gray-500 text-sm">No market weeks. Add one to use week-scoped prices.</p>}
+    </div>
+  );
+};
+
 // Vegetable Add/Edit Modal Component
 const VegetableModal: React.FC<{
   vegetable?: Vegetable | null;
@@ -427,14 +871,12 @@ const VegetableModal: React.FC<{
 }> = ({ vegetable, onSave, onClose }) => {
   const [formData, setFormData] = useState({
     name: vegetable?.name || '',
-    category: vegetable?.category || '',
-    season: vegetable?.season || '',
-    nutritionScore: vegetable?.nutritionScore || 5,
+    category: vegetable?.category || 'leafy',
+    season: vegetable?.season || 'Year-round',
+    nutritionScore: vegetable?.nutritionScore ?? 5,
     description: vegetable?.description || '',
     marketPricePer250g: vegetable?.marketPricePer250g || 100,
-    baseValue: vegetable?.baseValue || 3,
     typicalWeight: vegetable?.typicalWeight || '250g',
-    weightPerValuePoint: vegetable?.weightPerValuePoint || 100,
     benefits: vegetable?.benefits?.join(', ') || '',
     image: vegetable?.image || 'https://images.pexels.com/photos/1132047/pexels-photo-1132047.jpeg?auto=compress&cs=tinysrgb&w=400',
     isAvailable: vegetable?.isAvailable ?? true
@@ -516,41 +958,16 @@ const VegetableModal: React.FC<{
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Base Value</label>
-              <input
-                type="number"
-                value={formData.baseValue}
-                onChange={(e) => setFormData(prev => ({ ...prev, baseValue: parseInt(e.target.value) || 0 }))}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                min="1"
-                max="10"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Typical Weight</label>
-              <input
-                type="text"
-                value={formData.typicalWeight}
-                onChange={(e) => setFormData(prev => ({ ...prev, typicalWeight: e.target.value }))}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                placeholder="e.g., 250g"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Weight per Value Point</label>
-              <input
-                type="number"
-                value={formData.weightPerValuePoint}
-                onChange={(e) => setFormData(prev => ({ ...prev, weightPerValuePoint: parseInt(e.target.value) || 0 }))}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                min="1"
-                required
-              />
-            </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Typical Weight</label>
+            <input
+              type="text"
+              value={formData.typicalWeight}
+              onChange={(e) => setFormData(prev => ({ ...prev, typicalWeight: e.target.value }))}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+              placeholder="e.g., 250g"
+              required
+            />
           </div>
 
           <div>

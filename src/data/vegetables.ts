@@ -8,62 +8,87 @@ export interface Vegetable {
   id: string;
   name: string;
   category: 'root' | 'leafy' | 'bushy';
-  baseValue: number; // Base value points for subscription pricing calculation
   typicalWeight: string;
-  marketPricePer250g: number; // Default market price per 250g (can be overridden by pricing service)
+  marketPricePer250g: number; // Default market price per 250g
   description: string;
   season: string;
   benefits: string[];
   image: string;
-  // Weight per value point for dynamic allocation
-  weightPerValuePoint: number; // grams per value point
 }
 
-// Base value ratios: Root=4, Leafy=2, Bushy=3 (for subscription allocation only)
-export const CATEGORY_VALUES = {
-  root: 4,   // Heavy vegetables that grow underground (carrots, potatoes, radish)
-  leafy: 2,  // Light leafy greens (gotukola, mukunuwenna, kankun)
-  bushy: 3   // Medium weight vegetables that grow on bushes/vines (eggplant, okra, beans)
-};
-
-// Average weight per value point for each category (grams per value point)
-export const CATEGORY_WEIGHT_RATIOS = {
-  root: 125,  // Root vegetables: ~125g per value point (500g ÷ 4 = 125g)
-  leafy: 125, // Leafy vegetables: ~125g per value point (250g ÷ 2 = 125g)
-  bushy: 100  // Bushy vegetables: ~100g per value point (300g ÷ 3 = 100g)
-};
+// Budget share percentages (from veg_categories.budget_share_percent), fallback below
+export const CATEGORY_RATIOS_FALLBACK = { root: 44, leafy: 22, bushy: 34 };
 
 export const vegetables: Vegetable[] = []; // Deprecated: Use VegetableService instead
 
-// Function to calculate vegetable value allocation for subscription plans (uses 4:2:3 ratio)
-export const calculatePlanAllocation = (totalBudget: number, selectedVegetables: string[], availableVegetables: Vegetable[]) => {
-  const selectedVegData = availableVegetables.filter(v => selectedVegetables.includes(v.id));
-  const totalValue = selectedVegData.reduce((sum, veg) => sum + veg.baseValue, 0);
+// Plan structures: (Root, Bushy, Leafy) counts
+const PLAN_STRUCTURES: Record<number, { root: number, bushy: number, leafy: number }> = {
+  2400: { root: 1, bushy: 2, leafy: 1 }, // Small (4)
+  4300: { root: 2, bushy: 3, leafy: 2 }, // Medium (7)
+  6200: { root: 3, bushy: 4, leafy: 3 }  // Large (10)
+};
 
-  if (totalValue === 0) return [];
+/** Target counts per category for the plan (e.g. small: 1 root, 1 leafy, 2 bushy). Used for budget denominator. */
+export type CategoricalLimits = { root: number; leafy: number; bushy: number };
+
+// Function to calculate vegetable allocation for subscription plans
+// Splits the total budget by category percentages; denominator uses plan's target count per category
+export const calculatePlanAllocation = (
+  totalBudget: number,
+  selectedVegetables: string[],
+  availableVegetables: Vegetable[],
+  categoricalLimits?: CategoricalLimits
+) => {
+  const selectedVegData = availableVegetables.filter(v => selectedVegetables.includes(v.id));
+  if (selectedVegData.length === 0) return [];
+
+  const ratios = VegetableService.getInstance().getCategoryRatios(); // percentages 0–100
+  const totalShare = ratios.root + ratios.leafy + ratios.bushy || 100;
+  const structure = categoricalLimits || PLAN_STRUCTURES[totalBudget] || { root: 1, bushy: 1, leafy: 1 };
 
   return selectedVegData.map(veg => {
-    const allocatedBudget = Math.round((veg.baseValue / totalValue) * totalBudget);
-    const allocatedWeight = Math.round(veg.weightPerValuePoint * veg.baseValue);
+    const categoryPct = ratios[veg.category as keyof typeof ratios] ?? CATEGORY_RATIOS_FALLBACK[veg.category as keyof typeof CATEGORY_RATIOS_FALLBACK] ?? 34;
+    const itemsInCategory = selectedVegData.filter(v => v.category === veg.category).length;
+
+    const targetCount = structure[veg.category as keyof typeof structure] || 1;
+    const denominator = Math.max(itemsInCategory, targetCount);
+
+    // Category pool = (share % / 100) * totalBudget; item share = pool / denominator
+    const allocatedBudget = Math.floor(((categoryPct / totalShare) * totalBudget) / denominator);
+
+    const currentPrice = getCurrentPrice(veg.id);
+    const allocatedWeight = currentPrice > 0
+      ? Math.round((allocatedBudget / currentPrice) * 250)
+      : 0;
 
     return {
       ...veg,
       allocatedBudget,
-      allocatedWeight, // Dynamic weight based on value allocation
-      valuePercentage: Math.round((veg.baseValue / totalValue) * 100)
+      allocatedWeight,
+      valuePercentage: Math.round((allocatedBudget / totalBudget) * 100)
     };
   });
 };
 
 // Function to calculate total weight for a plan
-export const calculateTotalPlanWeight = (selectedVegetables: string[], availableVegetables: Vegetable[]) => {
-  const allocation = calculatePlanAllocation(1000, selectedVegetables, availableVegetables); // Use dummy budget for weight calculation
+export const calculateTotalPlanWeight = (
+  totalBudget: number,
+  selectedVegetables: string[],
+  availableVegetables: Vegetable[],
+  categoricalLimits?: CategoricalLimits
+) => {
+  const allocation = calculatePlanAllocation(totalBudget, selectedVegetables, availableVegetables, categoricalLimits);
   return allocation.reduce((total, veg) => total + veg.allocatedWeight, 0);
 };
 
 // Function to get weight breakdown by category
-export const getWeightBreakdownByCategory = (selectedVegetables: string[], availableVegetables: Vegetable[]) => {
-  const allocation = calculatePlanAllocation(1000, selectedVegetables, availableVegetables); // Use dummy budget
+export const getWeightBreakdownByCategory = (
+  totalBudget: number,
+  selectedVegetables: string[],
+  availableVegetables: Vegetable[],
+  categoricalLimits?: CategoricalLimits
+) => {
+  const allocation = calculatePlanAllocation(totalBudget, selectedVegetables, availableVegetables, categoricalLimits);
 
   const breakdown = {
     root: { count: 0, weight: 0 },
@@ -94,8 +119,8 @@ export const getWeightBreakdownByCategory = (selectedVegetables: string[], avail
 // Default vegetable selections for each plan (balanced across categories)
 export const defaultPlanVegetables = {
   small: ['carrots', 'gotukola', 'bandakka', 'chilies'], // 1 root + 1 leafy + 2 bushy
-  medium: ['carrots', 'radish', 'gotukola', 'mukunuwenna', 'bandakka', 'wambatu', 'chilies'], // 2 root + 2 leafy + 3 bushy
-  large: ['carrots', 'radish', 'sweetpotato', 'gotukola', 'mukunuwenna', 'kankun', 'bandakka', 'wambatu', 'karavila', 'beans'] // 3 root + 3 leafy + 4 bushy
+  medium: ['carrots', 'radish', 'gotukola', 'nivithi', 'bandakka', 'wambatu', 'chilies'], // 2 root + 2 leafy + 3 bushy
+  large: ['carrots', 'radish', 'sweetpotato', 'gotukola', 'mukunuwenna', 'nivithi', 'bandakka', 'wambatu', 'karavila', 'beans'] // 3 root + 3 leafy + 4 bushy
 };
 
 // Function to get current price for a vegetable (used throughout the app)
