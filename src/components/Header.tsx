@@ -71,7 +71,7 @@ const Header = () => {
               to="/products"
               className="text-gray-700 hover:text-green-600 transition-colors"
             >
-              What's Inside
+              Discover
             </Link>
             <a
               href="#pricing"
@@ -138,7 +138,7 @@ const Header = () => {
                 className="block px-3 py-2 text-gray-700 hover:text-green-600 transition-colors"
                 onClick={() => setIsMenuOpen(false)}
               >
-                What's Inside
+                Discover
               </Link>
               <a
                 href="#pricing"
