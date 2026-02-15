@@ -4,7 +4,7 @@ import { useWeekly } from '../contexts/WeeklyContext';
 import { getDeliveryDate } from '../utils/weeklyShuffling';
 
 const WeeklyScheduleInfo = () => {
-  const { isCustomizationAllowed, timeRemaining } = useWeekly();
+  const { isCustomizationAllowed, timeRemaining, scheduleDisplay } = useWeekly();
 
   const formatTimeRemaining = () => {
     if (!isCustomizationAllowed) return null;
@@ -37,9 +37,11 @@ const WeeklyScheduleInfo = () => {
             <div className="font-semibold">
               {isCustomizationAllowed ? 'Customization Open' : 'Customization Closed'}
             </div>
-            <div className="text-sm opacity-90 mt-0.5">
-              Opens Wed 00:01 · Closes Fri end (Sat 00:00)
-            </div>
+            {scheduleDisplay && (
+              <div className="text-sm opacity-90 mt-0.5">
+                Opens {scheduleDisplay.openLabel} · Closes {scheduleDisplay.closeLabel}
+              </div>
+            )}
             {isCustomizationAllowed && formatTimeRemaining() && (
               <div className="text-sm mt-1 font-medium">
                 {formatTimeRemaining()}

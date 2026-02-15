@@ -31,18 +31,23 @@ const PLAN_STRUCTURES: Record<number, { root: number, bushy: number, leafy: numb
 /** Target counts per category for the plan (e.g. small: 1 root, 1 leafy, 2 bushy). Used for budget denominator. */
 export type CategoricalLimits = { root: number; leafy: number; bushy: number };
 
+/** Budget share per category as percentages 0–100 (e.g. from bucket_type_category_ratios). */
+export type CategoryRatios = { root: number; leafy: number; bushy: number };
+
 // Function to calculate vegetable allocation for subscription plans
 // Splits the total budget by category percentages; denominator uses plan's target count per category
 export const calculatePlanAllocation = (
   totalBudget: number,
   selectedVegetables: string[],
   availableVegetables: Vegetable[],
-  categoricalLimits?: CategoricalLimits
+  categoricalLimits?: CategoricalLimits,
+  bucketTypeId?: string,
+  categoryRatiosOverride?: CategoryRatios
 ) => {
   const selectedVegData = availableVegetables.filter(v => selectedVegetables.includes(v.id));
   if (selectedVegData.length === 0) return [];
 
-  const ratios = VegetableService.getInstance().getCategoryRatios(); // percentages 0–100
+  const ratios = categoryRatiosOverride ?? VegetableService.getInstance().getCategoryRatios(bucketTypeId);
   const totalShare = ratios.root + ratios.leafy + ratios.bushy || 100;
   const structure = categoricalLimits || PLAN_STRUCTURES[totalBudget] || { root: 1, bushy: 1, leafy: 1 };
 
@@ -75,9 +80,11 @@ export const calculateTotalPlanWeight = (
   totalBudget: number,
   selectedVegetables: string[],
   availableVegetables: Vegetable[],
-  categoricalLimits?: CategoricalLimits
+  categoricalLimits?: CategoricalLimits,
+  bucketTypeId?: string,
+  categoryRatiosOverride?: CategoryRatios
 ) => {
-  const allocation = calculatePlanAllocation(totalBudget, selectedVegetables, availableVegetables, categoricalLimits);
+  const allocation = calculatePlanAllocation(totalBudget, selectedVegetables, availableVegetables, categoricalLimits, bucketTypeId, categoryRatiosOverride);
   return allocation.reduce((total, veg) => total + veg.allocatedWeight, 0);
 };
 
@@ -86,9 +93,11 @@ export const getWeightBreakdownByCategory = (
   totalBudget: number,
   selectedVegetables: string[],
   availableVegetables: Vegetable[],
-  categoricalLimits?: CategoricalLimits
+  categoricalLimits?: CategoricalLimits,
+  bucketTypeId?: string,
+  categoryRatiosOverride?: CategoryRatios
 ) => {
-  const allocation = calculatePlanAllocation(totalBudget, selectedVegetables, availableVegetables, categoricalLimits);
+  const allocation = calculatePlanAllocation(totalBudget, selectedVegetables, availableVegetables, categoricalLimits, bucketTypeId, categoryRatiosOverride);
 
   const breakdown = {
     root: { count: 0, weight: 0 },

@@ -30,6 +30,8 @@ class VegetableService {
   private static instance: VegetableService;
   private vegetables: Map<string, Vegetable> = new Map();
   private categoryRatios: CategoryRatios = { ...DEFAULT_CATEGORY_PERCENTS };
+  /** Per-bucket-type ratios (bucket_type_id -> { root, leafy, bushy }). */
+  private bucketTypeRatios: Map<string, CategoryRatios> = new Map();
   private initialized: boolean = false;
   private initPromise: Promise<void> | null = null;
 
@@ -137,6 +139,9 @@ class VegetableService {
           });
           this.categoryRatios = ratios;
         }
+
+        // Per-bucket ratios are loaded by Customization page from bucket_type_category_ratios (same as Admin).
+        // Do not load here so Customization's fetch always wins and allocation uses DB values.
 
         this.initialized = true;
       } catch (error) {
@@ -329,12 +334,56 @@ class VegetableService {
     return id;
   }
 
-  /** Category budget share as percentages 0–100 (from veg_categories.budget_share_percent). */
-  getCategoryRatios(): CategoryRatios {
-    return { ...this.categoryRatios };
+  /** Set per-bucket ratios from an external source (e.g. Customization page fetch). Ensures allocation uses same data as Admin. */
+  setBucketTypeRatios(byBucketTypeId: Record<string, CategoryRatios>): void {
+    this.bucketTypeRatios.clear();
+    Object.entries(byBucketTypeId).forEach(([id, ratios]) => {
+      this.bucketTypeRatios.set(id, { ...ratios });
+    });
   }
 
-  /** Refetch category percentages from DB (e.g. after admin edit). */
+  /** Category budget share as percentages 0–100. If bucketTypeId given, returns that bucket's ratios; else global fallback. Always normalizes to sum 100. */
+  getCategoryRatios(bucketTypeId?: string): CategoryRatios {
+    const raw =
+      bucketTypeId && this.bucketTypeRatios.has(bucketTypeId)
+        ? { ...this.bucketTypeRatios.get(bucketTypeId)! }
+        : { ...this.categoryRatios };
+    const sum = raw.root + raw.leafy + raw.bushy;
+    if (sum <= 0) return { ...DEFAULT_CATEGORY_PERCENTS };
+    if (sum === 100) return raw;
+    // Normalize to 100 so allocation never uses raw counts as shares
+    return {
+      root: Math.round((100 * raw.root) / sum),
+      leafy: Math.round((100 * raw.leafy) / sum),
+      bushy: 100 - Math.round((100 * raw.root) / sum) - Math.round((100 * raw.leafy) / sum)
+    };
+  }
+
+  /** Refetch per-bucket-type ratios from DB (e.g. after admin edit in bucket type card). */
+  async refreshCategoryRatiosByBucket(): Promise<void> {
+    const { data: vcRows } = await supabase.from('veg_categories').select('id, name');
+    const vegCatIdToName: Record<string, string> = {};
+    (vcRows || []).forEach((r: { id: string; name: string }) => { vegCatIdToName[r.id] = (r.name || '').toLowerCase(); });
+    const { data: btRatioRows } = await supabase.from('bucket_type_category_ratios').select('bucket_type_id, veg_category_id, budget_share_percent');
+    this.bucketTypeRatios.clear();
+    (btRatioRows || []).forEach((r: { bucket_type_id: string; veg_category_id: string; budget_share_percent: number | null }) => {
+      const name = vegCatIdToName[r.veg_category_id] as keyof CategoryRatios | undefined;
+      const pct = r.budget_share_percent != null ? Math.max(0, Math.min(100, r.budget_share_percent)) : 34;
+      if (!name || !['root', 'leafy', 'bushy'].includes(name)) return;
+      const existing = this.bucketTypeRatios.get(r.bucket_type_id) ?? { ...DEFAULT_CATEGORY_PERCENTS };
+      existing[name] = pct;
+      this.bucketTypeRatios.set(r.bucket_type_id, existing);
+    });
+    // If any bucket's ratios sum to < 20 they're likely counts (e.g. 3,1,2), not percentages — use default
+    this.bucketTypeRatios.forEach((ratios, bucketId) => {
+      const sum = ratios.root + ratios.leafy + ratios.bushy;
+      if (sum < 20) {
+        this.bucketTypeRatios.set(bucketId, { ...DEFAULT_CATEGORY_PERCENTS });
+      }
+    });
+  }
+
+  /** Refetch global category percentages from DB (e.g. after admin edit in veg_categories). */
   async refreshCategoryRatios(): Promise<CategoryRatios> {
     const { data: catRows } = await supabase.from('veg_categories').select('name, budget_share_percent, soft_ratio_weight');
     if (catRows && catRows.length > 0) {

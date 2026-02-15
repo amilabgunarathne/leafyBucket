@@ -5,6 +5,8 @@ import { useAuth } from '../contexts/AuthContext';
 import VegetableService, { Vegetable } from '../services/vegetableService';
 import { supabase } from '../lib/supabase';
 import type { BucketType } from '../services/SubscriptionService';
+import { getCurrentWeekDateRange, getNextWeekDateRange } from '../utils/marketWeekUtils';
+import { formatScheduleDisplay, getScheduleEditState, getScheduleEditStateForNextWindow } from '../utils/customizationSchedule';
 
 export interface MarketWeek {
   id: string;
@@ -12,6 +14,18 @@ export interface MarketWeek {
   week_end_date: string;
   is_locked: boolean;
   created_at?: string;
+  veg_count_small?: number | null;
+  veg_count_medium?: number | null;
+  veg_count_large?: number | null;
+}
+
+export interface CustomizationSchedule {
+  id: string;
+  open_dow: number;
+  open_time: string;
+  close_dow: number;
+  close_time: string;
+  updated_at?: string;
 }
 
 const AdminPage = () => {
@@ -30,6 +44,11 @@ const AdminPage = () => {
   const [selectedVegetable, setSelectedVegetable] = useState<Vegetable | null>(null);
   const [showVegetableModal, setShowVegetableModal] = useState(false);
   const [vegCategories, setVegCategories] = useState<{ id: string; name: string; budget_share_percent: number }[]>([]);
+  const [customizationSchedule, setCustomizationSchedule] = useState<CustomizationSchedule | null>(null);
+  /** Per-bucket-type category ratios (root/leafy/bushy %). Key = bucket_type_id. */
+  const [bucketTypeRatios, setBucketTypeRatios] = useState<Record<string, { root: number; leafy: number; bushy: number }>>({});
+  /** veg_categories id by name (root, leafy, bushy) for saving ratios. */
+  const [vegCategoryIdsByName, setVegCategoryIdsByName] = useState<Record<string, string>>({});
 
   useEffect(() => {
     loadData();
@@ -55,17 +74,14 @@ const AdminPage = () => {
       await VegetableService.getInstance().initialize();
       const vegList = VegetableService.getInstance().getAllVegetables();
 
-      let btList: BucketType[] = [];
-      try {
-        const { default: SubscriptionService } = await import('../services/SubscriptionService');
-        btList = await SubscriptionService.getInstance().getBucketTypes();
-      } catch {
-        const { data } = await supabase.from('bucket_types').select('*').order('monthly_price');
-        btList = (data || []) as BucketType[];
-      }
+      // Load all bucket types (active and inactive) so admin can see and re-enable inactive ones
+      const { data: btData } = await supabase.from('bucket_types').select('*').order('monthly_price', { ascending: true });
+      const btList: BucketType[] = (btData || []) as BucketType[];
 
       const { data: profData } = await supabase.from('profiles').select('id, email, full_name, role');
-      const { data: weeksData } = await supabase.from('market_weeks').select('id, week_start_date, week_end_date, is_locked, created_at').order('week_start_date', { ascending: false });
+      const { data: weeksData } = await supabase.from('market_weeks').select('id, week_start_date, week_end_date, is_locked, created_at, veg_count_small, veg_count_medium, veg_count_large').order('week_start_date', { ascending: false });
+      const { data: schedData } = await supabase.from('customization_schedule').select('id, open_dow, open_time, close_dow, close_time, updated_at').limit(1);
+      setCustomizationSchedule(Array.isArray(schedData) && schedData.length > 0 ? (schedData[0] as CustomizationSchedule) : null);
       const { data: catData } = await supabase.from('veg_categories').select('id, name, budget_share_percent').order('name');
       // Dedupe by name so we show one row per category (DB may have had duplicate seeds)
       const byName = new Map<string, { id: string; name: string; budget_share_percent: number }>();
@@ -81,6 +97,19 @@ const AdminPage = () => {
         }
       });
       setVegCategories(Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name)));
+      const nameToId: Record<string, string> = {};
+      byName.forEach((v, k) => { nameToId[k] = v.id; });
+      setVegCategoryIdsByName(nameToId);
+      // Category budget %: prefer columns on bucket_types (single source of truth)
+      const ratiosByBucket: Record<string, { root: number; leafy: number; bushy: number }> = {};
+      (btList || []).forEach((bt: { id: string; root_budget_pct?: number | null; leafy_budget_pct?: number | null; bushy_budget_pct?: number | null }) => {
+        ratiosByBucket[bt.id] = {
+          root: bt.root_budget_pct != null ? Math.max(0, Math.min(100, bt.root_budget_pct)) : 34,
+          leafy: bt.leafy_budget_pct != null ? Math.max(0, Math.min(100, bt.leafy_budget_pct)) : 33,
+          bushy: bt.bushy_budget_pct != null ? Math.max(0, Math.min(100, bt.bushy_budget_pct)) : 33
+        };
+      });
+      setBucketTypeRatios(ratiosByBucket);
       const weeks = (weeksData || []) as MarketWeek[];
       setMarketWeeks(weeks);
       if (weeks.length > 0 && !selectedMarketWeekId) setSelectedMarketWeekId(weeks[0].id);
@@ -254,7 +283,6 @@ const AdminPage = () => {
               {[
                 { id: 'vegetables', label: 'Vegetables', icon: Package },
                 { id: 'buckets', label: 'Bucket types', icon: LayoutGrid },
-                { id: 'ratios', label: 'Category ratios', icon: Percent },
                 { id: 'prices', label: 'Market prices', icon: DollarSign },
                 { id: 'weeks', label: 'Market weeks', icon: Calendar },
                 { id: 'users', label: 'Users', icon: Users },
@@ -381,6 +409,8 @@ const AdminPage = () => {
                     <BucketTypeCard
                       key={bt.id}
                       bucketType={bt}
+                      categoryRatios={bucketTypeRatios[bt.id] ?? { root: 34, leafy: 33, bushy: 33 }}
+                      vegCategoryIdsByName={vegCategoryIdsByName}
                       onSave={async (updates) => {
                         const payload: Record<string, unknown> = {
                           name: updates.name,
@@ -393,6 +423,11 @@ const AdminPage = () => {
                         if (updates.root_count !== undefined) payload.root_count = updates.root_count;
                         if (updates.bushy_count !== undefined) payload.bushy_count = updates.bushy_count;
                         if (updates.leafy_count !== undefined) payload.leafy_count = updates.leafy_count;
+                        if (updates.categoryRatios) {
+                          payload.root_budget_pct = Math.max(0, Math.min(100, updates.categoryRatios.root ?? 34));
+                          payload.leafy_budget_pct = Math.max(0, Math.min(100, updates.categoryRatios.leafy ?? 33));
+                          payload.bushy_budget_pct = Math.max(0, Math.min(100, updates.categoryRatios.bushy ?? 33));
+                        }
                         const { error } = await supabase.from('bucket_types').update(payload).eq('id', bt.id);
                         if (error) throw error;
                         setMessage({ type: 'success', text: 'Bucket type updated' });
@@ -403,64 +438,6 @@ const AdminPage = () => {
                 </div>
                 {bucketTypes.length === 0 && !loading && (
                   <p className="text-gray-500">No bucket types. Add them in Supabase or run migrations.</p>
-                )}
-              </div>
-            )}
-
-            {activeTab === 'ratios' && (
-              <div className="space-y-6">
-                <h2 className="text-lg font-semibold text-gray-900">Category budget share (%)</h2>
-                <p className="text-sm text-gray-600">
-                  Percentage of the bucket budget for each category (root, leafy, bushy). Values should sum to 100%.
-                </p>
-                <div className="max-w-md space-y-4">
-                  {vegCategories.map((cat) => (
-                    <div key={cat.id} className="flex items-center justify-between gap-4 p-4 border border-gray-200 rounded-lg bg-white">
-                      <span className="font-medium text-gray-900 capitalize">{cat.name}</span>
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="number"
-                          min={0}
-                          max={100}
-                          value={cat.budget_share_percent}
-                          onChange={(e) => {
-                            const v = parseInt(e.target.value, 10);
-                            if (!Number.isNaN(v)) setVegCategories(prev => prev.map(c => c.id === cat.id ? { ...c, budget_share_percent: Math.max(0, Math.min(100, v)) } : c));
-                          }}
-                          className="w-20 px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-green-500 focus:border-transparent text-sm"
-                        />
-                        <span className="text-sm text-gray-500 w-6">%</span>
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            try {
-                              const { error } = await supabase.from('veg_categories').update({ budget_share_percent: cat.budget_share_percent }).eq('id', cat.id);
-                              if (error) throw error;
-                              await VegetableService.getInstance().refreshCategoryRatios();
-                              setMessage({ type: 'success', text: `Budget share for ${cat.name} saved` });
-                            } catch (err: unknown) {
-                              const e = err as { message?: string };
-                              setMessage({ type: 'error', text: e?.message || 'Failed to save' });
-                            }
-                          }}
-                          className="px-3 py-2 bg-green-600 text-white rounded-md text-sm hover:bg-green-700"
-                        >
-                          Save
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                  {vegCategories.length > 0 && (
-                    <p className="text-sm text-gray-600 pt-2">
-                      Total: <strong>{vegCategories.reduce((s, c) => s + c.budget_share_percent, 0)}%</strong>
-                      {vegCategories.reduce((s, c) => s + c.budget_share_percent, 0) !== 100 && (
-                        <span className="text-amber-600 ml-2">(should be 100%)</span>
-                      )}
-                    </p>
-                  )}
-                </div>
-                {vegCategories.length === 0 && !loading && (
-                  <p className="text-gray-500">No categories found. Run the migration that creates veg_categories and seeds root, leafy, bushy.</p>
                 )}
               </div>
             )}
@@ -541,10 +518,10 @@ const AdminPage = () => {
             )}
 
             {activeTab === 'weeks' && (
-              <div className="space-y-6">
+              <div>
                 <h2 className="text-lg font-semibold text-gray-900">Market weeks</h2>
-                <p className="text-sm text-gray-600">Define week windows for pricing and delivery. Lock a week to prevent further changes.</p>
-                <MarketWeeksSection marketWeeks={marketWeeks} onRefresh={loadData} setMessage={setMessage} />
+                <p className="text-sm text-gray-600">Current week and next week (Mon–Sun). Open/close times are shown inside each week; lock a week to close customization for that week.</p>
+                <MarketWeeksSection marketWeeks={marketWeeks} customizationSchedule={customizationSchedule} onRefresh={loadData} setMessage={setMessage} />
               </div>
             )}
 
@@ -716,11 +693,13 @@ const AdminPage = () => {
   );
 };
 
-// Bucket type card: name, description, display_item_range, monthly_price, handling_fee, is_active, root_count, leafy_count, bushy_count
+// Bucket type card: name, description, display_item_range, monthly_price, handling_fee, is_active, root_count, leafy_count, bushy_count, category ratios
 const BucketTypeCard: React.FC<{
   bucketType: BucketType;
-  onSave: (updates: Partial<BucketType> & { is_active?: boolean }) => Promise<void>;
-}> = ({ bucketType, onSave }) => {
+  categoryRatios: { root: number; leafy: number; bushy: number };
+  vegCategoryIdsByName: Record<string, string>;
+  onSave: (updates: Partial<BucketType> & { is_active?: boolean; categoryRatios?: { root: number; leafy: number; bushy: number } }) => Promise<void>;
+}> = ({ bucketType, categoryRatios, vegCategoryIdsByName, onSave }) => {
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({
     name: bucketType.name,
@@ -731,20 +710,34 @@ const BucketTypeCard: React.FC<{
     is_active: (bucketType as any).is_active !== false,
     root_count: bucketType.root_count ?? 1,
     leafy_count: bucketType.leafy_count ?? 1,
-    bushy_count: bucketType.bushy_count ?? 2
+    bushy_count: bucketType.bushy_count ?? 2,
+    root_pct: categoryRatios.root,
+    leafy_pct: categoryRatios.leafy,
+    bushy_pct: categoryRatios.bushy
   });
+  useEffect(() => {
+    setForm((f) => ({ ...f, root_pct: categoryRatios.root, leafy_pct: categoryRatios.leafy, bushy_pct: categoryRatios.bushy }));
+  }, [categoryRatios.root, categoryRatios.leafy, categoryRatios.bushy]);
 
   const handleSave = async () => {
-    await onSave(form);
+    await onSave({
+      ...form,
+      categoryRatios: { root: form.root_pct, leafy: form.leafy_pct, bushy: form.bushy_pct }
+    });
     setEditing(false);
   };
 
   return (
     <div className="border rounded-lg p-4 bg-white shadow-sm">
       {!editing ? (
-        <div className="flex justify-between items-start">
+        <div className={`flex justify-between items-start ${(bucketType as any).is_active === false ? 'opacity-90' : ''}`}>
           <div>
-            <h3 className="font-semibold text-gray-900">{bucketType.name}</h3>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className="font-semibold text-gray-900">{bucketType.name}</h3>
+              {(bucketType as any).is_active === false && (
+                <span className="text-xs font-medium px-2 py-0.5 rounded bg-amber-100 text-amber-800">Inactive</span>
+              )}
+            </div>
             <p className="text-sm text-gray-600">LKR {bucketType.monthly_price} / mo</p>
             <p className="text-xs text-gray-500">Handling: LKR {bucketType.handling_fee} · Items: {bucketType.display_item_range}</p>
             <p className="text-xs text-gray-500 mt-1">Root: {bucketType.root_count ?? 1} · Leafy: {bucketType.leafy_count ?? 1} · Bushy: {bucketType.bushy_count ?? 2}</p>
@@ -760,7 +753,7 @@ const BucketTypeCard: React.FC<{
             <input type="number" className="w-full px-2 py-1 border rounded text-sm" placeholder="Monthly price" value={form.monthly_price} onChange={(e) => setForm((f) => ({ ...f, monthly_price: Number(e.target.value) || 0 }))} />
             <input type="number" className="w-full px-2 py-1 border rounded text-sm" placeholder="Handling fee" value={form.handling_fee} onChange={(e) => setForm((f) => ({ ...f, handling_fee: Number(e.target.value) || 0 }))} />
           </div>
-          <p className="text-xs text-gray-600 mt-2">Vegetables per bucket (for budget split):</p>
+          <p className="text-xs text-gray-600 mt-2">Vegetables per bucket (counts):</p>
           <div className="grid grid-cols-3 gap-2">
             <div>
               <label className="block text-xs text-gray-500">Root</label>
@@ -775,6 +768,22 @@ const BucketTypeCard: React.FC<{
               <input type="number" min={0} className="w-full px-2 py-1 border rounded text-sm" value={form.bushy_count} onChange={(e) => setForm((f) => ({ ...f, bushy_count: Math.max(0, parseInt(e.target.value, 10) || 0) }))} />
             </div>
           </div>
+          <p className="text-xs text-gray-600 mt-2">Category budget share % (this bucket only; should sum to 100):</p>
+          <div className="grid grid-cols-3 gap-2">
+            <div>
+              <label className="block text-xs text-gray-500">Root %</label>
+              <input type="number" min={0} max={100} className="w-full px-2 py-1 border rounded text-sm" value={form.root_pct} onChange={(e) => setForm((f) => ({ ...f, root_pct: Math.max(0, Math.min(100, parseInt(e.target.value, 10) || 0)) }))} />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500">Leafy %</label>
+              <input type="number" min={0} max={100} className="w-full px-2 py-1 border rounded text-sm" value={form.leafy_pct} onChange={(e) => setForm((f) => ({ ...f, leafy_pct: Math.max(0, Math.min(100, parseInt(e.target.value, 10) || 0)) }))} />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500">Bushy %</label>
+              <input type="number" min={0} max={100} className="w-full px-2 py-1 border rounded text-sm" value={form.bushy_pct} onChange={(e) => setForm((f) => ({ ...f, bushy_pct: Math.max(0, Math.min(100, parseInt(e.target.value, 10) || 0)) }))} />
+            </div>
+          </div>
+          <p className="text-xs text-gray-500">Total: {form.root_pct + form.leafy_pct + form.bushy_pct}%</p>
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={form.is_active} onChange={(e) => setForm((f) => ({ ...f, is_active: e.target.checked }))} />
             Active
@@ -789,76 +798,280 @@ const BucketTypeCard: React.FC<{
   );
 };
 
-// Market weeks: list, add, edit (week_start_date, week_end_date, is_locked)
+const DOW_LABELS: Record<number, string> = { 0: 'Sunday', 1: 'Monday', 2: 'Tuesday', 3: 'Wednesday', 4: 'Thursday', 5: 'Friday', 6: 'Saturday' };
+
+function formatDateRangeForWeek(start: string, end: string): string {
+  const s = new Date(start + 'T12:00:00');
+  const e = new Date(end + 'T12:00:00');
+  return `${s.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })} – ${e.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}`;
+}
+
+type WeekForm = {
+  id: string | null;
+  week_start_date: string;
+  week_end_date: string;
+  is_locked: boolean;
+  veg_count_small: number | '';
+  veg_count_medium: number | '';
+  veg_count_large: number | '';
+};
+
+// Stable component outside parent so typing in inputs doesn't remount and scroll to top.
+const WeekCard: React.FC<{
+  title: string;
+  form: WeekForm;
+  setForm: React.Dispatch<React.SetStateAction<WeekForm>>;
+  onSave: () => void;
+  scheduleLabels: { openLabel: string; closeLabel: string } | null;
+  thisCard: 'current' | 'next';
+  scheduleEditInCard: 'current' | 'next' | null;
+  onEditSchedule: () => void;
+  onCloseScheduleEdit: () => void;
+  scheduleForm: { open_dow: number; open_time: string; close_dow: number; close_time: string };
+  setScheduleForm: React.Dispatch<React.SetStateAction<{ open_dow: number; open_time: string; close_dow: number; close_time: string }>>;
+  scheduleEditState: { canEditOpen: boolean; canEditClose: boolean; message?: string };
+  onSaveSchedule: () => void;
+}> = ({ title, form, setForm, onSave, scheduleLabels, thisCard, scheduleEditInCard, onEditSchedule, onCloseScheduleEdit, scheduleForm, setScheduleForm, scheduleEditState, onSaveSchedule }) => {
+  const showForm = scheduleEditInCard === thisCard;
+  return (
+    <div className="p-4 border rounded-lg bg-gray-50 space-y-4 max-w-xl">
+      <div>
+        <h3 className="font-semibold text-gray-900">{title} <span className="text-xs font-normal text-gray-500">(Mon–Sun)</span></h3>
+        <p className="text-sm text-gray-600">{formatDateRangeForWeek(form.week_start_date, form.week_end_date)}</p>
+      </div>
+      <div className="p-3 rounded-lg bg-white border border-gray-200">
+        {showForm ? (
+          <div className="space-y-3">
+            <h4 className="font-medium text-gray-900 text-sm">Edit open/close times for this week (applies to both weeks)</h4>
+            {scheduleEditState.message && (
+              <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1.5">{scheduleEditState.message}</p>
+            )}
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Open (day & time)</label>
+              <div className="flex gap-2 items-center">
+                <select value={scheduleForm.open_dow} onChange={(e) => setScheduleForm((f) => ({ ...f, open_dow: parseInt(e.target.value, 10) }))} className="px-2 py-1 border rounded text-sm" disabled={!scheduleEditState.canEditOpen}>
+                  {[0, 1, 2, 3, 4, 5, 6].map((d) => <option key={d} value={d}>{DOW_LABELS[d]}</option>)}
+                </select>
+                <input type="time" value={scheduleForm.open_time} onChange={(e) => setScheduleForm((f) => ({ ...f, open_time: e.target.value }))} className="px-2 py-1 border rounded text-sm" disabled={!scheduleEditState.canEditOpen} />
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Close (day & time)</label>
+              <div className="flex gap-2 items-center">
+                <select value={scheduleForm.close_dow} onChange={(e) => setScheduleForm((f) => ({ ...f, close_dow: parseInt(e.target.value, 10) }))} className="px-2 py-1 border rounded text-sm" disabled={!scheduleEditState.canEditClose}>
+                  {[0, 1, 2, 3, 4, 5, 6].map((d) => <option key={d} value={d}>{DOW_LABELS[d]}</option>)}
+                </select>
+                <input type="time" value={scheduleForm.close_time} onChange={(e) => setScheduleForm((f) => ({ ...f, close_time: e.target.value }))} className="px-2 py-1 border rounded text-sm" disabled={!scheduleEditState.canEditClose} />
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button type="button" onClick={onSaveSchedule} className="px-2 py-1.5 bg-green-600 text-white rounded text-sm hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed" disabled={!scheduleEditState.canEditOpen && !scheduleEditState.canEditClose}>Save times</button>
+              <button type="button" onClick={onCloseScheduleEdit} className="px-2 py-1.5 bg-gray-200 rounded text-sm">Cancel</button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <p className="text-sm text-gray-700">
+              <span className="font-medium">Customization for this week:</span>{' '}
+              {scheduleLabels ? `Opens ${scheduleLabels.openLabel} · Closes ${scheduleLabels.closeLabel}` : 'Opens/closes set below'}
+            </p>
+            <button type="button" onClick={onEditSchedule} className="mt-2 text-sm text-green-600 hover:text-green-800 font-medium">Edit open/close times</button>
+          </>
+        )}
+      </div>
+      <label className="flex items-center gap-2 text-sm cursor-pointer">
+        {form.is_locked ? <ToggleRight className="h-5 w-5 text-orange-600" aria-hidden /> : <ToggleLeft className="h-5 w-5 text-green-600" aria-hidden />}
+        <input type="checkbox" checked={form.is_locked} onChange={(e) => setForm((f) => ({ ...f, is_locked: e.target.checked }))} className="sr-only" />
+        <span>Turn off availability (emergency)</span>
+      </label>
+      <div className="grid grid-cols-3 gap-2">
+        <div>
+          <label className="block text-xs text-gray-500">Small (veg count)</label>
+          <input type="number" min={1} max={10} className="w-full px-2 py-1 border rounded text-sm" placeholder="3–4" value={form.veg_count_small} onChange={(e) => setForm((f) => ({ ...f, veg_count_small: e.target.value === '' ? '' : parseInt(e.target.value, 10) || 0 }))} />
+        </div>
+        <div>
+          <label className="block text-xs text-gray-500">Medium</label>
+          <input type="number" min={1} max={10} className="w-full px-2 py-1 border rounded text-sm" placeholder="6–7" value={form.veg_count_medium} onChange={(e) => setForm((f) => ({ ...f, veg_count_medium: e.target.value === '' ? '' : parseInt(e.target.value, 10) || 0 }))} />
+        </div>
+        <div>
+          <label className="block text-xs text-gray-500">Large</label>
+          <input type="number" min={1} max={15} className="w-full px-2 py-1 border rounded text-sm" placeholder="9–10" value={form.veg_count_large} onChange={(e) => setForm((f) => ({ ...f, veg_count_large: e.target.value === '' ? '' : parseInt(e.target.value, 10) || 0 }))} />
+        </div>
+      </div>
+      <button type="button" onClick={onSave} className="px-3 py-1.5 bg-green-600 text-white rounded text-sm hover:bg-green-700">Save</button>
+    </div>
+  );
+};
+
+// Market weeks: always current + next week (Mon–Sun). Open/close times shown inside each card (no separate box).
 const MarketWeeksSection: React.FC<{
   marketWeeks: MarketWeek[];
+  customizationSchedule: CustomizationSchedule | null;
   onRefresh: () => void;
   setMessage: (m: { type: 'success' | 'error'; text: string } | null) => void;
-}> = ({ marketWeeks, onRefresh, setMessage }) => {
-  const [adding, setAdding] = useState(false);
-  const [editId, setEditId] = useState<string | null>(null);
-  const [form, setForm] = useState({ week_start_date: '', week_end_date: '', is_locked: false });
+}> = ({ marketWeeks, customizationSchedule, onRefresh, setMessage }) => {
+  const currentRange = getCurrentWeekDateRange();
+  const nextRange = getNextWeekDateRange();
+  const scheduleLabels = formatScheduleDisplay(customizationSchedule);
+  const now = new Date();
+  const scheduleEditStateCurrent = getScheduleEditState(now, customizationSchedule);
+  const scheduleEditStateNext = getScheduleEditStateForNextWindow(now, customizationSchedule);
 
-  const handleCreate = async () => {
-    const { error } = await supabase.from('market_weeks').insert({
-      week_start_date: form.week_start_date,
-      week_end_date: form.week_end_date,
-      is_locked: form.is_locked
-    });
-    if (error) {
-      setMessage({ type: 'error', text: error.message });
-      return;
+  const [scheduleEditInCard, setScheduleEditInCard] = useState<'current' | 'next' | null>(null);
+  const toHHMM = (t: string) => {
+    const s = (t || '12:00').trim();
+    const parts = s.split(':');
+    const h = Math.min(23, Math.max(0, parseInt(parts[0], 10) || 0));
+    const m = Math.min(59, Math.max(0, parseInt(parts[1], 10) || 0));
+    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+  };
+  const [scheduleForm, setScheduleForm] = useState({
+    open_dow: customizationSchedule?.open_dow ?? 3,
+    open_time: customizationSchedule?.open_time ?? '12:00',
+    close_dow: customizationSchedule?.close_dow ?? 5,
+    close_time: customizationSchedule?.close_time ?? '23:59'
+  });
+  useEffect(() => {
+    if (customizationSchedule) {
+      setScheduleForm({
+        open_dow: customizationSchedule.open_dow,
+        open_time: toHHMM(customizationSchedule.open_time),
+        close_dow: customizationSchedule.close_dow,
+        close_time: toHHMM(customizationSchedule.close_time)
+      });
+    } else {
+      setScheduleForm({ open_dow: 3, open_time: '12:00', close_dow: 5, close_time: '23:59' });
     }
-    setMessage({ type: 'success', text: 'Market week created' });
-    setForm({ week_start_date: '', week_end_date: '', is_locked: false });
-    setAdding(false);
-    onRefresh();
+  }, [customizationSchedule?.id, customizationSchedule?.open_dow, customizationSchedule?.open_time, customizationSchedule?.close_dow, customizationSchedule?.close_time]);
+
+  const handleSaveSchedule = async () => {
+    const openTime = toHHMM(scheduleForm.open_time) || '12:00';
+    const closeTime = toHHMM(scheduleForm.close_time) || '23:59';
+    try {
+      if (customizationSchedule?.id) {
+        const { error } = await supabase.from('customization_schedule').update({
+          open_dow: scheduleForm.open_dow,
+          open_time: openTime,
+          close_dow: scheduleForm.close_dow,
+          close_time: closeTime,
+          updated_at: new Date().toISOString()
+        }).eq('id', customizationSchedule.id);
+        if (error) {
+          setMessage({ type: 'error', text: error.message });
+          return;
+        }
+      } else {
+        const { error } = await supabase.from('customization_schedule').insert({
+          open_dow: scheduleForm.open_dow,
+          open_time: openTime,
+          close_dow: scheduleForm.close_dow,
+          close_time: closeTime
+        });
+        if (error) {
+          setMessage({ type: 'error', text: error.message });
+          return;
+        }
+      }
+      setMessage({ type: 'success', text: 'Customization times updated' });
+      setScheduleEditInCard(null);
+      onRefresh();
+    } catch (err) {
+      setMessage({ type: 'error', text: err instanceof Error ? err.message : 'Failed to save' });
+    }
   };
 
-  const handleUpdate = async (id: string) => {
-    const { error } = await supabase.from('market_weeks').update({
+  const findWeek = (start: string) => marketWeeks.find(w => w.week_start_date === start);
+  const currentDb = findWeek(currentRange.week_start_date);
+  const nextDb = findWeek(nextRange.week_start_date);
+
+  const [currentForm, setCurrentForm] = useState<WeekForm>({
+    id: currentDb?.id ?? null,
+    week_start_date: currentRange.week_start_date,
+    week_end_date: currentRange.week_end_date,
+    is_locked: currentDb?.is_locked ?? false,
+    veg_count_small: currentDb?.veg_count_small ?? '',
+    veg_count_medium: currentDb?.veg_count_medium ?? '',
+    veg_count_large: currentDb?.veg_count_large ?? ''
+  });
+  const [nextForm, setNextForm] = useState<WeekForm>({
+    id: nextDb?.id ?? null,
+    week_start_date: nextRange.week_start_date,
+    week_end_date: nextRange.week_end_date,
+    is_locked: nextDb?.is_locked ?? false,
+    veg_count_small: nextDb?.veg_count_small ?? '',
+    veg_count_medium: nextDb?.veg_count_medium ?? '',
+    veg_count_large: nextDb?.veg_count_large ?? ''
+  });
+
+  useEffect(() => {
+    setCurrentForm({
+      id: currentDb?.id ?? null,
+      week_start_date: currentRange.week_start_date,
+      week_end_date: currentRange.week_end_date,
+      is_locked: currentDb?.is_locked ?? false,
+      veg_count_small: currentDb?.veg_count_small ?? '',
+      veg_count_medium: currentDb?.veg_count_medium ?? '',
+      veg_count_large: currentDb?.veg_count_large ?? ''
+    });
+    setNextForm({
+      id: nextDb?.id ?? null,
+      week_start_date: nextRange.week_start_date,
+      week_end_date: nextRange.week_end_date,
+      is_locked: nextDb?.is_locked ?? false,
+      veg_count_small: nextDb?.veg_count_small ?? '',
+      veg_count_medium: nextDb?.veg_count_medium ?? '',
+      veg_count_large: nextDb?.veg_count_large ?? ''
+    });
+  }, [currentDb?.id, currentDb?.is_locked, currentDb?.veg_count_small, currentDb?.veg_count_medium, currentDb?.veg_count_large, nextDb?.id, nextDb?.is_locked, nextDb?.veg_count_small, nextDb?.veg_count_medium, nextDb?.veg_count_large, currentRange.week_start_date, nextRange.week_start_date]);
+
+  const toNum = (v: number | ''): number | null => (v === '' || v == null ? null : Number(v));
+
+  const upsertWeek = async (form: WeekForm): Promise<boolean> => {
+    const payload = {
       week_start_date: form.week_start_date,
       week_end_date: form.week_end_date,
-      is_locked: form.is_locked
-    }).eq('id', id);
+      is_locked: form.is_locked,
+      veg_count_small: toNum(form.veg_count_small),
+      veg_count_medium: toNum(form.veg_count_medium),
+      veg_count_large: toNum(form.veg_count_large)
+    };
+    if (form.id && !String(form.id).startsWith('synthetic-')) {
+      const { error } = await supabase.from('market_weeks').update(payload).eq('id', form.id);
+      if (error) {
+        setMessage({ type: 'error', text: error.message });
+        return false;
+      }
+      return true;
+    }
+    const { error } = await supabase.from('market_weeks').insert(payload);
     if (error) {
       setMessage({ type: 'error', text: error.message });
-      return;
+      return false;
     }
-    setMessage({ type: 'success', text: 'Market week updated' });
-    setEditId(null);
-    onRefresh();
+    return true;
+  };
+
+  const handleSaveCurrent = async () => {
+    if (await upsertWeek(currentForm)) {
+      setMessage({ type: 'success', text: 'Current week saved' });
+      onRefresh();
+    }
+  };
+  const handleSaveNext = async () => {
+    if (await upsertWeek(nextForm)) {
+      setMessage({ type: 'success', text: 'Next week saved' });
+      onRefresh();
+    }
   };
 
   return (
-    <div className="space-y-4">
-      <button
-        type="button"
-        onClick={() => { setAdding(true); setForm({ week_start_date: '', week_end_date: '', is_locked: false }); }}
-        className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm"
-      >
-        Add week
-      </button>
-      {(adding || editId) && (
-        <div className="p-4 border rounded-lg bg-gray-50 space-y-2 max-w-md">
-          <input type="date" className="w-full px-2 py-1 border rounded text-sm" placeholder="Start date" value={form.week_start_date} onChange={(e) => setForm((f) => ({ ...f, week_start_date: e.target.value }))} />
-          <input type="date" className="w-full px-2 py-1 border rounded text-sm" placeholder="End date" value={form.week_end_date} onChange={(e) => setForm((f) => ({ ...f, week_end_date: e.target.value }))} />
-          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.is_locked} onChange={(e) => setForm((f) => ({ ...f, is_locked: e.target.checked }))} /> Locked</label>
-          <div className="flex gap-2">
-            <button type="button" onClick={() => editId ? handleUpdate(editId) : handleCreate()} className="px-3 py-1.5 bg-green-600 text-white rounded text-sm">Save</button>
-            <button type="button" onClick={() => { setAdding(false); setEditId(null); }} className="px-3 py-1.5 bg-gray-200 rounded text-sm">Cancel</button>
-          </div>
-        </div>
-      )}
-      <ul className="divide-y divide-gray-200">
-        {marketWeeks.map((w) => (
-          <li key={w.id} className="py-2 flex items-center justify-between">
-            <span className="text-sm">{w.week_start_date} → {w.week_end_date} {w.is_locked ? '(locked)' : ''}</span>
-            <button type="button" onClick={() => { setEditId(w.id); setForm({ week_start_date: w.week_start_date, week_end_date: w.week_end_date, is_locked: w.is_locked }); }} className="text-green-600 text-sm">Edit</button>
-          </li>
-        ))}
-      </ul>
-      {marketWeeks.length === 0 && !adding && <p className="text-gray-500 text-sm">No market weeks. Add one to use week-scoped prices.</p>}
+    <div className="space-y-6">
+      <p className="text-sm text-gray-600">Weeks run <strong>Monday to Sunday</strong>. Set veg counts and open/close times per week; use the switch to turn off availability in an emergency.</p>
+
+      <div className="space-y-4">
+        <WeekCard title="Current week" form={currentForm} setForm={setCurrentForm} onSave={handleSaveCurrent} scheduleLabels={scheduleLabels} thisCard="current" scheduleEditInCard={scheduleEditInCard} onEditSchedule={() => setScheduleEditInCard('current')} onCloseScheduleEdit={() => setScheduleEditInCard(null)} scheduleForm={scheduleForm} setScheduleForm={setScheduleForm} scheduleEditState={scheduleEditStateCurrent} onSaveSchedule={handleSaveSchedule} />
+        <WeekCard title="Next week" form={nextForm} setForm={setNextForm} onSave={handleSaveNext} scheduleLabels={scheduleLabels} thisCard="next" scheduleEditInCard={scheduleEditInCard} onEditSchedule={() => setScheduleEditInCard('next')} onCloseScheduleEdit={() => setScheduleEditInCard(null)} scheduleForm={scheduleForm} setScheduleForm={setScheduleForm} scheduleEditState={scheduleEditStateNext} onSaveSchedule={handleSaveSchedule} />
+      </div>
     </div>
   );
 };

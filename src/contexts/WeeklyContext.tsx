@@ -11,6 +11,12 @@ import {
 } from '../utils/weeklyShuffling';
 import VegetableService from '../services/vegetableService';
 
+interface ScheduleDisplay {
+  openLabel: string;
+  closeLabel: string;
+  nextOpeningDate: Date | null;
+}
+
 interface WeeklyContextType {
   currentWeekSelection: WeeklySelection | null;
   weeklyHistory: WeeklyHistory;
@@ -21,6 +27,8 @@ interface WeeklyContextType {
     minutes: number;
     isExpired: boolean;
   };
+  /** From DB: when customization opens/closes and next opening (for customer copy). */
+  scheduleDisplay: ScheduleDisplay | null;
   getSelectionForPlan: (planId: 'small' | 'medium' | 'large') => WeeklySelection | null;
   refreshWeeklySelection: (planId: 'small' | 'medium' | 'large') => void;
   updateWeeklyHistory: (weekId: string, vegetables: string[]) => void;
@@ -55,6 +63,8 @@ export const WeeklyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [serviceInitialized, setServiceInitialized] = useState(false);
   /** DB-driven: items per category and total count per plan (from bucket_types) */
   const [planLimits, setPlanLimits] = useState<Record<string, { current: number; counts: { root: number; leafy: number; bushy: number } }>>({});
+  /** From DB: open/close labels and next opening for customer copy (no hardcoded Wed/Fri). */
+  const [scheduleDisplay, setScheduleDisplay] = useState<ScheduleDisplay | null>(null);
 
   // Initialize VegetableService
   useEffect(() => {
@@ -66,32 +76,50 @@ export const WeeklyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     init();
   }, []);
 
-  // Update customization status and time remaining every minute
+  // Update customization status and time remaining (uses DB schedule once setScheduleContext is called)
+  const updateStatus = () => {
+    setIsCustomizationAllowed(isCustomizationOpen());
+    setTimeRemaining(getCustomizationTimeRemaining());
+  };
+
   useEffect(() => {
-    const updateStatus = () => {
-      setIsCustomizationAllowed(isCustomizationOpen());
-      setTimeRemaining(getCustomizationTimeRemaining());
-    };
-
-    updateStatus(); // Initial update
-    const interval = setInterval(updateStatus, 60000); // Update every minute
-
+    updateStatus();
+    const interval = setInterval(updateStatus, 60000);
     return () => clearInterval(interval);
   }, []);
 
-  // Fetch bucket types from DB for per-plan category counts (same mapping as CustomizationPage)
+  // Fetch bucket types, current week (auto or from DB), customization schedule from DB; set context and display
   useEffect(() => {
     if (!serviceInitialized) return;
     const fetchPlanLimits = async () => {
       try {
         const { default: SubscriptionService } = await import('../services/SubscriptionService');
+        const { getOrCreateCurrentWeek, getVegCountForPlan } = await import('../utils/marketWeekUtils');
+        const { setScheduleContext, formatScheduleDisplay, computeNextOpening } = await import('../utils/customizationSchedule');
+        const { supabase } = await import('../lib/supabase');
+
         const bucketTypes = await SubscriptionService.getInstance().getBucketTypes();
+        const { data: weeksData } = await supabase.from('market_weeks').select('id, week_start_date, week_end_date, is_locked, veg_count_small, veg_count_medium, veg_count_large').order('week_start_date', { ascending: false });
+        const currentWeek = getOrCreateCurrentWeek(weeksData || []);
+
+        const { data: scheduleRows } = await supabase.from('customization_schedule').select('id, open_dow, open_time, close_dow, close_time').limit(1);
+        const schedule = Array.isArray(scheduleRows) && scheduleRows.length > 0 ? scheduleRows[0] : null;
+        setScheduleContext(schedule, currentWeek.is_locked === true);
+
+        const labels = formatScheduleDisplay(schedule);
+        setScheduleDisplay(labels ? {
+          openLabel: labels.openLabel,
+          closeLabel: labels.closeLabel,
+          nextOpeningDate: computeNextOpening(new Date(), schedule)
+        } : null);
+
+        updateStatus();
+
         const limits: Record<string, { current: number; counts: { root: number; leafy: number; bushy: number } }> = {};
         bucketTypes.forEach((bt: { name: string; display_item_range?: string; root_count?: number; leafy_count?: number; bushy_count?: number }) => {
           const n = bt.name.toLowerCase();
           const id = n === 'mini' || n === 'small' ? 'small' : n === 'family' || n === 'medium' ? 'medium' : 'large';
-          const match = (bt.display_item_range || '').match(/\d+/);
-          const count = match ? parseInt(match[0], 10) : (bt.root_count ?? 0) + (bt.leafy_count ?? 0) + (bt.bushy_count ?? 0) || 4;
+          const count = getVegCountForPlan(id, currentWeek, bt.display_item_range || '');
           limits[id] = {
             current: count,
             counts: {
@@ -211,6 +239,7 @@ export const WeeklyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       weeklyHistory,
       isCustomizationAllowed,
       timeRemaining,
+      scheduleDisplay,
       getSelectionForPlan,
       refreshWeeklySelection,
       updateWeeklyHistory

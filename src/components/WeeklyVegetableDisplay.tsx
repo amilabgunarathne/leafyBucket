@@ -13,7 +13,7 @@ const WeeklyVegetableDisplay: React.FC<WeeklyVegetableDisplayProps> = ({
   planId,
   showShuffleButton = false
 }) => {
-  const { getSelectionForPlan, isCustomizationAllowed, refreshWeeklySelection } = useWeekly();
+  const { getSelectionForPlan, isCustomizationAllowed, refreshWeeklySelection, scheduleDisplay } = useWeekly();
   const [allVegetables, setAllVegetables] = React.useState<Vegetable[]>([]);
   const [loading, setLoading] = React.useState(true);
 
@@ -110,7 +110,10 @@ const WeeklyVegetableDisplay: React.FC<WeeklyVegetableDisplayProps> = ({
           <div className="flex items-center space-x-2">
             <Lock className="h-4 w-4 text-orange-600" />
             <span className="text-sm text-orange-800">
-              Customization period has ended. Changes will be available next Wednesday.
+              Customization period has ended.
+              {scheduleDisplay?.nextOpeningDate
+                ? ` Changes will be available next ${scheduleDisplay.nextOpeningDate.toLocaleDateString('en-US', { weekday: 'long' })}.`
+                : ' Changes will be available when the next customization window opens.'}
             </span>
           </div>
         </div>

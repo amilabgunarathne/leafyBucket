@@ -27,6 +27,10 @@ export interface BucketType {
     root_count?: number;
     bushy_count?: number;
     leafy_count?: number;
+    /** Budget share % per category (0–100). Should sum to 100. Source of truth for allocation. */
+    root_budget_pct?: number;
+    leafy_budget_pct?: number;
+    bushy_budget_pct?: number;
 }
 
 export interface Delivery {

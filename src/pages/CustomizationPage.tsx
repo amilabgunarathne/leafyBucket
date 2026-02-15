@@ -46,39 +46,58 @@ const CustomizationPage = () => {
     fetchVegetables();
   }, [vegetableService]);
 
-  const { getSelectionForPlan, isCustomizationAllowed, timeRemaining } = useWeekly();
+  const { getSelectionForPlan, isCustomizationAllowed, timeRemaining, scheduleDisplay } = useWeekly();
 
 
-  // Fetch dynamic limits from DB
+  // Fetch dynamic limits from DB; ratios from bucket_type_category_ratios (same as Admin)
   const [adminLimits, setAdminLimits] = useState<any>(null);
+  const [bucketTypeRatiosFromDb, setBucketTypeRatiosFromDb] = useState<Record<string, { root: number; leafy: number; bushy: number }>>({});
   const [loadingLimits, setLoadingLimits] = useState(true);
 
   useEffect(() => {
     const fetchLimits = async () => {
       try {
         const { default: SubscriptionService } = await import('../services/SubscriptionService');
+        const { getOrCreateCurrentWeek, getVegCountForPlan, parseVegRange } = await import('../utils/marketWeekUtils');
+        const { supabase } = await import('../lib/supabase');
+
+        // Ensure vegetables (and any initial ratios) are loaded first, then we overwrite with fresh DB ratios
+        await vegetableService.initialize();
+
         const bucketTypes = await SubscriptionService.getInstance().getBucketTypes();
+        const { data: weeksData } = await supabase.from('market_weeks').select('id, week_start_date, week_end_date, veg_count_small, veg_count_medium, veg_count_large').order('week_start_date', { ascending: false });
+        const currentWeek = getOrCreateCurrentWeek(weeksData || []);
 
         const limits: any = {};
+        const byBucketTypeId: Record<string, { root: number; leafy: number; bushy: number }> = {};
         bucketTypes.forEach(bt => {
           const n = bt.name.toLowerCase();
           const id = n === 'mini' || n === 'small' ? 'small' : n === 'family' || n === 'medium' ? 'medium' : 'large';
-          const match = bt.display_item_range.match(/\d+/);
-          const count = match ? parseInt(match[0]) : 7;
+          const [rangeMin, rangeMax] = parseVegRange(bt.display_item_range, id);
+          const count = getVegCountForPlan(id, currentWeek, bt.display_item_range || '');
 
           limits[id] = {
             current: count,
-            range: [count - 1, count + 1],
+            range: [rangeMin, rangeMax],
             fixedPrice: bt.monthly_price,
             monthlyHandlingFee: bt.handling_fee,
             vegetableBudget: (bt.monthly_price - bt.handling_fee) / 4,
+            bucketTypeId: bt.id,
             counts: {
               root: bt.root_count || 0,
               bushy: bt.bushy_count || 0,
               leafy: bt.leafy_count || 0
             }
           };
+          // Budget share % from bucket_types (same table Admin writes to — single source of truth)
+          const rPct = bt.root_budget_pct != null ? Math.max(0, Math.min(100, bt.root_budget_pct)) : 34;
+          const lPct = bt.leafy_budget_pct != null ? Math.max(0, Math.min(100, bt.leafy_budget_pct)) : 33;
+          const bPct = bt.bushy_budget_pct != null ? Math.max(0, Math.min(100, bt.bushy_budget_pct)) : 33;
+          const sum = rPct + lPct + bPct;
+          byBucketTypeId[bt.id] = sum >= 20 ? { root: rPct, leafy: lPct, bushy: bPct } : { root: 34, leafy: 33, bushy: 33 };
         });
+        VegetableService.getInstance().setBucketTypeRatios(byBucketTypeId);
+        setBucketTypeRatiosFromDb(byBucketTypeId);
         setAdminLimits(limits);
       } catch (error) {
         console.error("Error loading limits:", error);
@@ -87,7 +106,7 @@ const CustomizationPage = () => {
       }
     };
     fetchLimits();
-  }, []);
+  }, [vegetableService]);
 
   // Base plan configurations
   const basePlans = {
@@ -139,6 +158,7 @@ const CustomizationPage = () => {
         fixedPrice: 0,
         monthlyHandlingFee: 0,
         vegetableBudget: 0,
+        bucketTypeId: undefined as string | undefined,
         categoricalLimits: CATEGORICAL_FALLBACKS[selectedPlan] || { root: 0, bushy: 0, leafy: 0 }
       };
     }
@@ -159,6 +179,7 @@ const CustomizationPage = () => {
       fixedPrice: weekLimits.fixedPrice,
       monthlyHandlingFee: weekLimits.monthlyHandlingFee,
       vegetableBudget: weekLimits.vegetableBudget,
+      bucketTypeId: weekLimits.bucketTypeId,
       categoricalLimits
     };
   };
@@ -363,7 +384,13 @@ const CustomizationPage = () => {
     }
   };
 
-  // Calculate current allocation (uses plan's category counts so e.g. 1 root gets 50%, 1 leafy 17%, 2 bushy share 33%)
+  // Ratios from DB (bucket_type_category_ratios) so allocation matches Admin panel
+  const getCategoryRatiosForPlan = () => {
+    const plan = getCurrentPlan();
+    const fromDb = plan.bucketTypeId ? bucketTypeRatiosFromDb[plan.bucketTypeId] : undefined;
+    return fromDb ?? undefined; // pass undefined to use service fallback when no DB ratios yet
+  };
+
   const getCurrentAllocation = () => {
     const currentVegetables = getCurrentVegetables();
     const currentPlan = getCurrentPlan();
@@ -371,11 +398,12 @@ const CustomizationPage = () => {
       currentPlan.vegetableBudget,
       currentVegetables,
       vegetables,
-      currentPlan.categoricalLimits
+      currentPlan.categoricalLimits,
+      currentPlan.bucketTypeId,
+      getCategoryRatiosForPlan()
     );
   };
 
-  // Calculate weight breakdown
   const getWeightBreakdown = () => {
     const currentVegetables = getCurrentVegetables();
     const currentPlan = getCurrentPlan();
@@ -383,7 +411,9 @@ const CustomizationPage = () => {
       currentPlan.vegetableBudget,
       currentVegetables,
       vegetables,
-      currentPlan.categoricalLimits
+      currentPlan.categoricalLimits,
+      currentPlan.bucketTypeId,
+      getCategoryRatiosForPlan()
     );
   };
 
@@ -444,7 +474,9 @@ const CustomizationPage = () => {
                       <div>
                         <div className="font-semibold text-orange-900">Customization Closed</div>
                         <div className="text-sm text-orange-700">
-                          Opens Wednesday 00:01. Closes Friday end (Saturday 00:00).
+                          {scheduleDisplay
+                            ? `Opens ${scheduleDisplay.openLabel}. Closes ${scheduleDisplay.closeLabel}.`
+                            : 'Opening and closing times are set by the market.'}
                         </div>
                       </div>
                     </div>
@@ -498,7 +530,10 @@ const CustomizationPage = () => {
                           <div>
                             <div className="font-semibold text-orange-900">Customization Period Ended</div>
                             <div className="text-sm text-orange-700">
-                              This week's selection is finalized. Changes will be available next Wednesday.
+                              This week's selection is finalized.
+                              {scheduleDisplay?.nextOpeningDate
+                                ? ` Changes will be available next ${scheduleDisplay.nextOpeningDate.toLocaleDateString('en-US', { weekday: 'long' })}.`
+                                : ' Changes will be available when the next customization window opens.'}
                             </div>
                           </div>
                         </div>
@@ -634,7 +669,9 @@ const CustomizationPage = () => {
                                 plan.vegetableBudget,
                                 [...getCurrentVegetables(), vegetable.id],
                                 vegetables,
-                                plan.categoricalLimits
+                                plan.categoricalLimits,
+                                plan.bucketTypeId,
+                                plan.bucketTypeId ? bucketTypeRatiosFromDb[plan.bucketTypeId] : undefined
                               ).find(v => v.id === vegetable.id);
 
                               return (

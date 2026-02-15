@@ -1,4 +1,5 @@
 import VegetableService from '../services/vegetableService';
+import { getMondayOfWeek } from './marketWeekUtils';
 
 export interface WeeklySelection {
   weekId: string;
@@ -14,28 +15,28 @@ export interface WeeklyHistory {
   [weekId: string]: string[]; // vegetable IDs used in each week
 }
 
-// Get current week ID (format: YYYY-WW)
+// Week is always Monday–Sunday. Week ID = YYYY-WW (week number of year based on Monday).
+
+// Get current week ID (format: YYYY-WW) using Monday–Sunday week.
 export const getCurrentWeekId = (): string => {
   const now = new Date();
-  const startOfYear = new Date(now.getFullYear(), 0, 1);
-  const days = Math.floor((now.getTime() - startOfYear.getTime()) / (24 * 60 * 60 * 1000));
-  const weekNumber = Math.ceil((days + startOfYear.getDay() + 1) / 7);
-  return `${now.getFullYear()}-${weekNumber.toString().padStart(2, '0')}`;
+  const monday = getMondayOfWeek(now);
+  const startOfYear = new Date(monday.getFullYear(), 0, 1);
+  const firstMonday = getMondayOfWeek(startOfYear);
+  const diffMs = monday.getTime() - firstMonday.getTime();
+  const weekNumber = Math.floor(diffMs / (7 * 24 * 60 * 60 * 1000)) + 1;
+  return `${monday.getFullYear()}-${weekNumber.toString().padStart(2, '0')}`;
 };
 
-// Get week dates (Monday to Sunday)
+// Get week dates (Monday to Sunday) for a given YYYY-WW.
 export const getWeekDates = (weekId: string) => {
   const [year, week] = weekId.split('-').map(Number);
   const startOfYear = new Date(year, 0, 1);
-  const daysToFirstMonday = (8 - startOfYear.getDay()) % 7;
-  const firstMonday = new Date(year, 0, 1 + daysToFirstMonday);
-
+  const firstMonday = getMondayOfWeek(startOfYear);
   const weekStart = new Date(firstMonday);
   weekStart.setDate(firstMonday.getDate() + (week - 1) * 7);
-
   const weekEnd = new Date(weekStart);
   weekEnd.setDate(weekStart.getDate() + 6);
-
   return {
     monday: new Date(weekStart),
     friday: new Date(weekStart.getTime() + 4 * 24 * 60 * 60 * 1000),
@@ -44,67 +45,24 @@ export const getWeekDates = (weekId: string) => {
   };
 };
 
-// Schedule: Customization Wed 00:01 → Fri end (Sat 00:00). Saturday = purchasing, Sunday = delivery.
+// Schedule: from DB (customization_schedule) + per-week is_locked. Default Wed 12:00 → Fri 23:59.
+// WeeklyContext sets schedule context; these use it when available.
 
-// Check if customization is currently allowed
-export const isCustomizationOpen = (): boolean => {
-  return true; // TEMPORARY OVERRIDE
-  /*
-    const now = new Date();
-    const dayOfWeek = now.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
-    const hours = now.getHours();
-    const minutes = now.getMinutes();
-  
-    // Saturday, Sunday, Monday, Tuesday: closed
-    if (dayOfWeek === 0 || dayOfWeek === 1 || dayOfWeek === 2 || dayOfWeek === 6) {
-      return false;
-    }
-    // Wednesday: open from 00:01 only
-    if (dayOfWeek === 3) {
-      return hours > 0 || (hours === 0 && minutes >= 1);
-    }
-    // Thursday, Friday: open all day (close at Friday end = Saturday 00:00)
-    return true;
-  */
-};
+import { getIsOpen, getDeadline, computeNextOpening, getScheduleContext, getTimeRemaining } from './customizationSchedule';
 
-// Get next customization opening time (next Wednesday 00:01)
+// Check if customization is currently allowed (uses DB schedule + week lock when context set)
+export const isCustomizationOpen = (): boolean => getIsOpen(new Date());
+
+// Get next customization opening (uses DB schedule when context set)
 export const getNextCustomizationOpening = (): Date => {
   const now = new Date();
-  const dayOfWeek = now.getDay();
-
-  if (isCustomizationOpen()) {
-    return now; // Already open
-  }
-
-  // Days until next Wednesday
-  let daysToAdd = (3 - dayOfWeek + 7) % 7;
-  if (daysToAdd === 0) {
-    // Today is Wednesday but before 00:01
-    if (now.getHours() === 0 && now.getMinutes() < 1) {
-      daysToAdd = 0;
-    } else {
-      daysToAdd = 7; // Next week
-    }
-  }
-
-  const nextWednesday = new Date(now);
-  nextWednesday.setDate(now.getDate() + daysToAdd);
-  nextWednesday.setHours(0, 1, 0, 0); // 00:01
-  return nextWednesday;
+  if (getIsOpen(now)) return now;
+  const ctx = getScheduleContext();
+  return computeNextOpening(now, ctx?.schedule ?? null);
 };
 
-// Get customization deadline: Friday 23:59:59.999 (so time-remaining shows correct days/hours)
-export const getCustomizationDeadline = (): Date => {
-  const now = new Date();
-  const dayOfWeek = now.getDay();
-  const daysUntilFriday = (5 - dayOfWeek + 7) % 7;
-
-  const deadline = new Date(now);
-  deadline.setDate(now.getDate() + daysUntilFriday);
-  deadline.setHours(23, 59, 59, 999);
-  return deadline;
-};
+// Get customization deadline for current window (uses DB schedule when context set)
+export const getCustomizationDeadline = (): Date => getDeadline(new Date());
 
 // Get delivery date: Sunday (purchasing is Saturday)
 export const getDeliveryDate = (): Date => {
@@ -279,27 +237,13 @@ export const generateWeeklySelection = (
   };
 };
 
-// Get time remaining for customization
+// Get time remaining for customization (uses same deadline as getCustomizationDeadline)
 export const getCustomizationTimeRemaining = (): {
   days: number;
   hours: number;
   minutes: number;
   isExpired: boolean;
-} => {
-  const now = new Date();
-  const deadline = getCustomizationDeadline();
-  const diff = deadline.getTime() - now.getTime();
-
-  if (diff <= 0) {
-    return { days: 0, hours: 0, minutes: 0, isExpired: true };
-  }
-
-  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-  const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-  const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-
-  return { days, hours, minutes, isExpired: false };
-};
+} => getTimeRemaining(getCustomizationDeadline(), new Date());
 
 // Mock weekly history for demonstration - Updated with valid IDs from seed data
 export const getMockWeeklyHistory = (): WeeklyHistory => {

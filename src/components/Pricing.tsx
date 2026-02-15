@@ -25,15 +25,15 @@ const Pricing = () => {
         const bucketTypes = await SubscriptionService.getInstance().getBucketTypes();
 
         const mappedPlans = bucketTypes.map(bt => ({
-          name: bt.name + (bt.name === 'Mini' ? ' Family' : bt.name === 'Family' ? '' : ' Family'), // Adjust name for UI consistency if needed
+          name: bt.name + (bt.name === 'Mini' ? ' Family' : bt.name === 'Family' ? '' : ' Family'),
           price: bt.monthly_price.toLocaleString(),
           description: bt.description,
-          vegetableCount: bt.display_item_range.replace(/\D/g, ''), // Extract number roughly or use string
-          weight: "TBD", // Weight isn't in bucket_types yet, maybe add to DB or guess
+          vegetableRange: bt.display_item_range || '4', // e.g. "3-4", "6-7", "9-10"
+          weight: "TBD",
           vegetableBudget: (bt.monthly_price - bt.handling_fee).toLocaleString(),
           features: [
             "4 deliveries (1 each week) per month",
-            `${bt.display_item_range} varieties weekly`,
+            `${bt.display_item_range || '4'} vegetables weekly`,
             "Free weekly delivery",
             "Seasonal recipe cards"
           ],
@@ -89,7 +89,7 @@ const Pricing = () => {
                     <div className={`inline-flex items-center space-x-2 px-4 py-2 rounded-full ${plan.popular ? 'bg-green-500 text-white' : 'bg-green-100 text-green-700'
                       }`}>
                       <Package className="h-5 w-5" />
-                      <span className="font-semibold">{plan.vegetableCount} vegetables</span>
+                      <span className="font-semibold">{plan.vegetableRange} vegetables</span>
                     </div>
                     <div className={`text-sm font-medium ${plan.popular ? 'text-green-100' : 'text-gray-600'}`}>
                       Total weight: {plan.weight}
