@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { ArrowLeft, RefreshCw, Upload, Download, Settings, AlertCircle, CheckCircle, ExternalLink, Copy, Eye, EyeOff, Shield, User, Plus, Edit, Trash2, ToggleLeft, ToggleRight, Package, DollarSign, Users, LayoutGrid, Calendar, Percent } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import VegetableService, { Vegetable } from '../services/vegetableService';
 import { supabase } from '../lib/supabase';
 import type { BucketType } from '../services/SubscriptionService';
-import { getCurrentWeekDateRange, getNextWeekDateRange } from '../utils/marketWeekUtils';
+import { getCurrentWeekDateRange, getNextWeekDateRange, getVegCountFromBucketType } from '../utils/marketWeekUtils';
 import { formatScheduleDisplay, getScheduleEditState, getScheduleEditStateForNextWindow } from '../utils/customizationSchedule';
 
 export interface MarketWeek {
@@ -14,9 +14,6 @@ export interface MarketWeek {
   week_end_date: string;
   is_locked: boolean;
   created_at?: string;
-  veg_count_small?: number | null;
-  veg_count_medium?: number | null;
-  veg_count_large?: number | null;
 }
 
 export interface CustomizationSchedule {
@@ -43,12 +40,27 @@ const AdminPage = () => {
   const [apiKey, setApiKey] = useState('');
   const [selectedVegetable, setSelectedVegetable] = useState<Vegetable | null>(null);
   const [showVegetableModal, setShowVegetableModal] = useState(false);
+  /** Inline price draft per vegetable id (string so field can be empty while editing). Cleared on blur after save. */
+  const [inlinePriceDraft, setInlinePriceDraft] = useState<Record<string, string>>({});
   const [vegCategories, setVegCategories] = useState<{ id: string; name: string; budget_share_percent: number }[]>([]);
   const [customizationSchedule, setCustomizationSchedule] = useState<CustomizationSchedule | null>(null);
   /** Per-bucket-type category ratios (root/leafy/bushy %). Key = bucket_type_id. */
   const [bucketTypeRatios, setBucketTypeRatios] = useState<Record<string, { root: number; leafy: number; bushy: number }>>({});
   /** veg_categories id by name (root, leafy, bushy) for saving ratios. */
   const [vegCategoryIdsByName, setVegCategoryIdsByName] = useState<Record<string, string>>({});
+  /** Vegetables per (market_week_id, bucket_type_id). Key: `${market_week_id}_${bucket_type_id}`. */
+  const [weekVeggiesByBucket, setWeekVeggiesByBucket] = useState<Record<string, string[]>>({});
+  /** Current and next week IDs for "vegetables for week" under bucket types. */
+  const [currentWeekId, setCurrentWeekId] = useState<string | null>(null);
+  const [nextWeekId, setNextWeekId] = useState<string | null>(null);
+  /** Vegetables tab: filter by category (root, leafy, bushy) */
+  const [vegetableCategoryFilter, setVegetableCategoryFilter] = useState<'all' | 'root' | 'leafy' | 'bushy'>('all');
+
+  /** Only bulk-available veggies: used for bucket type "week vegetables" list so admin can't assign retail-only items to buckets */
+  const vegetablesForBucket = useMemo(
+    () => vegetables.filter((v) => v.isAvailableBulk),
+    [vegetables]
+  );
 
   useEffect(() => {
     loadData();
@@ -79,7 +91,7 @@ const AdminPage = () => {
       const btList: BucketType[] = (btData || []) as BucketType[];
 
       const { data: profData } = await supabase.from('profiles').select('id, email, full_name, role');
-      const { data: weeksData } = await supabase.from('market_weeks').select('id, week_start_date, week_end_date, is_locked, created_at, veg_count_small, veg_count_medium, veg_count_large').order('week_start_date', { ascending: false });
+      const { data: weeksData } = await supabase.from('market_weeks').select('id, week_start_date, week_end_date, is_locked, created_at').order('week_start_date', { ascending: false });
       const { data: schedData } = await supabase.from('customization_schedule').select('id, open_dow, open_time, close_dow, close_time, updated_at').limit(1);
       setCustomizationSchedule(Array.isArray(schedData) && schedData.length > 0 ? (schedData[0] as CustomizationSchedule) : null);
       const { data: catData } = await supabase.from('veg_categories').select('id, name, budget_share_percent').order('name');
@@ -113,6 +125,37 @@ const AdminPage = () => {
       const weeks = (weeksData || []) as MarketWeek[];
       setMarketWeeks(weeks);
       if (weeks.length > 0 && !selectedMarketWeekId) setSelectedMarketWeekId(weeks[0].id);
+
+      const curRange = getCurrentWeekDateRange();
+      const nxtRange = getNextWeekDateRange();
+      const weeksList = (weeksData || []) as { id: string; week_start_date: string }[];
+      const curWeek = weeksList.find((w) => w.week_start_date === curRange.week_start_date);
+      const nxtWeek = weeksList.find((w) => w.week_start_date === nxtRange.week_start_date);
+      // Use first two weeks as fallback so "Vegetables for week" always shows when any weeks exist (for testing)
+      const cwId = curWeek?.id ?? weeksList[0]?.id ?? null;
+      const nwId = nxtWeek?.id ?? weeksList[1]?.id ?? null;
+      setCurrentWeekId(cwId);
+      setNextWeekId(nwId);
+
+      const weekIds = [cwId, nwId].filter(Boolean) as string[];
+      let weekVeggies: Record<string, string[]> = {};
+      try {
+        if (weekIds.length > 0 && btList.length > 0) {
+          const { data: mwbvRows } = await supabase
+            .from('market_week_bucket_vegetables')
+            .select('market_week_id, bucket_type_id, vegetable_id, sort_order')
+            .in('market_week_id', weekIds)
+            .order('sort_order', { ascending: true });
+          (mwbvRows || []).forEach((r: { market_week_id: string; bucket_type_id: string; vegetable_id: string }) => {
+            const key = `${r.market_week_id}_${r.bucket_type_id}`;
+            if (!weekVeggies[key]) weekVeggies[key] = [];
+            weekVeggies[key].push(r.vegetable_id);
+          });
+        }
+      } catch (_) {
+        // table may not exist yet
+      }
+      setWeekVeggiesByBucket(weekVeggies);
 
       setVegetables(vegList);
       setBucketTypes(btList);
@@ -190,41 +233,61 @@ const AdminPage = () => {
     }
   };
 
-  const handlePriceUpdate = async (vegetableId: string, newPrice: number) => {
+  const handleRetailPriceUpdate = async (vegetableId: string, newPrice: number) => {
     try {
       await VegetableService.updateVegetable(vegetableId, { marketPricePer250g: newPrice });
-      setVegetables(prev => prev.map(v => 
+      setVegetables(prev => prev.map(v =>
         v.id === vegetableId ? { ...v, marketPricePer250g: newPrice } : v
       ));
-      setMessage({ type: 'success', text: 'Price updated successfully' });
+      setMessage({ type: 'success', text: 'Retail price updated' });
     } catch (error) {
-      setMessage({ type: 'error', text: 'Failed to update price' });
+      setMessage({ type: 'error', text: 'Failed to update retail price' });
     }
   };
 
-  const handleToggleAvailability = async (vegetableId: string) => {
+  const handleBulkPriceUpdate = async (vegetableId: string, newPrice: number) => {
+    try {
+      await VegetableService.updateVegetable(vegetableId, { bulkPricePer250g: newPrice });
+      setVegetables(prev => prev.map(v =>
+        v.id === vegetableId ? { ...v, bulkPricePer250g: newPrice } : v
+      ));
+      setMessage({ type: 'success', text: 'Bulk price updated' });
+    } catch (error) {
+      setMessage({ type: 'error', text: 'Failed to update bulk price' });
+    }
+  };
+
+  const handleToggleRetailAvailability = async (vegetableId: string) => {
     try {
       const vegetableService = VegetableService.getInstance();
-      const success = vegetableService.toggleVegetableStatus(vegetableId);
-      
+      const success = await vegetableService.toggleVegetableRetailStatus(vegetableId);
       if (!success) {
-        setMessage({ type: 'error', text: 'Failed to update availability' });
+        setMessage({ type: 'error', text: 'Failed to update retail availability' });
         return;
       }
-      
-      // Update local state immediately
-      setVegetables(prev => prev.map(v => 
-        v.id === vegetableId ? { ...v, isAvailable: !v.isAvailable } : v
+      setVegetables(prev => prev.map(v =>
+        v.id === vegetableId ? { ...v, isAvailableRetail: !v.isAvailableRetail } : v
       ));
-      
-      setMessage({ type: 'success', text: 'Availability updated successfully' });
-      
-      // Force a refresh of the vegetables list to ensure consistency
-      setTimeout(() => {
-        loadData();
-      }, 100);
+      setMessage({ type: 'success', text: 'Retail availability updated' });
     } catch (error) {
-      setMessage({ type: 'error', text: 'Failed to update availability' });
+      setMessage({ type: 'error', text: 'Failed to update retail availability' });
+    }
+  };
+
+  const handleToggleBulkAvailability = async (vegetableId: string) => {
+    try {
+      const vegetableService = VegetableService.getInstance();
+      const success = await vegetableService.toggleVegetableBulkStatus(vegetableId);
+      if (!success) {
+        setMessage({ type: 'error', text: 'Failed to update bulk availability' });
+        return;
+      }
+      setVegetables(prev => prev.map(v =>
+        v.id === vegetableId ? { ...v, isAvailableBulk: !v.isAvailableBulk } : v
+      ));
+      setMessage({ type: 'success', text: 'Bulk availability updated' });
+    } catch (error) {
+      setMessage({ type: 'error', text: 'Failed to update bulk availability' });
     }
   };
 
@@ -323,9 +386,45 @@ const AdminPage = () => {
                   </button>
                 </div>
 
-                {/* Vegetables Grid */}
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {vegetables.map((vegetable) => (
+                {/* Category filter: Root, Leafy, Bushy */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-medium text-gray-700">Category:</span>
+                  {(['all', 'root', 'leafy', 'bushy'] as const).map((cat) => (
+                    <button
+                      key={cat}
+                      onClick={() => setVegetableCategoryFilter(cat)}
+                      className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                        vegetableCategoryFilter === cat
+                          ? 'bg-green-600 text-white'
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                      }`}
+                    >
+                      {cat === 'all' ? 'All' : cat.charAt(0).toUpperCase() + cat.slice(1)}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Vegetables grouped by category */}
+                {(() => {
+                  const filtered =
+                    vegetableCategoryFilter === 'all'
+                      ? vegetables
+                      : vegetables.filter((v) => v.category === vegetableCategoryFilter);
+                  const groups: { category: 'root' | 'leafy' | 'bushy'; label: string; vegs: typeof vegetables }[] = [
+                    { category: 'root', label: 'Root vegetables', vegs: filtered.filter((v) => v.category === 'root') },
+                    { category: 'leafy', label: 'Leafy vegetables', vegs: filtered.filter((v) => v.category === 'leafy') },
+                    { category: 'bushy', label: 'Bushy vegetables', vegs: filtered.filter((v) => v.category === 'bushy') }
+                  ].filter((g) => g.vegs.length > 0);
+                  return (
+                    <div className="space-y-8">
+                      {groups.map(({ category, label, vegs }) => (
+                        <div key={category}>
+                          <h3 className="text-sm font-semibold text-gray-800 mb-3 pb-2 border-b border-gray-200">
+                            {label}
+                            <span className="ml-2 text-gray-500 font-normal">({vegs.length})</span>
+                          </h3>
+                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                            {vegs.map((vegetable) => (
                     <div key={vegetable.id} className="bg-white border border-gray-200 rounded-lg p-6 hover:shadow-md transition-shadow">
                       <div className="flex items-start justify-between mb-4">
                         <div>
@@ -348,22 +447,90 @@ const AdminPage = () => {
                         </div>
                       </div>
 
-                      {/* Price Editor */}
-                      <div className="mb-4 p-3 bg-green-50 rounded-lg">
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          Price per 250g (LKR)
-                        </label>
-                        <input
-                          type="number"
-                          value={vegetable.marketPricePer250g}
-                          onChange={(e) => {
-                            const newPrice = parseFloat(e.target.value) || 0;
-                            handlePriceUpdate(vegetable.id, newPrice);
-                          }}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                          min="0"
-                          step="0.01"
-                        />
+                      {/* Price per 250g: availability toggle in front of each price */}
+                      <div className="mb-4 p-3 bg-green-50 rounded-lg space-y-3">
+                        <div className="flex items-center gap-3">
+                          <button
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              handleToggleRetailAvailability(vegetable.id);
+                            }}
+                            className="flex-shrink-0 flex items-center"
+                            type="button"
+                            title={vegetable.isAvailableRetail ? 'Available for Shop (click to disable)' : 'Unavailable for Shop (click to enable)'}
+                          >
+                            {vegetable.isAvailableRetail ? (
+                              <ToggleRight className="w-6 h-6 text-green-600 hover:text-green-700 transition-colors" />
+                            ) : (
+                              <ToggleLeft className="w-6 h-6 text-gray-400 hover:text-gray-600 transition-colors" />
+                            )}
+                          </button>
+                          <div className="flex-1 min-w-0">
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Retail (Shop) – LKR/250g</label>
+                            <input
+                              type="number"
+                              value={inlinePriceDraft[`${vegetable.id}_retail`] ?? vegetable.marketPricePer250g}
+                              onChange={(e) => setInlinePriceDraft((prev) => ({ ...prev, [`${vegetable.id}_retail`]: e.target.value }))}
+                              onBlur={async () => {
+                                const raw = inlinePriceDraft[`${vegetable.id}_retail`];
+                                setInlinePriceDraft((prev) => {
+                                  const next = { ...prev };
+                                  delete next[`${vegetable.id}_retail`];
+                                  return next;
+                                });
+                                if (raw === undefined || raw === '') return;
+                                const num = parseFloat(raw);
+                                if (!Number.isNaN(num) && num >= 0) await handleRetailPriceUpdate(vegetable.id, num);
+                              }}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                              min="0"
+                              step="0.01"
+                              placeholder="0"
+                            />
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <button
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              handleToggleBulkAvailability(vegetable.id);
+                            }}
+                            className="flex-shrink-0 flex items-center"
+                            type="button"
+                            title={vegetable.isAvailableBulk ? 'Available for Bucket (click to disable)' : 'Unavailable for Bucket (click to enable)'}
+                          >
+                            {vegetable.isAvailableBulk ? (
+                              <ToggleRight className="w-6 h-6 text-green-600 hover:text-green-700 transition-colors" />
+                            ) : (
+                              <ToggleLeft className="w-6 h-6 text-gray-400 hover:text-gray-600 transition-colors" />
+                            )}
+                          </button>
+                          <div className="flex-1 min-w-0">
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Bulk (Bucket) – LKR/250g</label>
+                            <input
+                              type="number"
+                              value={inlinePriceDraft[`${vegetable.id}_bulk`] ?? vegetable.bulkPricePer250g}
+                              onChange={(e) => setInlinePriceDraft((prev) => ({ ...prev, [`${vegetable.id}_bulk`]: e.target.value }))}
+                              onBlur={async () => {
+                                const raw = inlinePriceDraft[`${vegetable.id}_bulk`];
+                                setInlinePriceDraft((prev) => {
+                                  const next = { ...prev };
+                                  delete next[`${vegetable.id}_bulk`];
+                                  return next;
+                                });
+                                if (raw === undefined || raw === '') return;
+                                const num = parseFloat(raw);
+                                if (!Number.isNaN(num) && num >= 0) await handleBulkPriceUpdate(vegetable.id, num);
+                              }}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                              min="0"
+                              step="0.01"
+                              placeholder="0"
+                            />
+                          </div>
+                        </div>
                       </div>
 
                       <div className="space-y-2 text-sm">
@@ -375,28 +542,15 @@ const AdminPage = () => {
                           <span className="text-gray-600">Nutrition Score:</span>
                           <span className="font-medium">{vegetable.nutritionScore}/10</span>
                         </div>
-                        <div className="flex justify-between items-center">
-                          <span className="text-gray-600">Available:</span>
-                          <button
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              handleToggleAvailability(vegetable.id);
-                            }}
-                            className="flex items-center"
-                            type="button"
-                          >
-                            {vegetable.isAvailable ? (
-                              <ToggleRight className="w-6 h-6 text-green-600 hover:text-green-700 transition-colors" />
-                            ) : (
-                              <ToggleLeft className="w-6 h-6 text-gray-400 hover:text-gray-600 transition-colors" />
-                            )}
-                          </button>
-                        </div>
                       </div>
                     </div>
-                  ))}
-                </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
               </div>
             )}
 
@@ -404,6 +558,13 @@ const AdminPage = () => {
               <div className="space-y-6">
                 <h2 className="text-lg font-semibold text-gray-900">Bucket types</h2>
                 <p className="text-sm text-gray-600">Edit plan sizes and pricing. Changes affect new subscriptions.</p>
+                {!currentWeekId && !nextWeekId && (
+                  <div className="p-4 rounded-lg bg-amber-50 border border-amber-200">
+                    <p className="text-sm font-medium text-amber-900">To set vegetables per bucket per week</p>
+                    <p className="text-sm text-amber-800 mt-1">Add at least one market week in the <strong>Market weeks</strong> tab (e.g. Current week and Next week), then return here to set vegetables per bucket.</p>
+                    <button type="button" onClick={() => setActiveTab('weeks')} className="mt-3 px-3 py-2 bg-amber-600 text-white rounded-lg text-sm font-medium hover:bg-amber-700">Go to Market weeks</button>
+                  </div>
+                )}
                 <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                   {bucketTypes.map((bt) => (
                     <BucketTypeCard
@@ -411,6 +572,20 @@ const AdminPage = () => {
                       bucketType={bt}
                       categoryRatios={bucketTypeRatios[bt.id] ?? { root: 34, leafy: 33, bushy: 33 }}
                       vegCategoryIdsByName={vegCategoryIdsByName}
+                      currentWeekId={currentWeekId}
+                      nextWeekId={nextWeekId}
+                      weekVeggiesByBucket={weekVeggiesByBucket}
+                      allVegetables={vegetablesForBucket}
+                      onSaveWeekVeggies={async (marketWeekId, vegetableIds) => {
+                        await supabase.from('market_week_bucket_vegetables').delete().eq('market_week_id', marketWeekId).eq('bucket_type_id', bt.id);
+                        if (vegetableIds.length > 0) {
+                          await supabase.from('market_week_bucket_vegetables').insert(
+                            vegetableIds.map((vegId, i) => ({ market_week_id: marketWeekId, bucket_type_id: bt.id, vegetable_id: vegId, sort_order: i }))
+                          );
+                        }
+                        setWeekVeggiesByBucket((prev) => ({ ...prev, [`${marketWeekId}_${bt.id}`]: vegetableIds }));
+                        setMessage({ type: 'success', text: 'Week vegetables saved' });
+                      }}
                       onSave={async (updates) => {
                         const payload: Record<string, unknown> = {
                           name: updates.name,
@@ -495,8 +670,11 @@ const AdminPage = () => {
                                 onClick={async () => {
                                   const price = marketPricesByWeek[v.id] ?? v.marketPricePer250g;
                                   if (price == null) return;
-                                  const row = { market_week_id: selectedMarketWeekId, vegetable_id: v.id, price_per_unit: price };
-                                  const { error } = await supabase.from('market_prices').upsert(row, { onConflict: 'market_week_id,vegetable_id' });
+                                  const { error } = await supabase.rpc('upsert_market_price', {
+                                    p_market_week_id: selectedMarketWeekId,
+                                    p_vegetable_id: v.id,
+                                    p_price_per_unit: Number(price)
+                                  });
                                   if (error) {
                                     setMessage({ type: 'error', text: error.message });
                                     return;
@@ -693,14 +871,21 @@ const AdminPage = () => {
   );
 };
 
-// Bucket type card: name, description, display_item_range, monthly_price, handling_fee, is_active, root_count, leafy_count, bushy_count, category ratios
+// Bucket type card: name, description, display_item_range, monthly_price, handling_fee, is_active, root_count, leafy_count, bushy_count, category ratios, vegetables for week
 const BucketTypeCard: React.FC<{
   bucketType: BucketType;
   categoryRatios: { root: number; leafy: number; bushy: number };
   vegCategoryIdsByName: Record<string, string>;
+  currentWeekId: string | null;
+  nextWeekId: string | null;
+  weekVeggiesByBucket: Record<string, string[]>;
+  allVegetables: Vegetable[];
+  onSaveWeekVeggies: (marketWeekId: string, vegetableIds: string[]) => Promise<void>;
   onSave: (updates: Partial<BucketType> & { is_active?: boolean; categoryRatios?: { root: number; leafy: number; bushy: number } }) => Promise<void>;
-}> = ({ bucketType, categoryRatios, vegCategoryIdsByName, onSave }) => {
+}> = ({ bucketType, categoryRatios, vegCategoryIdsByName, currentWeekId, nextWeekId, weekVeggiesByBucket, allVegetables, onSaveWeekVeggies, onSave }) => {
   const [editing, setEditing] = useState(false);
+  const [editingWeekVeggies, setEditingWeekVeggies] = useState<'current' | 'next' | null>(null);
+  const [weekVeggiesDraft, setWeekVeggiesDraft] = useState<string[]>([]);
   const [form, setForm] = useState({
     name: bucketType.name,
     description: bucketType.description || '',
@@ -794,6 +979,121 @@ const BucketTypeCard: React.FC<{
           </div>
         </div>
       )}
+
+      {/* Vegetables for week (manual list before customization); grouped by category, capped by bucket type total and per-category counts */}
+      {(() => {
+        const maxVeg = getVegCountFromBucketType(bucketType.display_item_range, bucketType.root_count, bucketType.leafy_count, bucketType.bushy_count);
+        const maxRoot = bucketType.root_count ?? 0;
+        const maxLeafy = bucketType.leafy_count ?? 0;
+        const maxBushy = bucketType.bushy_count ?? 0;
+        const categoryLimits: Record<'root' | 'leafy' | 'bushy', number> = { root: maxRoot, leafy: maxLeafy, bushy: maxBushy };
+        const countSelectedInCategory = (cat: 'root' | 'leafy' | 'bushy') =>
+          weekVeggiesDraft.filter((id) => (allVegetables.find((v) => v.id === id)?.category || 'leafy') === cat).length;
+        const categories: ('root' | 'leafy' | 'bushy')[] = ['root', 'leafy', 'bushy'];
+        const veggiesByCategory = categories.map((cat) => ({
+          category: cat,
+          veggies: allVegetables.filter((v) => (v.category || 'leafy') === cat)
+        }));
+        const renderWeekVeggieEditor = (weekId: string, weekLabel: 'current' | 'next') => {
+          return editingWeekVeggies === weekLabel ? (
+            <div className="mt-1 space-y-1">
+              <p className="text-xs text-gray-600">Max {maxVeg} total (root: {maxRoot}, leafy: {maxLeafy}, bushy: {maxBushy}). Selected: {weekVeggiesDraft.length}</p>
+              <div className="max-h-48 overflow-y-auto border rounded p-2 bg-gray-50 text-sm space-y-3">
+                {allVegetables.length === 0 ? (
+                  <p className="text-gray-500">No vegetables in catalog. Add vegetables in the <strong>Vegetables</strong> tab first.</p>
+                ) : (
+                  veggiesByCategory.map(({ category, veggies }) => {
+                    if (veggies.length === 0) return null;
+                    const limitForCategory = categoryLimits[category];
+                    const selectedInCategory = countSelectedInCategory(category);
+                    return (
+                      <div key={category}>
+                        <p className="text-xs font-medium text-gray-600 capitalize mb-1">{category} (max {limitForCategory})</p>
+                        <div className="space-y-0.5">
+                          {veggies.map((v) => {
+                            const checked = weekVeggiesDraft.includes(v.id);
+                            const atTotalLimit = !checked && weekVeggiesDraft.length >= maxVeg;
+                            const atCategoryLimit = !checked && selectedInCategory >= limitForCategory;
+                            const atLimit = atTotalLimit || atCategoryLimit;
+                            return (
+                              <label key={v.id} className={`flex items-center gap-2 ${atLimit ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}>
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  disabled={atLimit}
+                                  onChange={(e) => {
+                                    if (e.target.checked) {
+                                      const inCat = countSelectedInCategory(category);
+                                      if (weekVeggiesDraft.length < maxVeg && inCat < limitForCategory)
+                                        setWeekVeggiesDraft((prev) => [...prev, v.id]);
+                                    } else {
+                                      setWeekVeggiesDraft((prev) => prev.filter((id) => id !== v.id));
+                                    }
+                                  }}
+                                />
+                                <span>{v.name}</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const byCategory: Record<'root' | 'leafy' | 'bushy', string[]> = { root: [], leafy: [], bushy: [] };
+                    weekVeggiesDraft.forEach((id) => {
+                      const cat = (allVegetables.find((v) => v.id === id)?.category || 'leafy') as 'root' | 'leafy' | 'bushy';
+                      if (byCategory[cat].length < categoryLimits[cat]) byCategory[cat].push(id);
+                    });
+                    const toSave = [...byCategory.root, ...byCategory.leafy, ...byCategory.bushy].slice(0, maxVeg);
+                    await onSaveWeekVeggies(weekId, toSave);
+                    setEditingWeekVeggies(null);
+                  }}
+                  className="px-2 py-1 bg-green-600 text-white rounded text-xs"
+                >
+                  Save
+                </button>
+                <button type="button" onClick={() => setEditingWeekVeggies(null)} className="px-2 py-1 border rounded text-xs">Cancel</button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <button type="button" onClick={() => { setWeekVeggiesDraft(weekVeggiesByBucket[`${weekId}_${bucketType.id}`] || []); setEditingWeekVeggies(weekLabel); }} className="ml-2 text-xs text-green-600 hover:underline">
+                {weekVeggiesByBucket[`${weekId}_${bucketType.id}`]?.length ? `${weekVeggiesByBucket[`${weekId}_${bucketType.id}`].length} veggies · Edit` : 'Set vegetables'}
+              </button>
+              {!editingWeekVeggies && weekVeggiesByBucket[`${weekId}_${bucketType.id}`]?.length > 0 && (
+                <span className="ml-2 text-xs text-gray-500">
+                  {weekVeggiesByBucket[`${weekId}_${bucketType.id}`].map((id) => allVegetables.find((v) => v.id === id)?.name ?? id).join(', ')}
+                </span>
+              )}
+            </>
+          );
+        };
+        return (
+          <div className="mt-4 pt-4 border-t border-gray-200">
+            <p className="text-sm font-semibold text-gray-800 mb-2">Vegetables for week</p>
+            <p className="text-xs text-gray-500 mb-2">Set which vegetables go in this bucket for each week (used as default before customization opens). Total and per-category limits come from this bucket type.</p>
+            {currentWeekId && (
+              <div className="mb-2">
+                <span className="text-xs text-gray-500">Current week:</span>
+                {renderWeekVeggieEditor(currentWeekId, 'current')}
+              </div>
+            )}
+            {nextWeekId && (
+              <div>
+                <span className="text-xs text-gray-500">Next week:</span>
+                {renderWeekVeggieEditor(nextWeekId, 'next')}
+              </div>
+            )}
+            {!currentWeekId && !nextWeekId && <p className="text-xs text-gray-400">Save market weeks (Current / Next) in Market weeks section first.</p>}
+          </div>
+        );
+      })()}
     </div>
   );
 };
@@ -811,9 +1111,6 @@ type WeekForm = {
   week_start_date: string;
   week_end_date: string;
   is_locked: boolean;
-  veg_count_small: number | '';
-  veg_count_medium: number | '';
-  veg_count_large: number | '';
 };
 
 // Stable component outside parent so typing in inputs doesn't remount and scroll to top.
@@ -884,20 +1181,6 @@ const WeekCard: React.FC<{
         <input type="checkbox" checked={form.is_locked} onChange={(e) => setForm((f) => ({ ...f, is_locked: e.target.checked }))} className="sr-only" />
         <span>Turn off availability (emergency)</span>
       </label>
-      <div className="grid grid-cols-3 gap-2">
-        <div>
-          <label className="block text-xs text-gray-500">Small (veg count)</label>
-          <input type="number" min={1} max={10} className="w-full px-2 py-1 border rounded text-sm" placeholder="3–4" value={form.veg_count_small} onChange={(e) => setForm((f) => ({ ...f, veg_count_small: e.target.value === '' ? '' : parseInt(e.target.value, 10) || 0 }))} />
-        </div>
-        <div>
-          <label className="block text-xs text-gray-500">Medium</label>
-          <input type="number" min={1} max={10} className="w-full px-2 py-1 border rounded text-sm" placeholder="6–7" value={form.veg_count_medium} onChange={(e) => setForm((f) => ({ ...f, veg_count_medium: e.target.value === '' ? '' : parseInt(e.target.value, 10) || 0 }))} />
-        </div>
-        <div>
-          <label className="block text-xs text-gray-500">Large</label>
-          <input type="number" min={1} max={15} className="w-full px-2 py-1 border rounded text-sm" placeholder="9–10" value={form.veg_count_large} onChange={(e) => setForm((f) => ({ ...f, veg_count_large: e.target.value === '' ? '' : parseInt(e.target.value, 10) || 0 }))} />
-        </div>
-      </div>
       <button type="button" onClick={onSave} className="px-3 py-1.5 bg-green-600 text-white rounded text-sm hover:bg-green-700">Save</button>
     </div>
   );
@@ -988,19 +1271,13 @@ const MarketWeeksSection: React.FC<{
     id: currentDb?.id ?? null,
     week_start_date: currentRange.week_start_date,
     week_end_date: currentRange.week_end_date,
-    is_locked: currentDb?.is_locked ?? false,
-    veg_count_small: currentDb?.veg_count_small ?? '',
-    veg_count_medium: currentDb?.veg_count_medium ?? '',
-    veg_count_large: currentDb?.veg_count_large ?? ''
+    is_locked: currentDb?.is_locked ?? false
   });
   const [nextForm, setNextForm] = useState<WeekForm>({
     id: nextDb?.id ?? null,
     week_start_date: nextRange.week_start_date,
     week_end_date: nextRange.week_end_date,
-    is_locked: nextDb?.is_locked ?? false,
-    veg_count_small: nextDb?.veg_count_small ?? '',
-    veg_count_medium: nextDb?.veg_count_medium ?? '',
-    veg_count_large: nextDb?.veg_count_large ?? ''
+    is_locked: nextDb?.is_locked ?? false
   });
 
   useEffect(() => {
@@ -1008,32 +1285,21 @@ const MarketWeeksSection: React.FC<{
       id: currentDb?.id ?? null,
       week_start_date: currentRange.week_start_date,
       week_end_date: currentRange.week_end_date,
-      is_locked: currentDb?.is_locked ?? false,
-      veg_count_small: currentDb?.veg_count_small ?? '',
-      veg_count_medium: currentDb?.veg_count_medium ?? '',
-      veg_count_large: currentDb?.veg_count_large ?? ''
+      is_locked: currentDb?.is_locked ?? false
     });
     setNextForm({
       id: nextDb?.id ?? null,
       week_start_date: nextRange.week_start_date,
       week_end_date: nextRange.week_end_date,
-      is_locked: nextDb?.is_locked ?? false,
-      veg_count_small: nextDb?.veg_count_small ?? '',
-      veg_count_medium: nextDb?.veg_count_medium ?? '',
-      veg_count_large: nextDb?.veg_count_large ?? ''
+      is_locked: nextDb?.is_locked ?? false
     });
-  }, [currentDb?.id, currentDb?.is_locked, currentDb?.veg_count_small, currentDb?.veg_count_medium, currentDb?.veg_count_large, nextDb?.id, nextDb?.is_locked, nextDb?.veg_count_small, nextDb?.veg_count_medium, nextDb?.veg_count_large, currentRange.week_start_date, nextRange.week_start_date]);
-
-  const toNum = (v: number | ''): number | null => (v === '' || v == null ? null : Number(v));
+  }, [currentDb?.id, currentDb?.is_locked, nextDb?.id, nextDb?.is_locked, currentRange.week_start_date, nextRange.week_start_date]);
 
   const upsertWeek = async (form: WeekForm): Promise<boolean> => {
     const payload = {
       week_start_date: form.week_start_date,
       week_end_date: form.week_end_date,
-      is_locked: form.is_locked,
-      veg_count_small: toNum(form.veg_count_small),
-      veg_count_medium: toNum(form.veg_count_medium),
-      veg_count_large: toNum(form.veg_count_large)
+      is_locked: form.is_locked
     };
     if (form.id && !String(form.id).startsWith('synthetic-')) {
       const { error } = await supabase.from('market_weeks').update(payload).eq('id', form.id);
@@ -1088,11 +1354,13 @@ const VegetableModal: React.FC<{
     season: vegetable?.season || 'Year-round',
     nutritionScore: vegetable?.nutritionScore ?? 5,
     description: vegetable?.description || '',
-    marketPricePer250g: vegetable?.marketPricePer250g || 100,
+    marketPricePer250g: vegetable?.marketPricePer250g ?? 100,
+    bulkPricePer250g: vegetable?.bulkPricePer250g ?? vegetable?.marketPricePer250g ?? 100,
     typicalWeight: vegetable?.typicalWeight || '250g',
     benefits: vegetable?.benefits?.join(', ') || '',
     image: vegetable?.image || 'https://images.pexels.com/photos/1132047/pexels-photo-1132047.jpeg?auto=compress&cs=tinysrgb&w=400',
-    isAvailable: vegetable?.isAvailable ?? true
+    isAvailableRetail: vegetable?.isAvailableRetail ?? true,
+    isAvailableBulk: vegetable?.isAvailableBulk ?? true
   });
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -1142,7 +1410,7 @@ const VegetableModal: React.FC<{
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Price per 250g (LKR)</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Retail price per 250g (LKR) – Shop</label>
               <input
                 type="number"
                 value={formData.marketPricePer250g}
@@ -1154,21 +1422,33 @@ const VegetableModal: React.FC<{
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Season</label>
-              <select
-                value={formData.season}
-                onChange={(e) => setFormData(prev => ({ ...prev, season: e.target.value }))}
+              <label className="block text-sm font-medium text-gray-700 mb-1">Bulk price per 250g (LKR) – Bucket</label>
+              <input
+                type="number"
+                value={formData.bulkPricePer250g}
+                onChange={(e) => setFormData(prev => ({ ...prev, bulkPricePer250g: parseFloat(e.target.value) || 0 }))}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                min="0"
+                step="0.01"
                 required
-              >
-                <option value="">Select season</option>
-                <option value="spring">Spring</option>
-                <option value="summer">Summer</option>
-                <option value="monsoon">Monsoon</option>
-                <option value="winter">Winter</option>
-                <option value="year-round">Year Round</option>
-              </select>
+              />
             </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Season</label>
+            <select
+              value={formData.season}
+              onChange={(e) => setFormData(prev => ({ ...prev, season: e.target.value }))}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+              required
+            >
+              <option value="">Select season</option>
+              <option value="spring">Spring</option>
+              <option value="summer">Summer</option>
+              <option value="monsoon">Monsoon</option>
+              <option value="winter">Winter</option>
+              <option value="year-round">Year Round</option>
+            </select>
           </div>
 
           <div>
@@ -1229,17 +1509,31 @@ const VegetableModal: React.FC<{
             />
           </div>
 
-          <div className="flex items-center">
-            <input
-              type="checkbox"
-              id="isAvailable"
-              checked={formData.isAvailable}
-              onChange={(e) => setFormData(prev => ({ ...prev, isAvailable: e.target.checked }))}
-              className="h-4 w-4 text-green-600 focus:ring-green-500 border-gray-300 rounded"
-            />
-            <label htmlFor="isAvailable" className="ml-2 block text-sm text-gray-900">
-              Available for purchase
-            </label>
+          <div className="space-y-2">
+            <div className="flex items-center">
+              <input
+                type="checkbox"
+                id="isAvailableRetail"
+                checked={formData.isAvailableRetail}
+                onChange={(e) => setFormData(prev => ({ ...prev, isAvailableRetail: e.target.checked }))}
+                className="h-4 w-4 text-green-600 focus:ring-green-500 border-gray-300 rounded"
+              />
+              <label htmlFor="isAvailableRetail" className="ml-2 block text-sm text-gray-900">
+                Available for retail (Shop)
+              </label>
+            </div>
+            <div className="flex items-center">
+              <input
+                type="checkbox"
+                id="isAvailableBulk"
+                checked={formData.isAvailableBulk}
+                onChange={(e) => setFormData(prev => ({ ...prev, isAvailableBulk: e.target.checked }))}
+                className="h-4 w-4 text-green-600 focus:ring-green-500 border-gray-300 rounded"
+              />
+              <label htmlFor="isAvailableBulk" className="ml-2 block text-sm text-gray-900">
+                Available for bulk (Bucket / customization)
+              </label>
+            </div>
           </div>
 
           <div className="flex items-center justify-end space-x-3 pt-4">

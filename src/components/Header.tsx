@@ -61,18 +61,6 @@ const Header = () => {
             >
               How It Works
             </a>
-            <Link
-              to="/shop"
-              className="text-gray-700 hover:text-green-600 transition-colors"
-            >
-              Shop Now
-            </Link>
-            <Link
-              to="/products"
-              className="text-gray-700 hover:text-green-600 transition-colors"
-            >
-              Discover
-            </Link>
             <a
               href="#pricing"
               onClick={(e) => handleNavClick(e, 'pricing')}
@@ -87,6 +75,18 @@ const Header = () => {
             >
               Reviews
             </a>
+            <Link
+              to="/products"
+              className="text-gray-700 hover:text-green-600 transition-colors"
+            >
+              Discover
+            </Link>
+            <Link
+              to="/shop"
+              className="text-gray-700 hover:text-green-600 transition-colors"
+            >
+              Shop Now
+            </Link>
 
             {user ? (
               <Link
@@ -126,20 +126,6 @@ const Header = () => {
               >
                 How It Works
               </a>
-              <Link
-                to="/shop"
-                className="block px-3 py-2 text-gray-700 hover:text-green-600 transition-colors"
-                onClick={() => setIsMenuOpen(false)}
-              >
-                Shop Now
-              </Link>
-              <Link
-                to="/products"
-                className="block px-3 py-2 text-gray-700 hover:text-green-600 transition-colors"
-                onClick={() => setIsMenuOpen(false)}
-              >
-                Discover
-              </Link>
               <a
                 href="#pricing"
                 onClick={(e) => handleNavClick(e, 'pricing')}
@@ -154,6 +140,20 @@ const Header = () => {
               >
                 Reviews
               </a>
+              <Link
+                to="/products"
+                className="block px-3 py-2 text-gray-700 hover:text-green-600 transition-colors"
+                onClick={() => setIsMenuOpen(false)}
+              >
+                Discover
+              </Link>
+              <Link
+                to="/shop"
+                className="block px-3 py-2 text-gray-700 hover:text-green-600 transition-colors"
+                onClick={() => setIsMenuOpen(false)}
+              >
+                Shop Now
+              </Link>
 
               {user ? (
                 <Link

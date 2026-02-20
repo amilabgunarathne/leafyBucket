@@ -90,7 +90,7 @@ export const shuffleVegetablesForWeek = (
 ): string[] => {
   // Get vegetables used in recent weeks
   const vegetableService = VegetableService.getInstance();
-  const allVegetables = vegetableService.getActiveVegetables();
+  const allVegetables = vegetableService.getActiveVegetablesForBulk();
 
   const recentlyUsed = new Set<string>();
   const currentWeekNum = parseInt(currentWeekId.split('-')[1]);
@@ -205,7 +205,7 @@ export const generateWeeklySelection = (
 
   const requiredCount = options?.requiredCount ?? PLAN_COUNTS[planId];
   const vegetableService = VegetableService.getInstance();
-  const allActiveVegetables = vegetableService.getActiveVegetables();
+  const allActiveVegetables = vegetableService.getActiveVegetablesForBulk();
   const allVegetableIds = allActiveVegetables.map(v => v.id);
 
   if (allVegetableIds.length === 0) {

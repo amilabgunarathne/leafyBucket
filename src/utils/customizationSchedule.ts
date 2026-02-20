@@ -165,7 +165,9 @@ export function getScheduleContext(): { schedule: CustomizationScheduleRow | nul
   return scheduleContext;
 }
 
+/** Set localStorage 'LEAFY_FORCE_CUSTOMIZATION_CLOSED' = '1' to temporarily force customization closed for testing. Remove or set to '0' to restore. */
 export function getIsOpen(now: Date = new Date()): boolean {
+  if (typeof window !== 'undefined' && localStorage.getItem('LEAFY_FORCE_CUSTOMIZATION_CLOSED') === '1') return false;
   if (!scheduleContext) return computeIsOpen(now, DEFAULT, false);
   return computeIsOpen(now, scheduleContext.schedule, scheduleContext.weekLocked);
 }

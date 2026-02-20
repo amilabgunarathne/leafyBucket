@@ -6,16 +6,23 @@ export interface Vegetable {
   name: string;
   category: 'root' | 'leafy' | 'bushy';
   typicalWeight: string;
+  /** Retail price per 250g (LKR) – used in Shop */
   marketPricePer250g: number;
+  /** Bulk price per 250g (LKR) – used in bucket/customization */
+  bulkPricePer250g: number;
   description: string;
   season: string;
   benefits: string[];
   image: string;
+  /** Legacy: true if available for retail (kept for backward compat). Prefer isAvailableRetail / isAvailableBulk. */
   isAvailable: boolean;
+  /** If true, vegetable can appear in Shop */
+  isAvailableRetail: boolean;
+  /** If true, vegetable can be included in bucket and customization pool */
+  isAvailableBulk: boolean;
   nutritionScore: number;
   createdAt: string;
   updatedAt: string;
-  // New fields from schema
   categoryId?: string;
   unitType?: string;
   isSubstitutable?: boolean;
@@ -91,12 +98,15 @@ class VegetableService {
               id: row.id,
               name: row.name,
               typicalWeight: row.typical_weight,
-              marketPricePer250g: row.market_price_per_250g || 0,
+              marketPricePer250g: row.market_price_per_250g ?? 0,
+              bulkPricePer250g: row.bulk_price_per_250g != null ? Number(row.bulk_price_per_250g) : (row.market_price_per_250g ?? 0),
               description: row.description || '',
               season: row.season || 'All Year',
               benefits: row.benefits || [],
               image: row.image || '',
               isAvailable: row.is_available !== undefined ? row.is_available : (row.is_active !== undefined ? row.is_active : true),
+              isAvailableRetail: row.is_available_retail !== undefined ? row.is_available_retail : (row.is_available !== undefined ? row.is_available : true),
+              isAvailableBulk: row.is_available_bulk !== undefined ? row.is_available_bulk : (row.is_available !== undefined ? row.is_available : true),
               updatedAt: row.updated_at || new Date().toISOString(),
               createdAt: row.created_at || new Date().toISOString(),
               nutritionScore: row.nutrition_score || 0,
@@ -166,7 +176,17 @@ class VegetableService {
     return Array.from(this.vegetables.values());
   }
 
-  // Get only available vegetables
+  /** Vegetables available for retail (Shop) */
+  getActiveVegetablesForRetail(): Vegetable[] {
+    return Array.from(this.vegetables.values()).filter(veg => veg.isAvailableRetail);
+  }
+
+  /** Vegetables available for bulk (bucket / customization pool) */
+  getActiveVegetablesForBulk(): Vegetable[] {
+    return Array.from(this.vegetables.values()).filter(veg => veg.isAvailableBulk);
+  }
+
+  /** Legacy: available vegetables (retail-available for backward compat) */
   getActiveVegetables(): Vegetable[] {
     return Array.from(this.vegetables.values()).filter(veg => veg.isAvailable);
   }
@@ -200,10 +220,14 @@ class VegetableService {
       name: vegetableData.name,
       typical_weight: vegetableData.typicalWeight,
       market_price_per_250g: Math.round(Number(vegetableData.marketPricePer250g) || 0),
+      bulk_price_per_250g: Math.round(Number(vegetableData.bulkPricePer250g ?? vegetableData.marketPricePer250g) || 0),
       description: vegetableData.description || '',
       season: vegetableData.season || 'All Year',
       image: vegetableData.image || '',
       nutrition_score: Math.min(10, Math.max(0, Math.round(Number(vegetableData.nutritionScore) || 5))),
+      is_available_retail: vegetableData.isAvailableRetail !== false,
+      is_available_bulk: vegetableData.isAvailableBulk !== false,
+      is_available: (vegetableData.isAvailableRetail !== false && vegetableData.isAvailableBulk !== false),
     };
 
     if (categoryId) {
@@ -248,10 +272,14 @@ class VegetableService {
     const dbUpdates: any = {};
     if (updates.name !== undefined) dbUpdates.name = updates.name;
     if (updates.marketPricePer250g !== undefined) dbUpdates.market_price_per_250g = updates.marketPricePer250g;
+    if (updates.bulkPricePer250g !== undefined) dbUpdates.bulk_price_per_250g = updates.bulkPricePer250g;
     if (updates.description !== undefined) dbUpdates.description = updates.description;
     if (updates.season !== undefined) dbUpdates.season = updates.season;
     if (updates.image !== undefined) dbUpdates.image = updates.image;
     if (updates.nutritionScore !== undefined) dbUpdates.nutrition_score = updates.nutritionScore;
+    if (updates.isAvailable !== undefined) dbUpdates.is_available = updates.isAvailable;
+    if (updates.isAvailableRetail !== undefined) dbUpdates.is_available_retail = updates.isAvailableRetail;
+    if (updates.isAvailableBulk !== undefined) dbUpdates.is_available_bulk = updates.isAvailableBulk;
 
     // Resolve category name to category_id when user changes category in edit
     if (updates.categoryId !== undefined) {
@@ -287,13 +315,37 @@ class VegetableService {
     return updatedVegetable;
   }
 
-  // Toggle vegetable availability
+  /** Toggle retail availability (Shop). */
+  async toggleVegetableRetailStatus(id: string): Promise<boolean> {
+    const vegetable = this.vegetables.get(id);
+    if (!vegetable) return false;
+    try {
+      await this.updateVegetable(id, { isAvailableRetail: !vegetable.isAvailableRetail });
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /** Toggle bulk availability (bucket / customization). */
+  async toggleVegetableBulkStatus(id: string): Promise<boolean> {
+    const vegetable = this.vegetables.get(id);
+    if (!vegetable) return false;
+    try {
+      await this.updateVegetable(id, { isAvailableBulk: !vegetable.isAvailableBulk });
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /** Legacy: toggle single isAvailable (updates both retail and bulk). */
   async toggleVegetableStatus(id: string): Promise<boolean> {
     const vegetable = this.vegetables.get(id);
     if (!vegetable) return false;
-
     try {
-      await this.updateVegetable(id, { isAvailable: !vegetable.isAvailable });
+      const next = !vegetable.isAvailable;
+      await this.updateVegetable(id, { isAvailable: next, isAvailableRetail: next, isAvailableBulk: next });
       return true;
     } catch (e) {
       return false;

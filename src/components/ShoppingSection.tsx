@@ -26,7 +26,7 @@ const ShoppingSection = () => {
       await vegService.initialize();
       await pricingService.initialize();
 
-      const activeVegs = vegService.getActiveVegetables();
+      const activeVegs = vegService.getActiveVegetablesForRetail();
       const productsWithPrices = activeVegs.map(veg => ({
         ...veg,
         price: pricingService.getPrice(veg.id) || veg.marketPricePer250g

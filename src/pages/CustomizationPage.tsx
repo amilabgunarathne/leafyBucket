@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { ArrowLeft, Check, X, Plus, Settings, Package, RefreshCw, Lock, TreePine, Leaf, Flower, Clock } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { Vegetable, calculatePlanAllocation, defaultPlanVegetables, getWeightBreakdownByCategory } from '../data/vegetables';
+import { Vegetable, calculatePlanAllocation, getWeightBreakdownByCategory } from '../data/vegetables';
 import VegetableService from '../services/vegetableService';
 import { useWeekly } from '../contexts/WeeklyContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -41,7 +41,7 @@ const CustomizationPage = () => {
   useEffect(() => {
     const fetchVegetables = async () => {
       await vegetableService.initialize();
-      setVegetables(vegetableService.getAllVegetables());
+      setVegetables(vegetableService.getActiveVegetablesForBulk());
     };
     fetchVegetables();
   }, [vegetableService]);
@@ -58,14 +58,14 @@ const CustomizationPage = () => {
     const fetchLimits = async () => {
       try {
         const { default: SubscriptionService } = await import('../services/SubscriptionService');
-        const { getOrCreateCurrentWeek, getVegCountForPlan, parseVegRange } = await import('../utils/marketWeekUtils');
+        const { getOrCreateCurrentWeek, getVegCountFromBucketType, parseVegRange } = await import('../utils/marketWeekUtils');
         const { supabase } = await import('../lib/supabase');
 
         // Ensure vegetables (and any initial ratios) are loaded first, then we overwrite with fresh DB ratios
         await vegetableService.initialize();
 
         const bucketTypes = await SubscriptionService.getInstance().getBucketTypes();
-        const { data: weeksData } = await supabase.from('market_weeks').select('id, week_start_date, week_end_date, veg_count_small, veg_count_medium, veg_count_large').order('week_start_date', { ascending: false });
+        const { data: weeksData } = await supabase.from('market_weeks').select('id, week_start_date, week_end_date, is_locked').order('week_start_date', { ascending: false });
         const currentWeek = getOrCreateCurrentWeek(weeksData || []);
 
         const limits: any = {};
@@ -74,7 +74,7 @@ const CustomizationPage = () => {
           const n = bt.name.toLowerCase();
           const id = n === 'mini' || n === 'small' ? 'small' : n === 'family' || n === 'medium' ? 'medium' : 'large';
           const [rangeMin, rangeMax] = parseVegRange(bt.display_item_range, id);
-          const count = getVegCountForPlan(id, currentWeek, bt.display_item_range || '');
+          const count = getVegCountFromBucketType(bt.display_item_range, bt.root_count, bt.leafy_count, bt.bushy_count);
 
           limits[id] = {
             current: count,
@@ -186,7 +186,7 @@ const CustomizationPage = () => {
 
   const getDefaultVegetables = () => {
     const selection = getSelectionForPlan(selectedPlan as any);
-    return selection ? selection.vegetables : defaultPlanVegetables[selectedPlan as keyof typeof defaultPlanVegetables] || [];
+    return selection?.vegetables ?? [];
   };
 
   const getCurrentVegetables = () => {

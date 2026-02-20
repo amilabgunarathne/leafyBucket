@@ -63,7 +63,7 @@ const Pricing = () => {
         <div className="text-center space-y-4 mb-16">
           <h2 className="text-4xl font-bold text-gray-900">Simple Fixed Pricing</h2>
           <p className="text-xl text-gray-600 max-w-2xl mx-auto">
-            The price is per month and includes <strong>4 buckets (4 deliveries)</strong>—one fresh box every week. Choose your plan and enjoy variety within your fixed monthly price.
+            The price is per month and includes <strong>4 deliveries</strong>—one fresh box every week. Choose your plan and enjoy variety within your fixed monthly price.
           </p>
         </div>
 
@@ -102,7 +102,7 @@ const Pricing = () => {
                     <span className={`text-lg ml-2 ${plan.popular ? 'text-green-100' : 'text-gray-600'}`}>/month</span>
                   </div>
                   <p className={`text-sm mt-2 ${plan.popular ? 'text-green-100' : 'text-gray-500'}`}>
-                    4 buckets
+                    4 deliveries
                   </p>
 
                 </div>

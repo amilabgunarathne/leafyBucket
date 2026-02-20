@@ -203,8 +203,8 @@ const SubscriptionPage = () => {
   React.useEffect(() => {
     const fetchVegetables = async () => {
       await vegetableService.initialize();
-      const allVegetables = vegetableService.getAllVegetables();
-      const formattedVegetables = allVegetables.map(v => ({
+      const activeVegetables = vegetableService.getActiveVegetablesForBulk();
+      const formattedVegetables = activeVegetables.map(v => ({
         id: v.id,
         name: v.name,
         weight: v.typicalWeight

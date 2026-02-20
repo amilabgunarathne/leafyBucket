@@ -69,39 +69,26 @@ const ShopPage = () => {
     };
   }, []);
 
-  // Get products with market prices per 250g
+  // Shop uses retail availability and retail price only
   const productsWithPrices = React.useMemo(() => {
-    const activeVegetables = vegetableService.getActiveVegetables();
+    const activeVegetables = vegetableService.getActiveVegetablesForRetail();
     const pricingService = PricingService.getInstance();
 
     const products = activeVegetables.map(veg => ({
       ...veg,
-      price: pricingService.getPrice(veg.id) || veg.marketPricePer250g, // Use dynamic price or fallback to default
+      price: pricingService.getPrice(veg.id) || veg.marketPricePer250g,
       unit: '250g',
-      minOrderQuantity: 250 // Minimum order quantity in grams
+      minOrderQuantity: 250
     }));
 
     console.log('Products with prices:', products.length);
     return products;
   }, [refreshTrigger]);
 
-
-  // Filter products by category
+  // Filter by category (productsWithPrices is already retail-available only)
   const filteredProducts = React.useMemo(() => {
-    let filtered;
-
-    if (selectedCategory === 'all') {
-      filtered = productsWithPrices;
-    } else {
-      const categoryVegetables = vegetableService.getVegetablesByCategory(selectedCategory);
-      filtered = categoryVegetables.filter(veg => veg.isAvailable).map(veg => {
-        const pricing = productsWithPrices.find(p => p.id === veg.id);
-        return pricing || { ...veg, price: veg.marketPricePer250g, unit: '250g', minOrderQuantity: 250 };
-      });
-    }
-
-    console.log(`Filtered products for ${selectedCategory}:`, filtered.length);
-    return filtered;
+    if (selectedCategory === 'all') return productsWithPrices;
+    return productsWithPrices.filter(p => p.category === selectedCategory);
   }, [selectedCategory, productsWithPrices]);
 
   const addToCart = (product: typeof productsWithPrices[0]) => {

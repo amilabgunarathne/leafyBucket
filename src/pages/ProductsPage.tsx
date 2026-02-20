@@ -12,7 +12,7 @@ const ProductsPage = () => {
   React.useEffect(() => {
     const init = async () => {
       await vegetableService.initialize();
-      setActiveVegetables(vegetableService.getActiveVegetables());
+      setActiveVegetables(vegetableService.getActiveVegetablesForBulk());
     };
     init();
   }, []);

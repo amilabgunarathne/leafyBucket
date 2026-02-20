@@ -21,7 +21,7 @@ const WeeklyVegetableDisplay: React.FC<WeeklyVegetableDisplayProps> = ({
     const init = async () => {
       const service = VegetableService.getInstance();
       await service.initialize();
-      setAllVegetables(service.getAllVegetables());
+      setAllVegetables(service.getActiveVegetablesForBulk());
       setLoading(false);
     };
     init();
@@ -93,7 +93,7 @@ const WeeklyVegetableDisplay: React.FC<WeeklyVegetableDisplayProps> = ({
             {isCustomizationAllowed ? (
               <>
                 <RefreshCw className="h-4 w-4" />
-                <span>Shuffle</span>
+                <span>Reload</span>
               </>
             ) : (
               <>
@@ -119,6 +119,11 @@ const WeeklyVegetableDisplay: React.FC<WeeklyVegetableDisplayProps> = ({
         </div>
       )}
 
+      {weekVegetables.length === 0 && (
+        <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-xl text-amber-800 text-sm">
+          No vegetables set for this week. Admin can set them under <strong>Bucket types</strong> → Vegetables for week.
+        </div>
+      )}
       <div className="grid md:grid-cols-2 gap-4">
         {weekVegetables.map((vegetable) => {
           if (!vegetable) return null;
@@ -169,7 +174,7 @@ const WeeklyVegetableDisplay: React.FC<WeeklyVegetableDisplayProps> = ({
       </div>
 
       <div className="mt-4 text-center text-xs text-gray-500">
-        Selection automatically shuffled weekly to ensure variety
+        Vegetables for this week are set by admin in the Bucket types section.
       </div>
     </div>
   );

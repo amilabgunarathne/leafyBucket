@@ -84,15 +84,38 @@ export function parseVegRange(displayItemRange: string | undefined, planId: 'sma
 }
 
 /**
- * Get veg count for a plan: prefer week's override, else midpoint of bucket range.
+ * Get veg count from bucket type. Single source of truth for customer and admin.
+ * When admin sets per-category counts (root + leafy + bushy > 0), that sum is used.
+ * Otherwise uses display_item_range midpoint (e.g. "9-10" => 10).
+ */
+export function getVegCountFromBucketType(
+  displayItemRange?: string,
+  rootCount?: number | null,
+  leafyCount?: number | null,
+  bushyCount?: number | null
+): number {
+  const sum = (rootCount ?? 0) + (leafyCount ?? 0) + (bushyCount ?? 0);
+  if (sum > 0) return sum;
+  let rangeMid = 4;
+  if (displayItemRange) {
+    const parts = displayItemRange.split(/[–\-]/).map((s) => parseInt(s.trim(), 10)).filter((n) => !Number.isNaN(n));
+    if (parts.length >= 2) rangeMid = Math.round((parts[0] + parts[1]) / 2);
+    else if (parts.length === 1) rangeMid = parts[0];
+  }
+  return rangeMid;
+}
+
+/**
+ * Get veg count for a plan from bucket type (same as getVegCountFromBucketType; kept for callers that pass planId).
+ * @deprecated Prefer getVegCountFromBucketType(displayItemRange, rootCount, leafyCount, bushyCount).
  */
 export function getVegCountForPlan(
-  planId: 'small' | 'medium' | 'large',
-  currentWeek: MarketWeekRow | null,
-  displayItemRange: string
+  _planId: 'small' | 'medium' | 'large',
+  _currentWeek: MarketWeekRow | null,
+  displayItemRange: string,
+  rootCount?: number | null,
+  leafyCount?: number | null,
+  bushyCount?: number | null
 ): number {
-  const weekCount = currentWeek?.[planId === 'small' ? 'veg_count_small' : planId === 'medium' ? 'veg_count_medium' : 'veg_count_large'];
-  if (weekCount != null && weekCount > 0) return weekCount;
-  const [min, max] = parseVegRange(displayItemRange, planId);
-  return Math.round((min + max) / 2);
+  return getVegCountFromBucketType(displayItemRange, rootCount, leafyCount, bushyCount);
 }

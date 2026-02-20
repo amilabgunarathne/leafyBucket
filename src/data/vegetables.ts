@@ -61,7 +61,9 @@ export const calculatePlanAllocation = (
     // Category pool = (share % / 100) * totalBudget; item share = pool / denominator
     const allocatedBudget = Math.floor(((categoryPct / totalShare) * totalBudget) / denominator);
 
-    const currentPrice = getCurrentPrice(veg.id);
+    // Bucket allocation uses bulk price (retail is for Shop only)
+    const bulkPrice = VegetableService.getInstance().getVegetable(veg.id)?.bulkPricePer250g;
+    const currentPrice = (typeof bulkPrice === 'number' && bulkPrice >= 0) ? bulkPrice : getCurrentPrice(veg.id);
     const allocatedWeight = currentPrice > 0
       ? Math.round((allocatedBudget / currentPrice) * 250)
       : 0;

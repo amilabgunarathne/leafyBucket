@@ -4,6 +4,15 @@ import { BrowserRouter } from 'react-router-dom';
 import App from './App.tsx';
 import './index.css';
 
+// Temporarily force customization closed for testing (dev only). Remove in production or set localStorage to '0' to restore.
+if (typeof window !== 'undefined' && import.meta.env?.DEV) {
+  try {
+    if (localStorage.getItem('LEAFY_FORCE_CUSTOMIZATION_CLOSED') === null) {
+      localStorage.setItem('LEAFY_FORCE_CUSTOMIZATION_CLOSED', '1');
+    }
+  } catch (_) {}
+}
+
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean, error: Error | null }> {
   constructor(props: { children: React.ReactNode }) {
     super(props);
