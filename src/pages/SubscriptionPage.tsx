@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ArrowLeft, Package, Settings, User, Edit3, MapPin, Phone, Mail, Pause, Play, Check, Calendar, Clock, Truck, Leaf } from 'lucide-react';
+import { ArrowLeft, Package, Settings, User, Edit3, MapPin, Phone, Mail, Pause, Play, Check, Calendar, Clock, Truck, Leaf, X } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import ConfirmationModal from '../components/ConfirmationModal';
@@ -51,7 +51,7 @@ const SubscriptionPage = () => {
   // Redirect if not logged in
   React.useEffect(() => {
     if (!user) {
-      navigate('/auth', { state: { from: { pathname: '/subscription' } } });
+      navigate('/auth', { state: { from: { pathname: '/my-account' } } });
     }
   }, [user, navigate]);
 
@@ -130,6 +130,7 @@ const SubscriptionPage = () => {
       setIsChangingPlan(false);
       return;
     }
+    setIsChangingPlan(false);
     setPendingNewPlan(planId);
     setPendingAction('change_plan');
     setIsConfirmModalOpen(true);
@@ -399,7 +400,7 @@ const SubscriptionPage = () => {
                                 <span className="font-bold text-green-700">{currentPlan?.name}</span>
                                 <button
                                   onClick={() => setIsChangingPlan(!isChangingPlan)}
-                                  className="text-xs text-blue-600 hover:text-blue-800 font-medium underline"
+                                  className="text-xs font-medium px-2.5 py-1 rounded-md border border-gray-300 bg-gray-50 text-gray-700 hover:bg-gray-100 hover:border-gray-400 transition-colors"
                                 >
                                   {isChangingPlan ? 'Cancel' : 'Change Plan'}
                                 </button>
@@ -418,22 +419,27 @@ const SubscriptionPage = () => {
                           <button
                             onClick={toggleSubscriptionStatus}
                             className={`w-full flex items-center justify-center space-x-2 py-3 px-6 rounded-xl font-semibold transition-colors ${user.subscription.status === 'active'
-                              ? 'bg-yellow-100 text-yellow-800 hover:bg-yellow-200'
+                              ? 'bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200'
                               : 'bg-green-100 text-green-800 hover:bg-green-200'
                               }`}
                           >
                             {user.subscription.status === 'active' ? (
                               <>
                                 <Pause className="h-5 w-5" />
-                                <span>Pause Subscription</span>
+                                <span>Pause bucket</span>
                               </>
                             ) : (
                               <>
                                 <Play className="h-5 w-5" />
-                                <span>Resume Subscription</span>
+                                <span>Resume bucket</span>
                               </>
                             )}
                           </button>
+                          <p className="text-xs text-gray-500 text-center">
+                            {user.subscription.status === 'active'
+                              ? 'Pausing holds deliveries only. Your plan and preferences are saved—resume anytime.'
+                              : 'Resume when you\'re ready; your next delivery will be scheduled.'}
+                          </p>
 
                           <Link
                             to="/customize"
@@ -445,32 +451,54 @@ const SubscriptionPage = () => {
                         </div>
                       </div>
 
-                      {/* Plan Change Selection Grid */}
-                      {isChangingPlan && (
-                        <div className="mt-8 border-t border-gray-200 pt-8 animate-in fade-in slide-in-from-top-4 duration-300">
-                          <h3 className="text-lg font-bold text-gray-900 mb-6">Select New Plan Size</h3>
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                            {plans.map((plan) => (
-                              <button
-                                key={plan.id}
-                                onClick={() => handlePlanChangeInitiate(plan.id)}
-                                className={`p-4 rounded-xl border-2 text-left transition-all ${plan.id === user.subscription?.plan
-                                  ? 'border-green-600 bg-green-50'
-                                  : 'border-gray-100 hover:border-blue-200 hover:bg-blue-50'
-                                  }`}
-                              >
-                                <div className="font-bold text-gray-900">{plan.name}</div>
-                                <div className="text-sm text-green-600 font-semibold mb-2">LKR {plan.price.toLocaleString()}</div>
-                                <div className="text-xs text-gray-600">{plan.vegetables} varieties • {plan.weight}</div>
-                                {plan.id === user.subscription?.plan && (
-                                  <div className="mt-2 text-[10px] uppercase tracking-wider font-bold text-green-700">Current Plan</div>
-                                )}
-                              </button>
-                            ))}
+                    </div>
+
+                    {/* Change Plan Modal */}
+                    {isChangingPlan && (
+                      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => setIsChangingPlan(false)}>
+                        <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex items-center justify-between p-4 border-b border-gray-200">
+                            <h3 className="text-lg font-bold text-gray-900">Select Plan Size</h3>
+                            <button
+                              type="button"
+                              onClick={() => setIsChangingPlan(false)}
+                              className="p-2 rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors"
+                              aria-label="Close"
+                            >
+                              <X className="h-5 w-5" />
+                            </button>
+                          </div>
+                          <div className="p-4">
+                            <div className="grid grid-cols-1 gap-3">
+                              {plans.map((plan) => (
+                                <button
+                                  key={plan.id}
+                                  onClick={() => handlePlanChangeInitiate(plan.id)}
+                                  className={`p-4 rounded-xl border-2 text-left transition-all ${plan.id === user.subscription?.plan
+                                    ? 'border-green-600 bg-green-50'
+                                    : 'border-gray-100 hover:border-green-200 hover:bg-green-50/50'
+                                    }`}
+                                >
+                                  <div className="font-bold text-gray-900">{plan.name}</div>
+                                  <div className="text-sm text-green-600 font-semibold mb-1">LKR {plan.price.toLocaleString()}</div>
+                                  <div className="text-xs text-gray-600">{plan.vegetables} varieties • {plan.weight}</div>
+                                  {plan.id === user.subscription?.plan && (
+                                    <div className="mt-2 text-[10px] uppercase tracking-wider font-bold text-green-700">Current Plan</div>
+                                  )}
+                                </button>
+                              ))}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setIsChangingPlan(false)}
+                              className="mt-4 w-full py-2 rounded-xl border border-gray-300 text-gray-700 font-medium hover:bg-gray-50"
+                            >
+                              Cancel
+                            </button>
                           </div>
                         </div>
-                      )}
-                    </div>
+                      </div>
+                    )}
 
                     {/* Next Delivery from Real DB or Context Fallback */}
                     <div className="bg-gradient-to-r from-green-50 to-orange-50 rounded-3xl p-8">
@@ -714,24 +742,24 @@ const SubscriptionPage = () => {
         }}
         onConfirm={handleConfirmStatusChange}
         title={
-          pendingAction === 'pause' ? 'Pause Subscription?' :
-            pendingAction === 'resume' ? 'Resume Subscription?' :
+          pendingAction === 'pause' ? 'Pause deliveries for a while?' :
+            pendingAction === 'resume' ? 'Resume deliveries?' :
               'Change Plan Size?'
         }
         message={
           pendingAction === 'pause'
-            ? 'Are you sure you want to pause your subscription? You will not receive any vegetable boxes until you resume.'
+            ? 'Deliveries will be put on hold. Your plan and preferences stay the same—resume anytime when you\'re ready and your next box will be scheduled.'
             : pendingAction === 'resume'
-              ? 'Are you sure you want to resume your subscription? Your vegetable deliveries will restart from the next scheduled date.'
+              ? 'Your vegetable deliveries will start again from the next scheduled date. Your plan is unchanged.'
               : `Are you sure you want to change your plan to ${plans.find(p => p.id === pendingNewPlan)?.name}? Your next bill and vegetable allocation will update immediately.`
         }
         confirmText={
-          pendingAction === 'pause' ? 'Yes, Pause It' :
-            pendingAction === 'resume' ? 'Yes, Resume It' :
+          pendingAction === 'pause' ? 'Yes, pause for now' :
+            pendingAction === 'resume' ? 'Yes, resume' :
               'Confirm New Plan'
         }
-        cancelText="No, Keep It"
-        isDangerous={pendingAction === 'pause'}
+        cancelText="No, keep as is"
+        isDangerous={false}
       />
     </div>
   );

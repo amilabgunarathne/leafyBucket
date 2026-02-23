@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { supabase } from '../lib/supabase';
+import { supabase, REMEMBER_ME_KEY } from '../lib/supabase';
 
 interface User {
   id: string;
@@ -24,8 +24,8 @@ interface User {
 
 interface AuthContextType {
   user: User | null;
-  login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
-  signup: (email: string, password: string, name: string, phone: string) => Promise<{ success: boolean; error?: string; data?: any }>;
+  login: (email: string, password: string, rememberMe?: boolean) => Promise<{ success: boolean; error?: string }>;
+  signup: (email: string, password: string, name: string, phone: string, rememberMe?: boolean) => Promise<{ success: boolean; error?: string; data?: any }>;
   resetPassword: (email: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
   updateUser: (userData: Partial<User>) => void;
@@ -70,12 +70,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (profileError) throw profileError;
 
-      // 2. Fetch Latest Active Subscription
+      // 2. Fetch subscription (active or paused – paused is still a plan, just deliveries on hold)
       const { data: subscription } = await supabase
         .from('subscriptions')
         .select('*, bucket_type:bucket_types(*)')
         .eq('user_id', userId)
-        .eq('status', 'active')
+        .in('status', ['active', 'paused'])
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -149,24 +149,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => subscription.unsubscribe();
   }, []);
 
-  const login = async (email: string, password: string): Promise<{ success: boolean; error?: string }> => {
+  const login = async (email: string, password: string, rememberMe: boolean = true): Promise<{ success: boolean; error?: string }> => {
     setIsLoading(true);
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(REMEMBER_ME_KEY, rememberMe ? 'true' : 'false');
+    }
     const { error } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
-
     if (error) {
       console.error('Login error:', error.message);
       setIsLoading(false);
       return { success: false, error: error.message };
     }
-
     return { success: true };
   };
 
-  const signup = async (email: string, password: string, name: string, phone: string): Promise<{ success: boolean; error?: string; data?: any }> => {
+  const signup = async (email: string, password: string, name: string, phone: string, rememberMe: boolean = true): Promise<{ success: boolean; error?: string; data?: any }> => {
     setIsLoading(true);
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(REMEMBER_ME_KEY, rememberMe ? 'true' : 'false');
+    }
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
@@ -174,18 +178,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         data: {
           name: name,
           phone: phone,
-          role: 'user' // Default role
+          role: 'user'
         }
       }
     });
-
     if (error) {
       console.error('Signup error:', error.message);
       setIsLoading(false);
       return { success: false, error: error.message };
     }
-
-    // Success response always returns data, but session might be null if email confirmation is on
     setIsLoading(false);
     return { success: true, data };
   };
@@ -205,6 +206,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const logout = async () => {
     await supabase.auth.signOut();
+    if (typeof localStorage !== 'undefined') {
+      try {
+        const keysToRemove: string[] = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k?.startsWith('sb-')) keysToRemove.push(k);
+        }
+        keysToRemove.forEach((k) => localStorage.removeItem(k));
+        sessionStorage.clear();
+      } catch (_) {}
+    }
     setUser(null);
   };
 

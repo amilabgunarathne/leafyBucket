@@ -8,7 +8,7 @@ const Pricing = () => {
   const handleStartSubscription = () => {
     if (user) {
       // User is logged in, go to subscription page
-      window.location.href = '/subscription';
+      window.location.href = '/my-account';
     } else {
       // User not logged in, go to auth page
       window.location.href = '/auth';

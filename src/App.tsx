@@ -17,10 +17,39 @@ import AdminPage from './pages/AdminPage';
 import AdminLoginPage from './pages/AdminLoginPage';
 
 function ScrollToTop() {
-  const { pathname } = useLocation();
+  const location = useLocation();
+  const { pathname, hash } = location;
+  const state = location.state as { scrollToSection?: string } | null;
+  const sectionId = state?.scrollToSection || (hash ? hash.replace(/^#/, '') : null);
+
   useEffect(() => {
+    if (pathname !== '/') {
+      window.scrollTo(0, 0);
+      return;
+    }
+
+    if (sectionId) {
+      window.scrollTo(0, 0);
+      const headerOffset = 100;
+      const doScroll = () => {
+        const el = document.getElementById(sectionId);
+        if (el) {
+          const scrollTop = el.getBoundingClientRect().top + window.scrollY - headerOffset;
+          window.scrollTo({ top: Math.max(0, scrollTop), behavior: 'smooth' });
+          if (window.history.replaceState) {
+            window.history.replaceState(null, '', `/#${sectionId}`);
+          }
+          return true;
+        }
+        return false;
+      };
+      const t = setTimeout(() => doScroll(), 300);
+      return () => clearTimeout(t);
+    }
+
     window.scrollTo(0, 0);
-  }, [pathname]);
+  }, [pathname, sectionId]);
+
   return null;
 }
 
@@ -70,7 +99,7 @@ function App() {
             <Route path="/shop" element={<ShopPage />} />
             <Route path="/auth" element={<AuthPage />} />
             <Route
-              path="/subscription"
+              path="/my-account"
               element={
                 <ProtectedRoute>
                   <SubscriptionPage />

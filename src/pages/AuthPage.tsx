@@ -18,6 +18,7 @@ const AuthPage = () => {
 
   const [isForgotPassword, setIsForgotPassword] = useState(false);
   const [isResetStep, setIsResetStep] = useState(false);
+  const [rememberMe, setRememberMe] = useState(true);
 
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
@@ -36,7 +37,7 @@ const AuthPage = () => {
   }, [location.search]);
 
   // Get the intended destination or default to subscription page
-  const from = location.state?.from?.pathname || '/subscription';
+  const from = location.state?.from?.pathname || '/my-account';
   const adminRequired = location.state?.adminRequired || false;
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -75,7 +76,7 @@ const AuthPage = () => {
     }
 
     if (isLogin) {
-      const { success, error } = await login(formData.email, formData.password);
+      const { success, error } = await login(formData.email, formData.password, rememberMe);
       if (success) {
         navigate(from, { replace: true });
       } else {
@@ -91,10 +92,10 @@ const AuthPage = () => {
         return;
       }
 
-      const { success, error, data } = await signup(formData.email, formData.password, formData.name, formData.phone);
+      const { success, error, data } = await signup(formData.email, formData.password, formData.name, formData.phone, rememberMe);
       if (success) {
         if (data?.session) {
-          navigate('/subscription', { replace: true });
+          navigate('/my-account', { replace: true });
         } else {
           // No session means email confirmation is required
           setSuccessMessage('Account created! Please check your email to confirm your account.');
@@ -299,6 +300,21 @@ const AuthPage = () => {
                         {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
                       </button>
                     </div>
+                  </div>
+                )}
+
+                {!isForgotPassword && !isResetStep && (
+                  <div className="flex items-center">
+                    <input
+                      type="checkbox"
+                      id="rememberMe"
+                      checked={rememberMe}
+                      onChange={(e) => setRememberMe(e.target.checked)}
+                      className="h-4 w-4 text-green-600 focus:ring-green-500 border-gray-300 rounded"
+                    />
+                    <label htmlFor="rememberMe" className="ml-2 block text-sm text-gray-700">
+                      Remember me (stay signed in)
+                    </label>
                   </div>
                 )}
 

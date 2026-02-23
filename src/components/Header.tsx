@@ -1,32 +1,28 @@
 import React, { useState } from 'react';
 import { Menu, X, User } from 'lucide-react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
 const Header = () => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const location = useLocation();
+  const navigate = useNavigate();
   const { user } = useAuth();
 
   const handleNavClick = (e: React.MouseEvent<HTMLAnchorElement>, targetId: string) => {
     e.preventDefault();
-    setIsMenuOpen(false); // Close mobile menu if open
+    setIsMenuOpen(false);
 
-    // If we're not on the home page, navigate to home first
     if (location.pathname !== '/') {
-      window.location.href = `/#${targetId}`;
+      navigate('/', { state: { scrollToSection: targetId } });
       return;
     }
 
     const targetElement = document.getElementById(targetId);
     if (targetElement) {
-      const headerHeight = 100; // Account for fixed header
+      const headerHeight = 100;
       const elementPosition = targetElement.offsetTop - headerHeight;
-
-      window.scrollTo({
-        top: elementPosition,
-        behavior: 'smooth'
-      });
+      window.scrollTo({ top: elementPosition, behavior: 'smooth' });
     }
   };
 
@@ -34,7 +30,7 @@ const Header = () => {
     setIsMenuOpen(false);
     if (user) {
       // User is logged in, go to subscription page
-      window.location.href = '/subscription';
+      window.location.href = '/my-account';
     } else {
       // User not logged in, go to auth page
       window.location.href = '/auth';
@@ -90,7 +86,7 @@ const Header = () => {
 
             {user ? (
               <Link
-                to="/subscription"
+                to="/my-account"
                 className="flex items-center space-x-2 bg-green-600 text-white px-6 py-2 rounded-full hover:bg-green-700 transition-colors"
               >
                 <User className="h-4 w-4" />
@@ -157,7 +153,7 @@ const Header = () => {
 
               {user ? (
                 <Link
-                  to="/subscription"
+                  to="/my-account"
                   className="block w-full mt-2 bg-green-600 text-white px-6 py-2 rounded-full hover:bg-green-700 transition-colors text-center"
                   onClick={() => setIsMenuOpen(false)}
                 >

@@ -165,19 +165,20 @@ class SubscriptionService {
     }
 
     /**
-     * Get active subscription for user with current delivery
+     * Get subscription for user (active or paused) with next open delivery if any
+     * Paused subscriptions still return the plan so the app can show "resume when ready"
      */
     async getActiveSubscription(userId: string): Promise<{ subscription: Subscription, currentDelivery: Delivery | null } | null> {
         const { data: sub, error } = await supabase
             .from('subscriptions')
             .select('*, bucket_type:bucket_types(*)')
             .eq('user_id', userId)
-            .eq('status', 'active')
+            .in('status', ['active', 'paused'])
             .maybeSingle();
 
         if (error || !sub) return null;
 
-        // Get next open delivery
+        // When paused there may be no open delivery; when active, get next open delivery
         const { data: delivery } = await supabase
             .from('deliveries')
             .select('*')
