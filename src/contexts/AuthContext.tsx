@@ -129,17 +129,45 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   useEffect(() => {
-    // Check active session
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    const isAuthCallback = () => {
+      if (typeof window === 'undefined') return false;
+      const hash = window.location.hash || '';
+      const search = window.location.search || '';
+      return (
+        hash.includes('access_token=') ||
+        hash.includes('type=email_change') ||
+        search.includes('token_hash=') ||
+        hash.includes('type=recovery')
+      );
+    };
+
+    const initAuth = async () => {
+      let { data: { session } } = await supabase.auth.getSession();
+
+      // If we landed from an auth callback (e.g. email change confirmation), wait for URL
+      // to be processed and force a refresh so we get the latest user (new email) from the server.
+      if (isAuthCallback()) {
+        await supabase.auth.refreshSession();
+        const next = await supabase.auth.getSession();
+        session = next.data.session;
+        // Clear the URL hash/params so the app doesn't re-process or show tokens
+        if (typeof window !== 'undefined' && window.history.replaceState) {
+          window.history.replaceState(null, '', window.location.pathname);
+        }
+      }
+
       if (session?.user) {
         fetchUserProfile(session.user.id, session.user.email!);
       } else {
         setIsLoading(false);
       }
-    });
+    };
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    initAuth();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (session?.user) {
+        // Always use session.user.email so we pick up email change / USER_UPDATED
         fetchUserProfile(session.user.id, session.user.email!);
       } else {
         setUser(null);
