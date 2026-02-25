@@ -268,39 +268,6 @@ const CustomizationPage = () => {
     alert('Preferences saved successfully!');
   };
 
-  const handleStartSubscription = async () => {
-    if (!user) return;
-
-    const nextDelivery = new Date();
-    nextDelivery.setDate(nextDelivery.getDate() + 7);
-
-    try {
-      // Create actual subscription if none exists
-      if (!user.subscription || user.subscription.id === 'temp-id') {
-        // Placeholder: In a real app we'd call the service here
-        // const { default: SubscriptionService } = await import('../services/SubscriptionService');
-        // await SubscriptionService.getInstance().createSubscription(user.id, 'BUCKET_ID_HERE');
-        console.log("Mocking subscription creation...");
-      }
-    } catch (e) {
-      console.error("Error starting subscription:", e);
-    }
-
-    updateUser({
-      subscription: {
-        id: (user.subscription?.id && user.subscription.id !== 'temp-id') ? user.subscription.id : 'temp-id',
-        plan: selectedPlan as 'small' | 'medium' | 'large',
-        status: 'active',
-        nextDelivery: nextDelivery.toISOString().split('T')[0],
-        customizations: {
-          ...customizations
-        }
-      }
-    });
-
-    alert('Subscription started successfully!');
-  };
-
   const toggleVegetableRemoval = (vegetableId: string) => {
     if (!isCustomizationAllowed) return;
 
@@ -815,16 +782,6 @@ const CustomizationPage = () => {
                     </div>
 
                     <div className="space-y-3">
-                      <button
-                        onClick={handleStartSubscription}
-                        disabled={!isCustomizationAllowed}
-                        className={`w-full py-4 px-6 rounded-full font-semibold transition-colors ${isCustomizationAllowed
-                          ? 'bg-green-600 text-white hover:bg-green-700'
-                          : 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                          }`}
-                      >
-                        {isCustomizationAllowed ? 'Start Smart Subscription' : 'Customization Closed'}
-                      </button>
                       <button
                         onClick={handleSavePreferences}
                         disabled={!isCustomizationAllowed}

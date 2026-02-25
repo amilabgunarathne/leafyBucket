@@ -179,7 +179,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           name: name,
           phone: phone,
           role: 'user'
-        }
+        },
+        emailRedirectTo: `${window.location.origin}/auth`
       }
     });
     if (error) {

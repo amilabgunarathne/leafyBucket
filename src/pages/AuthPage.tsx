@@ -23,7 +23,7 @@ const AuthPage = () => {
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
 
-  const { login, signup, resetPassword, isLoading } = useAuth();
+  const { user, login, signup, resetPassword, isLoading } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -35,6 +35,14 @@ const AuthPage = () => {
       setIsForgotPassword(false);
     }
   }, [location.search]);
+
+  // After email confirmation, user lands on /auth with token in hash; session is established by Supabase. Redirect to My Account.
+  React.useEffect(() => {
+    if (user && location.hash && location.hash.includes('type=signup')) {
+      navigate('/my-account', { replace: true });
+      window.history.replaceState(null, '', window.location.pathname + window.location.search);
+    }
+  }, [user, location.hash, navigate]);
 
   // Get the intended destination or default to subscription page
   const from = location.state?.from?.pathname || '/my-account';

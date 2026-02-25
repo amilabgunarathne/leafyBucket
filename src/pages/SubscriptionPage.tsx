@@ -440,14 +440,6 @@ const SubscriptionPage = () => {
                               ? 'Pausing holds deliveries only. Your plan and preferences are saved—resume anytime.'
                               : 'Resume when you\'re ready; your next delivery will be scheduled.'}
                           </p>
-
-                          <Link
-                            to="/customize"
-                            className="w-full flex items-center justify-center space-x-2 py-3 px-6 rounded-xl font-semibold bg-green-600 text-white hover:bg-green-700 transition-colors"
-                          >
-                            <Settings className="h-5 w-5" />
-                            <span>Customize Bucket</span>
-                          </Link>
                         </div>
                       </div>
 
@@ -532,8 +524,8 @@ const SubscriptionPage = () => {
 
                     {/* Current Week's Vegetables Preview */}
                     <div className="bg-white rounded-3xl shadow-lg p-8">
-                      <div className="flex items-center justify-between mb-6">
-                        <h3 className="text-xl font-bold text-gray-900">This Week's Vegetables</h3>
+                      <div className="flex items-center justify-between mb-2">
+                        <h3 className="text-xl font-bold text-gray-900">Your vegetables for this week</h3>
                         <Link
                           to="/customize"
                           className="text-green-600 hover:text-green-700 font-medium text-sm flex items-center space-x-1"
@@ -542,6 +534,7 @@ const SubscriptionPage = () => {
                           <Settings className="h-4 w-4" />
                         </Link>
                       </div>
+                      <p className="text-sm text-gray-600 mb-6">Here’s what’s in your bucket for the current week. Use Customize to swap or add items before we lock your selection.</p>
 
                       <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
                         {vegetables.slice(0, currentPlan?.vegetables || 7).map((veg) => (
@@ -633,6 +626,19 @@ const SubscriptionPage = () => {
                         onChange={(e) => setProfileData(prev => ({ ...prev, name: e.target.value }))}
                         className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent"
                       />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Email Address</label>
+                      <input
+                        type="email"
+                        value={user?.email || ''}
+                        readOnly
+                        disabled
+                        className="w-full px-4 py-3 border border-gray-200 rounded-xl bg-gray-50 text-gray-600 cursor-not-allowed"
+                        title="Email cannot be changed here. Contact support if you need to update it."
+                      />
+                      <p className="mt-1 text-xs text-gray-500">Email cannot be changed from this page.</p>
                     </div>
 
                     <div>
