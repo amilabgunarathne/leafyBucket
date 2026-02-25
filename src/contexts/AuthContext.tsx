@@ -27,6 +27,7 @@ interface AuthContextType {
   login: (email: string, password: string, rememberMe?: boolean) => Promise<{ success: boolean; error?: string }>;
   signup: (email: string, password: string, name: string, phone: string, rememberMe?: boolean) => Promise<{ success: boolean; error?: string; data?: any }>;
   resetPassword: (email: string) => Promise<{ success: boolean; error?: string }>;
+  updateEmail: (newEmail: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
   updateUser: (userData: Partial<User>) => void;
   isLoading: boolean;
@@ -205,6 +206,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return { success: true };
   };
 
+  const updateEmail = async (newEmail: string): Promise<{ success: boolean; error?: string }> => {
+    if (!user?.email) return { success: false, error: 'Not signed in' };
+    if (newEmail.trim().toLowerCase() === user.email.trim().toLowerCase()) {
+      return { success: true };
+    }
+    const { error } = await supabase.auth.updateUser(
+      { email: newEmail.trim().toLowerCase() },
+      { emailRedirectTo: `${window.location.origin}/my-account` }
+    );
+    if (error) {
+      return { success: false, error: error.message };
+    }
+    return { success: true };
+  };
+
   const logout = async () => {
     await supabase.auth.signOut();
     if (typeof localStorage !== 'undefined') {
@@ -270,6 +286,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       login,
       signup,
       resetPassword,
+      updateEmail,
       logout,
       updateUser,
       isLoading,

@@ -7,15 +7,18 @@ import SubscriptionService from '../services/SubscriptionService';
 import VegetableService from '../services/vegetableService';
 
 const SubscriptionPage = () => {
-  const { user, updateUser, logout } = useAuth();
+  const { user, updateUser, updateEmail, logout } = useAuth();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('overview');
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [profileData, setProfileData] = useState({
     name: user?.name || '',
+    email: user?.email || '',
     phone: user?.phone || '',
     address: user?.address || ''
   });
+  const [profileEmailError, setProfileEmailError] = useState<string | null>(null);
+  const [profileEmailSuccess, setProfileEmailSuccess] = useState<string | null>(null);
 
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
   const [pendingAction, setPendingAction] = useState<'pause' | 'resume' | 'change_plan' | null>(null);
@@ -55,14 +58,44 @@ const SubscriptionPage = () => {
     }
   }, [user, navigate]);
 
+  // Sync profile form when user or edit mode changes
+  React.useEffect(() => {
+    if (user) {
+      setProfileData({
+        name: user.name || '',
+        email: user.email || '',
+        phone: user.phone || '',
+        address: user.address || ''
+      });
+    }
+  }, [user?.id, user?.name, user?.email, user?.phone, user?.address, isEditingProfile]);
+
   if (!user) {
     return null;
   }
 
+  const handleProfileUpdate = async () => {
+    setProfileEmailError(null);
+    setProfileEmailSuccess(null);
+    const emailChanged = profileData.email.trim().toLowerCase() !== (user.email || '').trim().toLowerCase();
 
-  const handleProfileUpdate = () => {
-    updateUser(profileData);
-    setIsEditingProfile(false);
+    if (emailChanged) {
+      const { success, error } = await updateEmail(profileData.email.trim());
+      if (!success) {
+        setProfileEmailError(error || 'Failed to send confirmation to new email.');
+        return;
+      }
+      setProfileEmailSuccess('A confirmation link was sent to your new email. Click it to complete the change.');
+    }
+
+    updateUser({
+      name: profileData.name,
+      phone: profileData.phone,
+      address: profileData.address
+    });
+    if (!emailChanged) {
+      setIsEditingProfile(false);
+    }
   };
 
   const handleStartSubscriptionRequest = (planId: string) => {
@@ -632,13 +665,21 @@ const SubscriptionPage = () => {
                       <label className="block text-sm font-medium text-gray-700 mb-2">Email Address</label>
                       <input
                         type="email"
-                        value={user?.email || ''}
-                        readOnly
-                        disabled
-                        className="w-full px-4 py-3 border border-gray-200 rounded-xl bg-gray-50 text-gray-600 cursor-not-allowed"
-                        title="Email cannot be changed here. Contact support if you need to update it."
+                        value={profileData.email}
+                        onChange={(e) => {
+                          setProfileData(prev => ({ ...prev, email: e.target.value }));
+                          setProfileEmailError(null);
+                          setProfileEmailSuccess(null);
+                        }}
+                        className={`w-full px-4 py-3 border rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent ${profileEmailError ? 'border-red-500' : 'border-gray-300'}`}
+                        placeholder="you@example.com"
                       />
-                      <p className="mt-1 text-xs text-gray-500">Email cannot be changed from this page.</p>
+                      {profileEmailError && (
+                        <p className="mt-1 text-sm text-red-600">{profileEmailError}</p>
+                      )}
+                      {profileEmailSuccess && (
+                        <p className="mt-1 text-sm text-green-600">{profileEmailSuccess}</p>
+                      )}
                     </div>
 
                     <div>
@@ -673,8 +714,11 @@ const SubscriptionPage = () => {
                       <button
                         onClick={() => {
                           setIsEditingProfile(false);
+                          setProfileEmailError(null);
+                          setProfileEmailSuccess(null);
                           setProfileData({
                             name: user?.name || '',
+                            email: user?.email || '',
                             phone: user?.phone || '',
                             address: user?.address || ''
                           });

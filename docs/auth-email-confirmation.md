@@ -30,9 +30,10 @@ If the email is not received, the cause is almost always **Supabase configuratio
 ### 3. Redirect URLs (Auth → URL Configuration)
 
 - **Site URL**: your app’s root (e.g. `https://yoursite.com`).
-- **Redirect URLs**: add the exact URL used as confirmation target, e.g.:
-  - `https://yoursite.com/auth`
-  - `http://localhost:5173/auth` (for local testing)
+- **Redirect URLs**: add the exact URLs used as confirmation targets, e.g.:
+  - `https://yoursite.com/auth` (sign-up and password reset)
+  - `https://yoursite.com/my-account` (email change confirmation)
+  - `http://localhost:5173/auth` and `http://localhost:5173/my-account` (for local testing)
 
 If the confirmation link’s URL is not in **Redirect URLs**, Supabase may not redirect there and the flow can fail.
 
@@ -54,3 +55,9 @@ If the confirmation link’s URL is not in **Redirect URLs**, Supabase may not r
 | Frontend | This app | `emailRedirectTo` set to `/auth`; no change needed to “send” the email |
 
 Once SMTP and Auth settings are correct, sign-up will send the confirmation email and the link will bring the user to `/auth`, then to My Account after confirmation.
+
+---
+
+## Email change (profile)
+
+Users can change their email from **My Account → Profile → Edit**. The app calls `supabase.auth.updateUser({ email: newEmail })`, which sends a confirmation link to the **new** email. After the user clicks that link, Supabase updates `auth.users.email`. The migration `20260224_sync_auth_email_to_profiles.sql` adds a trigger so `public.profiles.email` is updated at the same time. Ensure **Redirect URLs** includes your app’s `/my-account` URL (see above) so the email-change confirmation link works.
