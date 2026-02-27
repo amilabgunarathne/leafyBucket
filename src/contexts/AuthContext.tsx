@@ -149,8 +149,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     const initAuth = async () => {
-      // Email change confirmation: sign out and show login so user signs in with new email
+      // Email change confirmation: let client exchange token so Supabase commits the new email,
+      // then sign out so user must sign in with the new email.
       if (isEmailChangeCallback()) {
+        // Process the URL so the client exchanges the token with Supabase (this finalizes the email update on the server)
+        await supabase.auth.getSession();
+        if (typeof window !== 'undefined' && window.location.hash) {
+          await supabase.auth.refreshSession();
+        }
         await supabase.auth.signOut();
         if (typeof window !== 'undefined' && window.history.replaceState) {
           window.history.replaceState(null, '', window.location.pathname + '?email_changed=1');

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ArrowLeft, Package, Settings, User, Edit3, MapPin, Phone, Mail, Pause, Play, Check, Calendar, Clock, Truck, Leaf, X } from 'lucide-react';
+import { ArrowLeft, Package, Settings, User, Edit3, MapPin, Phone, Mail, Pause, Play, Check, Calendar, Clock, Truck, Leaf, X, Loader2 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import ConfirmationModal from '../components/ConfirmationModal';
@@ -19,6 +19,7 @@ const SubscriptionPage = () => {
   });
   const [profileEmailError, setProfileEmailError] = useState<string | null>(null);
   const [profileEmailSuccess, setProfileEmailSuccess] = useState<string | null>(null);
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
 
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
   const [pendingAction, setPendingAction] = useState<'pause' | 'resume' | 'change_plan' | null>(null);
@@ -77,24 +78,29 @@ const SubscriptionPage = () => {
   const handleProfileUpdate = async () => {
     setProfileEmailError(null);
     setProfileEmailSuccess(null);
+    setIsSavingProfile(true);
     const emailChanged = profileData.email.trim().toLowerCase() !== (user.email || '').trim().toLowerCase();
 
-    if (emailChanged) {
-      const { success, error } = await updateEmail(profileData.email.trim());
-      if (!success) {
-        setProfileEmailError(error || 'Failed to send confirmation to new email.');
-        return;
+    try {
+      if (emailChanged) {
+        const { success, error } = await updateEmail(profileData.email.trim());
+        if (!success) {
+          setProfileEmailError(error || 'Failed to send confirmation to new email.');
+          return;
+        }
+        setProfileEmailSuccess('A confirmation link was sent to your new email. Click it to complete the change.');
       }
-      setProfileEmailSuccess('A confirmation link was sent to your new email. Click it to complete the change.');
-    }
 
-    updateUser({
-      name: profileData.name,
-      phone: profileData.phone,
-      address: profileData.address
-    });
-    if (!emailChanged) {
-      setIsEditingProfile(false);
+      updateUser({
+        name: profileData.name,
+        phone: profileData.phone,
+        address: profileData.address
+      });
+      if (!emailChanged) {
+        setIsEditingProfile(false);
+      }
+    } finally {
+      setIsSavingProfile(false);
     }
   };
 
@@ -706,12 +712,16 @@ const SubscriptionPage = () => {
 
                     <div className="flex space-x-4">
                       <button
+                        type="button"
                         onClick={handleProfileUpdate}
-                        className="bg-green-600 text-white px-6 py-3 rounded-xl font-semibold hover:bg-green-700 transition-colors"
+                        disabled={isSavingProfile}
+                        className="bg-green-600 text-white px-6 py-3 rounded-xl font-semibold hover:bg-green-700 transition-colors disabled:opacity-70 disabled:cursor-not-allowed flex items-center gap-2"
                       >
-                        Save Changes
+                        {isSavingProfile && <Loader2 className="h-4 w-4 animate-spin" />}
+                        {isSavingProfile ? 'Saving...' : 'Save Changes'}
                       </button>
                       <button
+                        type="button"
                         onClick={() => {
                           setIsEditingProfile(false);
                           setProfileEmailError(null);
@@ -723,7 +733,8 @@ const SubscriptionPage = () => {
                             address: user?.address || ''
                           });
                         }}
-                        className="border border-gray-300 text-gray-700 px-6 py-3 rounded-xl font-semibold hover:bg-gray-50 transition-colors"
+                        disabled={isSavingProfile}
+                        className="border border-gray-300 text-gray-700 px-6 py-3 rounded-xl font-semibold hover:bg-gray-50 transition-colors disabled:opacity-70 disabled:cursor-not-allowed"
                       >
                         Cancel
                       </button>
