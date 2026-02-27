@@ -129,6 +129,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   useEffect(() => {
+    const isEmailChangeCallback = () => {
+      if (typeof window === 'undefined') return false;
+      const search = window.location.search || '';
+      const hash = window.location.hash || '';
+      return search.includes('email_changed=1') || hash.includes('type=email_change');
+    };
+
     const isAuthCallback = () => {
       if (typeof window === 'undefined') return false;
       const hash = window.location.hash || '';
@@ -142,17 +149,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     const initAuth = async () => {
+      // Email change confirmation: sign out and show login so user signs in with new email
+      if (isEmailChangeCallback()) {
+        await supabase.auth.signOut();
+        if (typeof window !== 'undefined' && window.history.replaceState) {
+          window.history.replaceState(null, '', window.location.pathname + '?email_changed=1');
+        }
+        setUser(null);
+        setIsLoading(false);
+        return;
+      }
+
       let { data: { session } } = await supabase.auth.getSession();
 
-      // If we landed from an auth callback (e.g. email change confirmation), wait for URL
-      // to be processed and force a refresh so we get the latest user (new email) from the server.
+      // Other auth callbacks (e.g. signup, password reset): process URL and refresh session
       if (isAuthCallback()) {
         await supabase.auth.refreshSession();
         const next = await supabase.auth.getSession();
         session = next.data.session;
-        // Clear the URL hash/params so the app doesn't re-process or show tokens
         if (typeof window !== 'undefined' && window.history.replaceState) {
-          window.history.replaceState(null, '', window.location.pathname);
+          window.history.replaceState(null, '', window.location.pathname + window.location.search);
         }
       }
 
@@ -167,7 +183,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (session?.user) {
-        // Always use session.user.email so we pick up email change / USER_UPDATED
         fetchUserProfile(session.user.id, session.user.email!);
       } else {
         setUser(null);
@@ -241,7 +256,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
     const { error } = await supabase.auth.updateUser(
       { email: newEmail.trim().toLowerCase() },
-      { emailRedirectTo: `${window.location.origin}/my-account` }
+      { emailRedirectTo: `${window.location.origin}/auth?email_changed=1` }
     );
     if (error) {
       return { success: false, error: error.message };

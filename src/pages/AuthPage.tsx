@@ -34,15 +34,25 @@ const AuthPage = () => {
       setIsLogin(false);
       setIsForgotPassword(false);
     }
+    if (params.get('email_changed') === '1') {
+      setIsLogin(true);
+      setIsForgotPassword(false);
+      setIsResetStep(false);
+    }
   }, [location.search]);
 
-  // After email confirmation, user lands on /auth with token in hash; session is established by Supabase. Redirect to My Account.
+  // After signup confirmation, user lands on /auth with token in hash; redirect to My Account.
   React.useEffect(() => {
     if (user && location.hash && location.hash.includes('type=signup')) {
       navigate('/my-account', { replace: true });
       window.history.replaceState(null, '', window.location.pathname + window.location.search);
     }
   }, [user, location.hash, navigate]);
+
+  const isEmailChanged = React.useMemo(
+    () => new URLSearchParams(location.search).get('email_changed') === '1',
+    [location.search]
+  );
 
   // Get the intended destination or default to subscription page
   const from = location.state?.from?.pathname || '/my-account';
@@ -198,6 +208,15 @@ const AuthPage = () => {
           {successMessage && (
             <div className="mb-6 p-4 bg-green-50 border-2 border-green-200 rounded-xl">
               <p className="text-sm text-green-800 text-center font-medium">{successMessage}</p>
+            </div>
+          )}
+
+          {/* Email updated – sign in with new email */}
+          {isEmailChanged && (
+            <div className="mb-6 p-4 bg-green-50 border-2 border-green-200 rounded-xl">
+              <p className="text-sm text-green-800 text-center font-medium">
+                Your email has been updated. Please sign in with your new email address.
+              </p>
             </div>
           )}
 

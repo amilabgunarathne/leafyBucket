@@ -32,8 +32,8 @@ If the email is not received, the cause is almost always **Supabase configuratio
 - **Site URL**: your app’s root (e.g. `https://yoursite.com`).
 - **Redirect URLs**: add the exact URLs used as confirmation targets, e.g.:
   - `https://yoursite.com/auth` (sign-up and password reset)
-  - `https://yoursite.com/my-account` (email change confirmation)
-  - `http://localhost:5173/auth` and `http://localhost:5173/my-account` (for local testing)
+  - `https://yoursite.com/auth?email_changed=1` (email change confirmation – user is sent to login to sign in with new email)
+  - `http://localhost:5173/auth` and `http://localhost:5173/auth?email_changed=1` (for local testing)
 
 If the confirmation link’s URL is not in **Redirect URLs**, Supabase may not redirect there and the flow can fail.
 
@@ -60,4 +60,4 @@ Once SMTP and Auth settings are correct, sign-up will send the confirmation emai
 
 ## Email change (profile)
 
-Users can change their email from **My Account → Profile → Edit**. The app calls `supabase.auth.updateUser({ email: newEmail })`, which sends a confirmation link to the **new** email. After the user clicks that link, Supabase updates `auth.users.email`. The migration `20260224_sync_auth_email_to_profiles.sql` adds a trigger so `public.profiles.email` is updated at the same time. Ensure **Redirect URLs** includes your app’s `/my-account` URL (see above) so the email-change confirmation link works.
+Users can change their email from **My Account → Profile → Edit**. The app calls `supabase.auth.updateUser({ email: newEmail })`, which sends a confirmation link to the **new** email. After the user clicks that link, Supabase updates `auth.users.email` and redirects to **the login page** (`/auth?email_changed=1`). The user is signed out and must sign in again with their **new email** (same password). The migration `20260224_sync_auth_email_to_profiles.sql` keeps `public.profiles.email` in sync. Ensure **Redirect URLs** includes `https://your-domain.com/auth?email_changed=1` (and the same for localhost) so the email-change confirmation link works.
