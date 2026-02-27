@@ -22,6 +22,7 @@ const AuthPage = () => {
 
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
+  const [showEmailChangeRequestedMessage, setShowEmailChangeRequestedMessage] = useState(false);
 
   const { user, login, signup, resetPassword, isLoading } = useAuth();
   const navigate = useNavigate();
@@ -39,6 +40,13 @@ const AuthPage = () => {
       setIsForgotPassword(false);
       setIsResetStep(false);
     }
+    if (typeof sessionStorage !== 'undefined' && sessionStorage.getItem('leafy_email_change_requested') === '1') {
+      sessionStorage.removeItem('leafy_email_change_requested');
+      setShowEmailChangeRequestedMessage(true);
+      setIsLogin(true);
+      setIsForgotPassword(false);
+      setIsResetStep(false);
+    }
   }, [location.search]);
 
   // After signup confirmation, user lands on /auth with token in hash; redirect to My Account.
@@ -50,8 +58,9 @@ const AuthPage = () => {
   }, [user, location.hash, navigate]);
 
   const isEmailChanged = React.useMemo(
-    () => new URLSearchParams(location.search).get('email_changed') === '1',
-    [location.search]
+    () =>
+      new URLSearchParams(location.search).get('email_changed') === '1' || showEmailChangeRequestedMessage,
+    [location.search, showEmailChangeRequestedMessage]
   );
 
   // Get the intended destination or default to subscription page

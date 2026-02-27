@@ -88,7 +88,17 @@ const SubscriptionPage = () => {
           setProfileEmailError(error || 'Failed to send confirmation to new email.');
           return;
         }
-        setProfileEmailSuccess('A confirmation link was sent to your new email. Click it to complete the change.');
+        // Log out so they cannot keep using the old email until they confirm the new one
+        if (typeof sessionStorage !== 'undefined') {
+          sessionStorage.setItem('leafy_email_change_requested', '1');
+        }
+        updateUser({
+          name: profileData.name,
+          phone: profileData.phone,
+          address: profileData.address
+        });
+        logout();
+        return;
       }
 
       updateUser({
@@ -96,9 +106,7 @@ const SubscriptionPage = () => {
         phone: profileData.phone,
         address: profileData.address
       });
-      if (!emailChanged) {
-        setIsEditingProfile(false);
-      }
+      setIsEditingProfile(false);
     } finally {
       setIsSavingProfile(false);
     }
@@ -255,7 +263,18 @@ const SubscriptionPage = () => {
   }, []);
 
   return (
-    <div className="pt-24 min-h-screen bg-gray-50">
+    <>
+      {/* Full-screen spinner while saving profile */}
+      {isSavingProfile && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-white rounded-2xl p-8 flex flex-col items-center gap-4 shadow-xl">
+            <Loader2 className="h-12 w-12 animate-spin text-green-600" />
+            <p className="text-gray-700 font-medium">Saving...</p>
+          </div>
+        </div>
+      )}
+
+      <div className="pt-24 min-h-screen bg-gray-50">
       {/* Header */}
       <div className="bg-white border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
@@ -823,6 +842,7 @@ const SubscriptionPage = () => {
         isDangerous={false}
       />
     </div>
+    </>
   );
 };
 
