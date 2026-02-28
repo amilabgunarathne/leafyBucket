@@ -29,6 +29,7 @@ interface AuthContextType {
   resetPassword: (email: string) => Promise<{ success: boolean; error?: string }>;
   updateEmail: (newEmail: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
+  isLoggingOut: boolean;
   updateUser: (userData: Partial<User>) => void;
   isLoading: boolean;
   isAdmin: () => boolean;
@@ -58,6 +59,7 @@ const mapBucketTypeToPlan = (bucketName?: string): 'small' | 'medium' | 'large' 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
 
   // Helper to fetch full user profile and subscription
   const fetchUserProfile = async (userId: string, email: string) => {
@@ -70,6 +72,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         .single();
 
       if (profileError) throw profileError;
+
+      // If profile.phone is missing but signup sent it in user_metadata, sync it to the DB and use it
+      let phone = profile.phone || '';
+      const { data: authData } = await supabase.auth.getUser();
+      const metadataPhone = authData.user?.user_metadata?.phone;
+      if (!phone && metadataPhone && typeof metadataPhone === 'string') {
+        phone = metadataPhone.trim();
+        await supabase.from('profiles').update({ phone }).eq('id', userId);
+      }
 
       // 2. Fetch subscription (active or paused – paused is still a plan, just deliveries on hold)
       const { data: subscription } = await supabase
@@ -86,7 +97,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         id: userId,
         email: email,
         name: profile.full_name || email.split('@')[0],
-        phone: profile.phone || '',
+        phone,
         address: profile.address || '',
         role: profile.role || 'user',
         subscription: subscription ? {
@@ -105,24 +116,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       };
 
       setUser(userData);
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('Error fetching user profile:', error);
-
-      // Fallback: Try to get name from session metadata if available, otherwise email
-      let fallbackName = 'User';
-      const { data } = await supabase.auth.getUser();
-      if (data.user?.user_metadata?.name) {
-        fallbackName = data.user.user_metadata.name;
-      } else if (email) {
-        fallbackName = email.split('@')[0];
+      // No profile row (e.g. deleted from profiles but still in auth.users) – sign out so they cannot use the app
+      const err = error as { code?: string; message?: string };
+      const isNoProfile = err?.code === 'PGRST116' || (typeof err?.message === 'string' && (err.message.includes('row') || err.message.includes('Rows')));
+      if (isNoProfile) {
+        await supabase.auth.signOut();
+        setUser(null);
+      } else {
+        // Other errors: use minimal fallback so the app doesn't break
+        let fallbackName = 'User';
+        const { data } = await supabase.auth.getUser();
+        if (data.user?.user_metadata?.name) {
+          fallbackName = data.user.user_metadata.name;
+        } else if (email) {
+          fallbackName = email.split('@')[0];
+        }
+        setUser({
+          id: userId,
+          email: email,
+          name: fallbackName,
+          role: 'user'
+        });
       }
-
-      setUser({
-        id: userId,
-        email: email,
-        name: fallbackName,
-        role: 'user'
-      });
     } finally {
       setIsLoading(false);
     }
@@ -271,19 +288,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const logout = async () => {
-    await supabase.auth.signOut();
-    if (typeof localStorage !== 'undefined') {
-      try {
-        const keysToRemove: string[] = [];
-        for (let i = 0; i < localStorage.length; i++) {
-          const k = localStorage.key(i);
-          if (k?.startsWith('sb-')) keysToRemove.push(k);
-        }
-        keysToRemove.forEach((k) => localStorage.removeItem(k));
-        sessionStorage.clear();
-      } catch (_) {}
+    setIsLoggingOut(true);
+    try {
+      await supabase.auth.signOut();
+      if (typeof localStorage !== 'undefined') {
+        try {
+          const keysToRemove: string[] = [];
+          for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            if (k?.startsWith('sb-')) keysToRemove.push(k);
+          }
+          keysToRemove.forEach((k) => localStorage.removeItem(k));
+          sessionStorage.clear();
+        } catch (_) {}
+      }
+      setUser(null);
+    } finally {
+      setIsLoggingOut(false);
     }
-    setUser(null);
   };
 
   const updateUser = async (userData: Partial<User>) => {
@@ -337,6 +359,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       resetPassword,
       updateEmail,
       logout,
+      isLoggingOut,
       updateUser,
       isLoading,
       isAdmin

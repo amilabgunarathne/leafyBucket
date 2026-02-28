@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import ConfirmationModal from '../components/ConfirmationModal';
 import SubscriptionService from '../services/SubscriptionService';
 import VegetableService from '../services/vegetableService';
+import { validatePhone } from '../utils/validation';
 
 const SubscriptionPage = () => {
   const { user, updateUser, updateEmail, logout } = useAuth();
@@ -19,6 +20,7 @@ const SubscriptionPage = () => {
   });
   const [profileEmailError, setProfileEmailError] = useState<string | null>(null);
   const [profileEmailSuccess, setProfileEmailSuccess] = useState<string | null>(null);
+  const [profilePhoneError, setProfilePhoneError] = useState<string | null>(null);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
 
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
@@ -78,7 +80,14 @@ const SubscriptionPage = () => {
   const handleProfileUpdate = async () => {
     setProfileEmailError(null);
     setProfileEmailSuccess(null);
+    setProfilePhoneError(null);
     setIsSavingProfile(true);
+    const phoneError = validatePhone(profileData.phone);
+    if (phoneError) {
+      setProfilePhoneError(phoneError);
+      setIsSavingProfile(false);
+      return;
+    }
     const emailChanged = profileData.email.trim().toLowerCase() !== (user.email || '').trim().toLowerCase();
 
     try {
@@ -94,7 +103,7 @@ const SubscriptionPage = () => {
         }
         updateUser({
           name: profileData.name,
-          phone: profileData.phone,
+          phone: profileData.phone.trim(),
           address: profileData.address
         });
         logout();
@@ -103,7 +112,7 @@ const SubscriptionPage = () => {
 
       updateUser({
         name: profileData.name,
-        phone: profileData.phone,
+        phone: profileData.phone.trim(),
         address: profileData.address
       });
       setIsEditingProfile(false);
@@ -708,14 +717,22 @@ const SubscriptionPage = () => {
                     </div>
 
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Phone Number</label>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Phone Number <span className="text-red-500">*</span></label>
                       <input
                         type="tel"
                         value={profileData.phone}
-                        onChange={(e) => setProfileData(prev => ({ ...prev, phone: e.target.value }))}
-                        className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                        placeholder="+94 77 123 4567"
+                        onChange={(e) => {
+                          setProfileData(prev => ({ ...prev, phone: e.target.value }));
+                          setProfilePhoneError(null);
+                        }}
+                        className={`w-full px-4 py-3 border rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent ${profilePhoneError ? 'border-red-500' : 'border-gray-300'}`}
+                        placeholder="e.g. 0771234567 or +94 77 123 4567"
+                        required
                       />
+                      {profilePhoneError && (
+                        <p className="mt-1 text-sm text-red-600">{profilePhoneError}</p>
+                      )}
+                      <p className="mt-1 text-xs text-gray-500">At least 10 digits (numbers only).</p>
                     </div>
 
                     <div>
@@ -745,6 +762,7 @@ const SubscriptionPage = () => {
                           setIsEditingProfile(false);
                           setProfileEmailError(null);
                           setProfileEmailSuccess(null);
+                          setProfilePhoneError(null);
                           setProfileData({
                             name: user?.name || '',
                             email: user?.email || '',

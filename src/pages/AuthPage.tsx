@@ -3,6 +3,7 @@ import { ArrowLeft, Mail, Lock, User, Phone, MapPin, Eye, EyeOff, Loader2, Shiel
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
+import { validatePhone } from '../utils/validation';
 
 const AuthPage = () => {
   const [isLogin, setIsLogin] = useState(true);
@@ -114,12 +115,13 @@ const AuthPage = () => {
         setError('Name is required');
         return;
       }
-      if (!formData.phone.trim()) {
-        setError('Phone number is required');
+      const phoneError = validatePhone(formData.phone);
+      if (phoneError) {
+        setError(phoneError);
         return;
       }
 
-      const { success, error, data } = await signup(formData.email, formData.password, formData.name, formData.phone, rememberMe);
+      const { success, error, data } = await signup(formData.email, formData.password, formData.name, formData.phone.trim(), rememberMe);
       if (success) {
         if (data?.session) {
           navigate('/my-account', { replace: true });
@@ -339,7 +341,7 @@ const AuthPage = () => {
                   </div>
                 )}
 
-                {!isForgotPassword && !isResetStep && (
+                {isLogin && !isForgotPassword && !isResetStep && (
                   <div className="flex items-center">
                     <input
                       type="checkbox"
@@ -358,7 +360,7 @@ const AuthPage = () => {
                   <>
                     <div>
                       <label htmlFor="phone" className="block text-sm font-medium text-gray-700 mb-2">
-                        Phone Number
+                        Phone Number <span className="text-red-500">*</span>
                       </label>
                       <div className="relative">
                         <Phone className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
@@ -369,10 +371,13 @@ const AuthPage = () => {
                           value={formData.phone}
                           onChange={handleInputChange}
                           className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                          placeholder="+94 77 123 4567"
-                          required={!isLogin && !isForgotPassword && !isResetStep}
+                          placeholder="e.g. 0771234567 or +94 77 123 4567"
+                          required
+                          minLength={10}
+                          maxLength={18}
                         />
                       </div>
+                      <p className="mt-1 text-xs text-gray-500">At least 10 digits (numbers only).</p>
                     </div>
 
                     <div>

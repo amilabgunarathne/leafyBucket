@@ -99,15 +99,16 @@ CREATE POLICY "Admins can manage vegetables" ON public.vegetables
     EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
   );
 
--- Trigger to handle new user signup automatically
+-- Trigger to handle new user signup automatically (includes phone from signup metadata)
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER AS $$
 BEGIN
-  INSERT INTO public.profiles (id, email, full_name, role)
+  INSERT INTO public.profiles (id, email, full_name, phone, role)
   VALUES (
-    new.id, 
-    new.email, 
+    new.id,
+    new.email,
     COALESCE(new.raw_user_meta_data->>'name', 'New User'),
+    new.raw_user_meta_data->>'phone',
     COALESCE(new.raw_user_meta_data->>'role', 'user')
   );
   RETURN new;

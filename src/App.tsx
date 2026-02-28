@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
 import { Routes, Route, useLocation, Navigate } from 'react-router-dom';
-import { AuthProvider } from './contexts/AuthContext';
+import { Loader2 } from 'lucide-react';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { WeeklyProvider } from './contexts/WeeklyContext';
 import VegetableService from './services/vegetableService';
 import Header from './components/Header';
@@ -55,10 +56,19 @@ function ScrollToTop() {
 
 function AppLayout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
+  const { isLoggingOut } = useAuth();
   const isAdminArea = location.pathname.startsWith('/manage');
 
   return (
     <div className="min-h-screen">
+      {isLoggingOut && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50">
+          <div className="bg-white rounded-2xl p-8 flex flex-col items-center gap-4 shadow-xl">
+            <Loader2 className="h-12 w-12 animate-spin text-green-600" />
+            <p className="text-gray-700 font-medium">Signing out...</p>
+          </div>
+        </div>
+      )}
       {!isAdminArea && <Header />}
       {children}
       {!isAdminArea && <Footer />}
