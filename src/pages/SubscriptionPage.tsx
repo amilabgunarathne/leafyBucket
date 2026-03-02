@@ -63,6 +63,14 @@ const SubscriptionPage = () => {
     }
   }, [user, navigate]);
 
+  // Brand new users (no subscription) and cancelled: send to Pricing unless they came from Pricing to choose a plan
+  React.useEffect(() => {
+    const fromPricing = location.state?.fromPricing === true;
+    if (user && (!user.subscription || user.subscription.status === 'cancelled') && !fromPricing) {
+      navigate('/', { state: { scrollToSection: 'pricing' }, replace: true });
+    }
+  }, [user?.id, user?.subscription, navigate, location.state?.fromPricing]);
+
   // Sync activeTab when navigating with state (e.g. Profile from header dropdown)
   React.useEffect(() => {
     const tab = location.state?.tab ?? new URLSearchParams(location.search).get('tab');

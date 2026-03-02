@@ -1,17 +1,18 @@
 import React from 'react';
 import { Star, Package, Check } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
 const Pricing = () => {
   const { user } = useAuth();
+  const navigate = useNavigate();
 
   const handleStartSubscription = () => {
     if (user) {
-      // User is logged in, go to subscription page
-      window.location.href = '/my-account';
+      // Logged in: go to My Bucket with flag so they can choose a plan (no redirect back to Pricing)
+      navigate('/my-account', { state: { fromPricing: true } });
     } else {
-      // User not logged in, go to auth page
-      window.location.href = '/auth';
+      navigate('/auth');
     }
   };
 
