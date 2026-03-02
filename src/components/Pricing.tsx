@@ -9,8 +9,7 @@ const Pricing = () => {
 
   const handleStartSubscription = () => {
     if (user) {
-      // Logged in: go to My Bucket with flag so they can choose a plan (no redirect back to Pricing)
-      navigate('/my-account', { state: { fromPricing: true } });
+      navigate('/my-account');
     } else {
       navigate('/auth');
     }

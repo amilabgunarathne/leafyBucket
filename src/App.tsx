@@ -14,6 +14,7 @@ import CustomizationPage from './pages/CustomizationPage';
 import ShopPage from './pages/ShopPage';
 import AuthPage from './pages/AuthPage';
 import SubscriptionPage from './pages/SubscriptionPage';
+import ProfilePage from './pages/ProfilePage';
 import AdminPage from './pages/AdminPage';
 import AdminLoginPage from './pages/AdminLoginPage';
 
@@ -44,8 +45,9 @@ function ScrollToTop() {
         }
         return false;
       };
-      const t = setTimeout(() => doScroll(), 300);
-      return () => clearTimeout(t);
+      const delays = [100, 400, 800];
+      const timeouts = delays.map((delay) => setTimeout(() => doScroll(), delay));
+      return () => timeouts.forEach((t) => clearTimeout(t));
     }
 
     window.scrollTo(0, 0);
@@ -113,6 +115,14 @@ function App() {
               element={
                 <ProtectedRoute>
                   <SubscriptionPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/profile"
+              element={
+                <ProtectedRoute>
+                  <ProfilePage />
                 </ProtectedRoute>
               }
             />

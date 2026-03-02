@@ -50,11 +50,11 @@ const AuthPage = () => {
     }
   }, [location.search]);
 
-  // After signup confirmation, direct new customers to Pricing (not My Bucket).
+  // After signup confirmation, direct new customers to Pricing section on home.
   React.useEffect(() => {
     if (user && location.hash && location.hash.includes('type=signup')) {
-      navigate('/', { state: { scrollToSection: 'pricing' }, replace: true });
       window.history.replaceState(null, '', window.location.pathname + window.location.search);
+      navigate('/', { state: { scrollToSection: 'pricing' }, replace: true });
     }
   }, [user, location.hash, navigate]);
 

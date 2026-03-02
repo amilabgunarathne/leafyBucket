@@ -122,8 +122,7 @@ const Header = () => {
                 {isUserMenuOpen && (
                   <div className="absolute left-0 mt-2 w-48 bg-white rounded-xl shadow-lg border border-gray-200 py-1 z-50">
                     <Link
-                      to="/my-account"
-                      state={{ tab: 'profile' }}
+                      to="/profile"
                       onClick={() => { setIsUserMenuOpen(false); setIsMenuOpen(false); }}
                       className="flex items-center space-x-2 px-4 py-3 text-gray-700 hover:bg-gray-50 transition-colors"
                     >
@@ -211,8 +210,7 @@ const Header = () => {
                     My Bucket
                   </Link>
                   <Link
-                    to="/my-account"
-                    state={{ tab: 'profile' }}
+                    to="/profile"
                     className="block px-3 py-2 text-gray-700 hover:text-green-600 transition-colors"
                     onClick={() => setIsMenuOpen(false)}
                   >
