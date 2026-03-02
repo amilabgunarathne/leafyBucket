@@ -290,15 +290,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const logout = async () => {
     setIsLoggingOut(true);
     try {
-      await supabase.auth.signOut();
-      if (typeof localStorage !== 'undefined') {
+      await supabase.auth.signOut({ scope: 'local' });
+      if (typeof window !== 'undefined') {
         try {
-          const keysToRemove: string[] = [];
-          for (let i = 0; i < localStorage.length; i++) {
-            const k = localStorage.key(i);
-            if (k?.startsWith('sb-')) keysToRemove.push(k);
-          }
-          keysToRemove.forEach((k) => localStorage.removeItem(k));
+          const clearStorage = (storage: Storage) => {
+            const keysToRemove: string[] = [];
+            for (let i = 0; i < storage.length; i++) {
+              const k = storage.key(i);
+              if (k?.startsWith('sb-')) keysToRemove.push(k);
+            }
+            keysToRemove.forEach((k) => storage.removeItem(k));
+          };
+          clearStorage(localStorage);
+          clearStorage(sessionStorage);
           sessionStorage.clear();
         } catch (_) {}
       }

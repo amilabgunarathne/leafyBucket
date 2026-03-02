@@ -48,7 +48,6 @@ const CustomizationPage = () => {
 
   const { getSelectionForPlan, isCustomizationAllowed, timeRemaining, scheduleDisplay } = useWeekly();
 
-
   // Fetch dynamic limits from DB; ratios from bucket_type_category_ratios (same as Admin)
   const [adminLimits, setAdminLimits] = useState<any>(null);
   const [bucketTypeRatiosFromDb, setBucketTypeRatiosFromDb] = useState<Record<string, { root: number; leafy: number; bushy: number }>>({});
@@ -397,6 +396,25 @@ const CustomizationPage = () => {
       return `${timeRemaining.minutes} minutes remaining`;
     }
   };
+
+  // No subscription or cancelled — must select a bucket first (no default)
+  if (user && (!user.subscription || user.subscription.status === 'cancelled')) {
+    return (
+      <div className="pt-24 min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-center max-w-md mx-auto px-4">
+          <Package className="h-16 w-16 text-green-600 mx-auto mb-4" />
+          <h2 className="text-xl font-bold text-gray-900 mb-2">Select a bucket first</h2>
+          <p className="text-gray-600 mb-6">Choose a plan in My Bucket to start customizing your weekly vegetables.</p>
+          <Link
+            to="/my-account"
+            className="inline-flex items-center space-x-2 bg-green-600 text-white px-6 py-3 rounded-xl font-semibold hover:bg-green-700 transition-colors"
+          >
+            <span>Go to My Bucket</span>
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="pt-16">

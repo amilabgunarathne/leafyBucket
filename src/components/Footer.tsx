@@ -85,8 +85,8 @@ const Footer = () => {
                   What's Inside
                 </Link>
               </li>
-              {/* Only show Customize link for logged-in users */}
-              {user && (
+              {/* Only show Customize link for logged-in users who have selected a bucket */}
+              {user?.subscription && user.subscription.status !== 'cancelled' && (
                 <li>
                   <Link
                     to="/customize"

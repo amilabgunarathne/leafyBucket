@@ -50,10 +50,10 @@ const AuthPage = () => {
     }
   }, [location.search]);
 
-  // After signup confirmation, user lands on /auth with token in hash; redirect to My Account.
+  // After signup confirmation, direct new customers to Pricing (not My Bucket).
   React.useEffect(() => {
     if (user && location.hash && location.hash.includes('type=signup')) {
-      navigate('/my-account', { replace: true });
+      navigate('/', { state: { scrollToSection: 'pricing' }, replace: true });
       window.history.replaceState(null, '', window.location.pathname + window.location.search);
     }
   }, [user, location.hash, navigate]);

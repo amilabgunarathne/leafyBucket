@@ -1,13 +1,27 @@
-import React, { useState } from 'react';
-import { Menu, X, User } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { Menu, X, User, ChevronDown, LogOut } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
 const Header = () => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+  const userMenuRef = useRef<HTMLDivElement>(null);
   const location = useLocation();
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
+        setIsUserMenuOpen(false);
+      }
+    };
+    if (isUserMenuOpen) {
+      document.addEventListener('click', handleClickOutside);
+      return () => document.removeEventListener('click', handleClickOutside);
+    }
+  }, [isUserMenuOpen]);
 
   const handleNavClick = (e: React.MouseEvent<HTMLAnchorElement>, targetId: string) => {
     e.preventDefault();
@@ -83,22 +97,58 @@ const Header = () => {
             >
               Shop Now
             </Link>
-
             {user ? (
               <Link
                 to="/my-account"
-                className="flex items-center space-x-2 bg-green-600 text-white px-6 py-2 rounded-full hover:bg-green-700 transition-colors"
-              >
-                <User className="h-4 w-4" />
-                <span>My Account</span>
-              </Link>
-            ) : (
-              <button
-                onClick={handleStartSubscription}
                 className="bg-green-600 text-white px-6 py-2 rounded-full hover:bg-green-700 transition-colors"
               >
+                My Bucket
+              </Link>
+            ) : null}
+
+            {user ? (
+              <div className="relative" ref={userMenuRef}>
+                <button
+                  type="button"
+                  onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
+                  className="flex items-center space-x-2 text-gray-700 hover:text-green-600 transition-colors focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-1 rounded-full"
+                >
+                  <span className="font-medium max-w-[120px] truncate">{user.name || 'Account'}</span>
+                  <ChevronDown className={`h-4 w-4 shrink-0 transition-transform ${isUserMenuOpen ? 'rotate-180' : ''}`} />
+                  <div className="w-9 h-9 rounded-full bg-green-600 text-white flex items-center justify-center font-semibold text-sm shrink-0">
+                    {(user.name || user.email || 'U').charAt(0).toUpperCase()}
+                  </div>
+                </button>
+                {isUserMenuOpen && (
+                  <div className="absolute left-0 mt-2 w-48 bg-white rounded-xl shadow-lg border border-gray-200 py-1 z-50">
+                    <Link
+                      to="/my-account"
+                      state={{ tab: 'profile' }}
+                      onClick={() => { setIsUserMenuOpen(false); setIsMenuOpen(false); }}
+                      className="flex items-center space-x-2 px-4 py-3 text-gray-700 hover:bg-gray-50 transition-colors"
+                    >
+                      <User className="h-4 w-4 text-gray-500" />
+                      <span>Profile</span>
+                    </Link>
+                    <div className="border-t border-gray-100 my-1" />
+                    <button
+                      type="button"
+                      onClick={() => { setIsUserMenuOpen(false); logout(); }}
+                      className="flex items-center space-x-2 w-full px-4 py-3 text-red-600 hover:bg-red-50 transition-colors"
+                    >
+                      <LogOut className="h-4 w-4" />
+                      <span>Sign Out</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <Link
+                to="/auth"
+                className="bg-green-600 text-white px-6 py-2 rounded-full hover:bg-green-700 transition-colors inline-block"
+              >
                 Select Bucket Size
-              </button>
+              </Link>
             )}
           </div>
 
@@ -152,13 +202,30 @@ const Header = () => {
               </Link>
 
               {user ? (
-                <Link
-                  to="/my-account"
-                  className="block w-full mt-2 bg-green-600 text-white px-6 py-2 rounded-full hover:bg-green-700 transition-colors text-center"
-                  onClick={() => setIsMenuOpen(false)}
-                >
-                  My Account
-                </Link>
+                <>
+                  <Link
+                    to="/my-account"
+                    className="block w-full mt-2 bg-green-600 text-white px-6 py-2 rounded-full hover:bg-green-700 transition-colors text-center"
+                    onClick={() => setIsMenuOpen(false)}
+                  >
+                    My Bucket
+                  </Link>
+                  <Link
+                    to="/my-account"
+                    state={{ tab: 'profile' }}
+                    className="block px-3 py-2 text-gray-700 hover:text-green-600 transition-colors"
+                    onClick={() => setIsMenuOpen(false)}
+                  >
+                    Profile
+                  </Link>
+                  <button
+                    type="button"
+                    onClick={() => { setIsMenuOpen(false); logout(); }}
+                    className="block w-full text-left px-3 py-2 text-red-600 hover:bg-red-50 transition-colors"
+                  >
+                    Sign Out
+                  </button>
+                </>
               ) : (
                 <button
                   onClick={handleStartSubscription}

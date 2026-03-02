@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { ArrowLeft, Package, Settings, User, Edit3, MapPin, Phone, Mail, Pause, Play, Check, Calendar, Clock, Truck, Leaf, X, Loader2 } from 'lucide-react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import ConfirmationModal from '../components/ConfirmationModal';
 import SubscriptionService from '../services/SubscriptionService';
@@ -8,9 +8,11 @@ import VegetableService from '../services/vegetableService';
 import { validatePhone } from '../utils/validation';
 
 const SubscriptionPage = () => {
-  const { user, updateUser, updateEmail, logout } = useAuth();
+  const { user, updateUser, updateEmail } = useAuth();
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState('overview');
+  const location = useLocation();
+  const tabFromLocation = location.state?.tab ?? new URLSearchParams(location.search).get('tab');
+  const [activeTab, setActiveTab] = useState(tabFromLocation === 'profile' ? 'profile' : 'overview');
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [profileData, setProfileData] = useState({
     name: user?.name || '',
@@ -60,6 +62,12 @@ const SubscriptionPage = () => {
       navigate('/auth', { state: { from: { pathname: '/my-account' } } });
     }
   }, [user, navigate]);
+
+  // Sync activeTab when navigating with state (e.g. Profile from header dropdown)
+  React.useEffect(() => {
+    const tab = location.state?.tab ?? new URLSearchParams(location.search).get('tab');
+    if (tab === 'profile') setActiveTab('profile');
+  }, [location.state?.tab, location.search]);
 
   // Sync profile form when user or edit mode changes
   React.useEffect(() => {
@@ -297,21 +305,9 @@ const SubscriptionPage = () => {
                 <span>Back to Home</span>
               </Link>
               <div className="h-6 w-px bg-gray-300"></div>
-              <h1 className="text-2xl font-bold text-gray-900">My Account</h1>
+              <h1 className="text-2xl font-bold text-gray-900">My Bucket</h1>
             </div>
 
-            <div className="flex items-center space-x-4">
-              <div className="text-right">
-                <div className="text-sm text-gray-600">Welcome back,</div>
-                <div className="font-semibold text-gray-900">{user.name}</div>
-              </div>
-              <button
-                onClick={logout}
-                className="text-gray-600 hover:text-gray-800 transition-colors"
-              >
-                Sign Out
-              </button>
-            </div>
           </div>
         </div>
       </div>
@@ -331,26 +327,27 @@ const SubscriptionPage = () => {
                   <span>Overview</span>
                 </button>
 
-                <button
-                  onClick={() => setActiveTab('profile')}
-                  className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-left transition-colors ${activeTab === 'profile' ? 'bg-green-100 text-green-800' : 'text-gray-600 hover:bg-gray-100'
-                    }`}
-                >
-                  <User className="h-5 w-5" />
-                  <span>Profile</span>
-                </button>
-
                 {/* Quick Actions */}
                 <div className="pt-4 border-t border-gray-200 mt-4">
                   <h4 className="text-sm font-medium text-gray-700 mb-3">Quick Actions</h4>
                   <div className="space-y-2">
-                    <Link
-                      to="/customize"
-                      className="w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-left transition-colors text-gray-600 hover:bg-gray-100"
-                    >
-                      <Settings className="h-5 w-5" />
-                      <span>Customize Bucket</span>
-                    </Link>
+                    {user.subscription && user.subscription.status !== 'cancelled' ? (
+                      <Link
+                        to="/customize"
+                        className="w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-left transition-colors text-gray-600 hover:bg-gray-100"
+                      >
+                        <Settings className="h-5 w-5" />
+                        <span>Customize Bucket</span>
+                      </Link>
+                    ) : (
+                      <span
+                        className="w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-left text-gray-400 cursor-not-allowed"
+                        title="Select a bucket plan first"
+                      >
+                        <Settings className="h-5 w-5" />
+                        <span>Customize Bucket</span>
+                      </span>
+                    )}
                   </div>
                 </div>
               </nav>
