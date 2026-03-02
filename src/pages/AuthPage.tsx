@@ -65,7 +65,7 @@ const AuthPage = () => {
   );
 
   // Get the intended destination or default to subscription page
-  const from = location.state?.from?.pathname || '/my-account';
+  const from = location.state?.from?.pathname || '/my-bucket';
   const adminRequired = location.state?.adminRequired || false;
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -124,7 +124,7 @@ const AuthPage = () => {
       const { success, error, data } = await signup(formData.email, formData.password, formData.name, formData.phone.trim(), rememberMe);
       if (success) {
         if (data?.session) {
-          navigate('/my-account', { replace: true });
+          navigate('/my-bucket', { replace: true });
         } else {
           // No session means email confirmation is required
           setSuccessMessage('Account created! Please check your email to confirm your account.');

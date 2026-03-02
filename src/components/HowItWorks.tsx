@@ -8,7 +8,7 @@ const HowItWorks = () => {
   const handleGetStarted = () => {
     if (user) {
       // User is logged in, go to subscription page
-      window.location.href = '/my-account';
+      window.location.href = '/my-bucket';
     } else {
       // User not logged in, go to auth page
       window.location.href = '/auth';

@@ -44,7 +44,7 @@ const Header = () => {
     setIsMenuOpen(false);
     if (user) {
       // User is logged in, go to subscription page
-      window.location.href = '/my-account';
+      window.location.href = '/my-bucket';
     } else {
       // User not logged in, go to auth page
       window.location.href = '/auth';
@@ -99,7 +99,7 @@ const Header = () => {
             </Link>
             {user ? (
               <Link
-                to="/my-account"
+                to="/my-bucket"
                 className="bg-green-600 text-white px-6 py-2 rounded-full hover:bg-green-700 transition-colors"
               >
                 My Bucket
@@ -203,7 +203,7 @@ const Header = () => {
               {user ? (
                 <>
                   <Link
-                    to="/my-account"
+                    to="/my-bucket"
                     className="block w-full mt-2 bg-green-600 text-white px-6 py-2 rounded-full hover:bg-green-700 transition-colors text-center"
                     onClick={() => setIsMenuOpen(false)}
                   >

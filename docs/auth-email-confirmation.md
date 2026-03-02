@@ -4,7 +4,7 @@
 
 - **Sign-up** calls `supabase.auth.signUp()` with `emailRedirectTo: ${origin}/auth` so the confirmation link in the email sends users to your app’s `/auth` page.
 - **Session from link**: When the user clicks the link, Supabase redirects to `/auth` with the token in the URL. The client has `detectSessionInUrl: true`, so the session is created automatically.
-- **After confirm**: If the user lands on `/auth` with a session and `type=signup` in the hash, the app redirects them to `/my-account`.
+- **After confirm**: If the user lands on `/auth` with a session and `type=signup` in the hash, the app redirects them to `/my-bucket`.
 
 No further frontend change is required for “sending” the email; Supabase sends it server-side using your SMTP settings.
 

@@ -1,2 +1,5 @@
+# Redirect old My Account URL to My Bucket
+/my-account    /my-bucket    302
+
 # Handle client-side routing
 /*    /index.html   200

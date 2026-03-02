@@ -9,7 +9,7 @@ const Pricing = () => {
 
   const handleStartSubscription = () => {
     if (user) {
-      navigate('/my-account');
+      navigate('/my-bucket');
     } else {
       navigate('/auth');
     }

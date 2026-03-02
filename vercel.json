@@ -1,4 +1,11 @@
 {
+    "redirects": [
+        {
+            "source": "/my-account",
+            "destination": "/my-bucket",
+            "permanent": false
+        }
+    ],
     "rewrites": [
         {
             "source": "/(.*)",

@@ -406,7 +406,7 @@ const CustomizationPage = () => {
           <h2 className="text-xl font-bold text-gray-900 mb-2">Select a bucket first</h2>
           <p className="text-gray-600 mb-6">Choose a plan in My Bucket to start customizing your weekly vegetables.</p>
           <Link
-            to="/my-account"
+            to="/my-bucket"
             className="inline-flex items-center space-x-2 bg-green-600 text-white px-6 py-3 rounded-xl font-semibold hover:bg-green-700 transition-colors"
           >
             <span>Go to My Bucket</span>

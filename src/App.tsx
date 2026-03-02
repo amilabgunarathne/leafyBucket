@@ -111,7 +111,7 @@ function App() {
             <Route path="/shop" element={<ShopPage />} />
             <Route path="/auth" element={<AuthPage />} />
             <Route
-              path="/my-account"
+              path="/my-bucket"
               element={
                 <ProtectedRoute>
                   <SubscriptionPage />

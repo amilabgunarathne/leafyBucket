@@ -1,5 +1,22 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { supabase, REMEMBER_ME_KEY } from '../lib/supabase';
+
+// Session timeout: idle = no activity, absolute = max session length regardless of activity
+const SESSION_IDLE_TIMEOUT_MS = 30 * 60 * 1000;   // 30 minutes
+const SESSION_ABSOLUTE_TIMEOUT_MS = 24 * 60 * 60 * 1000; // 24 hours
+const SESSION_CHECK_INTERVAL_MS = 60 * 1000;      // check every 1 minute
+const SESSION_START_KEY = 'leafy_session_started_at';
+
+function getAuthStorage(): Storage {
+  if (typeof window === 'undefined') return localStorage;
+  try {
+    const raw = localStorage.getItem(REMEMBER_ME_KEY);
+    const remember = raw === null || raw === 'true';
+    return remember ? localStorage : sessionStorage;
+  } catch {
+    return localStorage;
+  }
+}
 
 interface User {
   id: string;
@@ -60,6 +77,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const lastActivityAt = useRef(Date.now());
+  const logoutRef = useRef<() => void>(() => {});
 
   // Helper to fetch full user profile and subscription
   const fetchUserProfile = async (userId: string, email: string) => {
@@ -115,6 +134,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         } : undefined
       };
 
+      if (typeof window !== 'undefined') {
+        const storage = getAuthStorage();
+        if (!storage.getItem(SESSION_START_KEY)) {
+          storage.setItem(SESSION_START_KEY, String(Date.now()));
+        }
+      }
       setUser(userData);
     } catch (error: unknown) {
       console.error('Error fetching user profile:', error);
@@ -132,6 +157,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           fallbackName = data.user.user_metadata.name;
         } else if (email) {
           fallbackName = email.split('@')[0];
+        }
+        if (typeof window !== 'undefined') {
+          const storage = getAuthStorage();
+          if (!storage.getItem(SESSION_START_KEY)) {
+            storage.setItem(SESSION_START_KEY, String(Date.now()));
+          }
         }
         setUser({
           id: userId,
@@ -208,6 +239,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (session?.user) {
         fetchUserProfile(session.user.id, session.user.email!);
       } else {
+        if (typeof window !== 'undefined') {
+          localStorage.removeItem(SESSION_START_KEY);
+          sessionStorage.removeItem(SESSION_START_KEY);
+        }
         setUser(null);
         setIsLoading(false);
       }
@@ -215,6 +250,40 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     return () => subscription.unsubscribe();
   }, []);
+
+  // Session timeout: idle (no activity) and absolute (max session length)
+  useEffect(() => {
+    if (!user || typeof window === 'undefined') return;
+
+    lastActivityAt.current = Date.now();
+
+    const onActivity = () => {
+      lastActivityAt.current = Date.now();
+    };
+    const events = ['mousedown', 'keydown', 'scroll', 'touchstart'] as const;
+    events.forEach((e) => window.addEventListener(e, onActivity));
+
+    const intervalId = setInterval(() => {
+      const storage = getAuthStorage();
+      const started = storage.getItem(SESSION_START_KEY);
+      if (!started) return;
+      const sessionStart = parseInt(started, 10);
+      const now = Date.now();
+      if (now - sessionStart >= SESSION_ABSOLUTE_TIMEOUT_MS) {
+        logoutRef.current();
+        return;
+      }
+      if (now - lastActivityAt.current >= SESSION_IDLE_TIMEOUT_MS) {
+        logoutRef.current();
+        return;
+      }
+    }, SESSION_CHECK_INTERVAL_MS);
+
+    return () => {
+      events.forEach((e) => window.removeEventListener(e, onActivity));
+      clearInterval(intervalId);
+    };
+  }, [user]);
 
   const login = async (email: string, password: string, rememberMe: boolean = true): Promise<{ success: boolean; error?: string }> => {
     setIsLoading(true);
@@ -300,6 +369,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               if (k?.startsWith('sb-')) keysToRemove.push(k);
             }
             keysToRemove.forEach((k) => storage.removeItem(k));
+            storage.removeItem(SESSION_START_KEY);
           };
           clearStorage(localStorage);
           clearStorage(sessionStorage);
@@ -354,6 +424,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const isAdmin = (): boolean => {
     return user?.role === 'admin';
   };
+
+  logoutRef.current = logout;
 
   return (
     <AuthContext.Provider value={{

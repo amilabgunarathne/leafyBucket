@@ -43,7 +43,7 @@ const SubscriptionPage = () => {
   // Redirect if not logged in
   React.useEffect(() => {
     if (!user) {
-      navigate('/auth', { state: { from: { pathname: '/my-account' } } });
+      navigate('/auth', { state: { from: { pathname: '/my-bucket' } } });
     }
   }, [user, navigate]);
 
@@ -247,13 +247,6 @@ const SubscriptionPage = () => {
                 <div className="pt-4 border-t border-gray-200 mt-4">
                   <h4 className="text-sm font-medium text-gray-700 mb-3">Quick Actions</h4>
                   <div className="space-y-2">
-                    <Link
-                      to="/profile"
-                      className="w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-left transition-colors text-gray-600 hover:bg-gray-100"
-                    >
-                      <User className="h-5 w-5" />
-                      <span>Profile</span>
-                    </Link>
                     {user.subscription && user.subscription.status !== 'cancelled' ? (
                       <Link
                         to="/customize"
@@ -599,21 +592,21 @@ const SubscriptionPage = () => {
         title={
           pendingAction === 'pause' ? 'Pause deliveries for a while?' :
             pendingAction === 'resume' ? 'Resume deliveries?' :
-              'Change Plan Size?'
+              'Confirm plan'
         }
         message={
           pendingAction === 'pause'
             ? 'Deliveries will be put on hold. Your plan and preferences stay the same—resume anytime when you\'re ready and your next box will be scheduled.'
             : pendingAction === 'resume'
               ? 'Your vegetable deliveries will start again from the next scheduled date. Your plan is unchanged.'
-              : `Are you sure you want to change your plan to ${plans.find(p => p.id === pendingNewPlan)?.name}? Your next bill and vegetable allocation will update immediately.`
+              : `You're choosing the ${plans.find(p => p.id === pendingNewPlan)?.name ?? 'selected'} plan. Your billing and vegetable allocation will be based on this plan.`
         }
         confirmText={
           pendingAction === 'pause' ? 'Yes, pause for now' :
             pendingAction === 'resume' ? 'Yes, resume' :
-              'Confirm New Plan'
+              'Confirm'
         }
-        cancelText="No, keep as is"
+        cancelText="Cancel"
         isDangerous={false}
       />
     </div>

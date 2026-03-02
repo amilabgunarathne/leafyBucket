@@ -98,7 +98,7 @@ const ProfilePage = () => {
       <div className="pt-24 min-h-screen bg-gray-50">
         <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <Link
-            to="/my-account"
+            to="/my-bucket"
             className="inline-flex items-center space-x-2 text-green-600 hover:text-green-700 transition-colors mb-6"
           >
             <ArrowLeft className="h-5 w-5" />
