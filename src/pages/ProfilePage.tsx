@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { ArrowLeft, User, Edit3, MapPin, Phone, Mail, Loader2 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { validatePhone } from '../utils/validation';
+import { validatePhone, restrictToDigits, PHONE_DIGITS } from '../utils/validation';
 
 const ProfilePage = () => {
   const { user, updateUser, updateEmail, logout } = useAuth();
@@ -152,15 +152,17 @@ const ProfilePage = () => {
                     type="tel"
                     value={profileData.phone}
                     onChange={(e) => {
-                      setProfileData(prev => ({ ...prev, phone: e.target.value }));
+                      setProfileData(prev => ({ ...prev, phone: restrictToDigits(e.target.value, PHONE_DIGITS) }));
                       setProfilePhoneError(null);
                     }}
                     className={`w-full px-4 py-3 border rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent ${profilePhoneError ? 'border-red-500' : 'border-gray-300'}`}
-                    placeholder="e.g. 0771234567 or +94 77 123 4567"
+                    placeholder="e.g. 0771234567"
                     required
+                    maxLength={PHONE_DIGITS}
+                    inputMode="numeric"
                   />
                   {profilePhoneError && <p className="mt-1 text-sm text-red-600">{profilePhoneError}</p>}
-                  <p className="mt-1 text-xs text-gray-500">At least 10 digits (numbers only).</p>
+                  {!profilePhoneError && <p className="mt-1 text-xs text-gray-500">Exactly 10 digits (numbers only).</p>}
                 </div>
 
                 <div>
@@ -245,7 +247,12 @@ const ProfilePage = () => {
                 {(!user.phone || !user.address) && (
                   <div className="bg-orange-50 border-2 border-orange-200 rounded-xl p-4">
                     <p className="text-sm text-orange-800">
-                      <strong>Complete your profile:</strong> Please add your phone number and delivery address to ensure smooth delivery of your vegetables.
+                      <strong>Complete your profile:</strong>{' '}
+                      {!user.phone && !user.address
+                        ? 'Please add your phone number and delivery address to ensure smooth delivery of your vegetables.'
+                        : !user.phone
+                          ? 'Please add your phone number (10 digits) to ensure we can contact you for delivery.'
+                          : 'Please add your delivery address to ensure smooth delivery of your vegetables.'}
                     </p>
                   </div>
                 )}

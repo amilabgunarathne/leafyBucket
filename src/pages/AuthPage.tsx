@@ -3,7 +3,7 @@ import { ArrowLeft, Mail, Lock, User, Phone, MapPin, Eye, EyeOff, Loader2, Shiel
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
-import { validatePhone } from '../utils/validation';
+import { validatePhone, validatePassword, restrictToDigits, PHONE_DIGITS } from '../utils/validation';
 
 const AuthPage = () => {
   const [isLogin, setIsLogin] = useState(true);
@@ -24,6 +24,8 @@ const AuthPage = () => {
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   const [showEmailChangeRequestedMessage, setShowEmailChangeRequestedMessage] = useState(false);
+  const [isSignupSubmitting, setIsSignupSubmitting] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
   const { user, login, signup, resetPassword, isLoading } = useAuth();
   const navigate = useNavigate();
@@ -72,29 +74,31 @@ const AuthPage = () => {
     e.preventDefault();
     setError('');
     setSuccessMessage('');
+    setFieldErrors({});
 
     if (isForgotPassword) {
       if (!formData.email) {
-        setError('Email is required');
+        setFieldErrors({ email: 'Email is required' });
         return;
       }
       const { success, error } = await resetPassword(formData.email);
       if (success) {
         setSuccessMessage('Password reset link sent! Please check your email.');
       } else {
-        setError(error || 'Failed to send reset link');
+        setFieldErrors({ email: error || 'Failed to send reset link' });
       }
       return;
     }
 
     if (isResetStep) {
-      if (!formData.newPassword) {
-        setError('New password is required');
+      const pwdErr = validatePassword(formData.newPassword);
+      if (pwdErr) {
+        setFieldErrors({ newPassword: pwdErr });
         return;
       }
       const { error } = await supabase.auth.updateUser({ password: formData.newPassword });
       if (error) {
-        setError(error.message);
+        setFieldErrors({ newPassword: error.message });
       } else {
         setSuccessMessage('Password updated successfully! You can now sign in.');
         setIsResetStep(false);
@@ -104,43 +108,64 @@ const AuthPage = () => {
     }
 
     if (isLogin) {
+      const pwdErr = validatePassword(formData.password);
+      if (pwdErr) {
+        setFieldErrors({ password: pwdErr });
+        return;
+      }
       const { success, error } = await login(formData.email, formData.password, rememberMe);
       if (success) {
         navigate(from, { replace: true });
       } else {
-        setError(error || 'Invalid credentials');
+        setFieldErrors({ password: error || 'Invalid credentials' });
       }
     } else {
-      if (!formData.name.trim()) {
-        setError('Name is required');
-        return;
-      }
-      const phoneError = validatePhone(formData.phone);
-      if (phoneError) {
-        setError(phoneError);
+      const errs: Record<string, string> = {};
+      if (!formData.name.trim()) errs.name = 'Name is required';
+      const phoneErr = validatePhone(formData.phone);
+      if (phoneErr) errs.phone = phoneErr;
+      const pwdErr = validatePassword(formData.password);
+      if (pwdErr) errs.password = pwdErr;
+      if (Object.keys(errs).length) {
+        setFieldErrors(errs);
         return;
       }
 
-      const { success, error, data } = await signup(formData.email, formData.password, formData.name, formData.phone.trim(), rememberMe);
-      if (success) {
-        if (data?.session) {
-          navigate('/my-bucket', { replace: true });
+      setIsSignupSubmitting(true);
+      try {
+        const { success, error, data } = await signup(formData.email, formData.password, formData.name, formData.phone.trim(), rememberMe);
+        if (success) {
+          if (data?.session) {
+            navigate('/my-bucket', { replace: true });
+          } else {
+            // No session means email confirmation is required
+            setSuccessMessage('Account created! Please check your email to confirm your account.');
+            setFormData({
+              email: '',
+              password: '',
+              name: '',
+              phone: '',
+              address: '',
+              newPassword: ''
+            });
+          }
         } else {
-          // No session means email confirmation is required
-          setSuccessMessage('Account created! Please check your email to confirm your account.');
-          setFormData(prev => ({ ...prev, password: '' })); // Clear password
+          setError(error || 'Sign up failed');
         }
-      } else {
-        setError(error || 'Sign up failed');
+      } finally {
+        setIsSignupSubmitting(false);
       }
     }
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setFormData(prev => ({
-      ...prev,
-      [e.target.name]: e.target.value
-    }));
+    const { name, value } = e.target;
+    setFieldErrors(prev => ({ ...prev, [name]: '' }));
+    if (name === 'phone') {
+      setFormData(prev => ({ ...prev, phone: restrictToDigits(value, PHONE_DIGITS) }));
+    } else {
+      setFormData(prev => ({ ...prev, [name]: value }));
+    }
   };
 
 
@@ -148,7 +173,16 @@ const AuthPage = () => {
   return (
     <div className="pt-16 min-h-screen bg-gradient-to-br from-green-50 via-white to-orange-50">
       <div className="max-w-md mx-auto px-4 sm:px-6 lg:px-8 py-20">
-        <div className="bg-white rounded-3xl shadow-xl p-8">
+        <div className="bg-white rounded-3xl shadow-xl p-8 relative">
+          {/* Signup in progress: overlay with spinner until confirmation email is sent */}
+          {isSignupSubmitting && !isLogin && !isForgotPassword && !isResetStep && (
+            <div className="absolute inset-0 rounded-3xl bg-white/90 flex flex-col items-center justify-center z-10 space-y-4">
+              <Loader2 className="h-12 w-12 animate-spin text-green-600" />
+              <p className="text-gray-700 font-medium">Creating your account...</p>
+              <p className="text-sm text-gray-500">Sending confirmation email</p>
+            </div>
+          )}
+
           {/* Header */}
           <div className="text-center mb-8">
             <Link
@@ -208,7 +242,7 @@ const AuthPage = () => {
 
 
 
-          {/* Error Message */}
+          {/* General error (API / server messages) */}
           {error && (
             <div className="mb-6 p-4 bg-red-50 border-2 border-red-200 rounded-xl">
               <p className="text-sm text-red-800 text-center">{error}</p>
@@ -234,8 +268,8 @@ const AuthPage = () => {
           {/* Form */}
           <form onSubmit={handleSubmit} className="space-y-6">
             {isResetStep ? (
-              <div>
-                <label htmlFor="newPassword" className="block text-sm font-medium text-gray-700 mb-2">
+<div>
+                  <label htmlFor="newPassword" className="block text-sm font-medium text-gray-700 mb-2">
                   New Password
                 </label>
                 <div className="relative">
@@ -245,8 +279,8 @@ const AuthPage = () => {
                     id="newPassword"
                     name="newPassword"
                     value={formData.newPassword}
-                    onChange={handleInputChange}
-                    className="w-full pl-10 pr-12 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                    onChange={(e) => { setFieldErrors(prev => ({ ...prev, newPassword: '' })); setFormData(prev => ({ ...prev, newPassword: e.target.value })); }}
+                    className={`w-full pl-10 pr-12 py-3 border rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent ${fieldErrors.newPassword ? 'border-red-500' : 'border-gray-300'}`}
                     placeholder="Min. 6 characters"
                     required
                     minLength={6}
@@ -259,13 +293,15 @@ const AuthPage = () => {
                     {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
                   </button>
                 </div>
+                {fieldErrors.newPassword && <p className="mt-1 text-sm text-red-600">{fieldErrors.newPassword}</p>}
+                {!fieldErrors.newPassword && <p className="mt-1 text-xs text-gray-500">Min. 6 characters.</p>}
               </div>
             ) : (
               <>
                 {!isForgotPassword && !isLogin && (
                   <div>
                     <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-2">
-                      Full Name
+                      Full Name <span className="text-red-500">*</span>
                     </label>
                     <div className="relative">
                       <User className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
@@ -275,17 +311,18 @@ const AuthPage = () => {
                         name="name"
                         value={formData.name}
                         onChange={handleInputChange}
-                        className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                        className={`w-full pl-10 pr-4 py-3 border rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent ${fieldErrors.name ? 'border-red-500' : 'border-gray-300'}`}
                         placeholder="Enter your full name"
                         required={!isLogin && !isForgotPassword && !isResetStep}
                       />
                     </div>
+                    {fieldErrors.name && <p className="mt-1 text-sm text-red-600">{fieldErrors.name}</p>}
                   </div>
                 )}
 
                 <div>
                   <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
-                    Email Address
+                    Email Address {!isLogin && !isForgotPassword && <span className="text-red-500">*</span>}
                   </label>
                   <div className="relative">
                     <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
@@ -295,18 +332,19 @@ const AuthPage = () => {
                       name="email"
                       value={formData.email}
                       onChange={handleInputChange}
-                      className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                      className={`w-full pl-10 pr-4 py-3 border rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent ${fieldErrors.email ? 'border-red-500' : 'border-gray-300'}`}
                       placeholder="Enter your email"
                       required
                     />
                   </div>
+                  {fieldErrors.email && <p className="mt-1 text-sm text-red-600">{fieldErrors.email}</p>}
                 </div>
 
                 {!isForgotPassword && (
                   <div>
                     <div className="flex justify-between items-center mb-2">
                       <label htmlFor="password" className="block text-sm font-medium text-gray-700">
-                        Password
+                        Password {!isLogin && !isForgotPassword && <span className="text-red-500">*</span>}
                       </label>
                       {isLogin && (
                         <button
@@ -326,7 +364,7 @@ const AuthPage = () => {
                         name="password"
                         value={formData.password}
                         onChange={handleInputChange}
-                        className="w-full pl-10 pr-12 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                        className={`w-full pl-10 pr-12 py-3 border rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent ${fieldErrors.password ? 'border-red-500' : 'border-gray-300'}`}
                         placeholder="Enter your password"
                         required={!isForgotPassword && !isResetStep}
                       />
@@ -338,6 +376,8 @@ const AuthPage = () => {
                         {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
                       </button>
                     </div>
+                    {fieldErrors.password && <p className="mt-1 text-sm text-red-600">{fieldErrors.password}</p>}
+                    {!fieldErrors.password && !isResetStep && <p className="mt-1 text-xs text-gray-500">Min. 6 characters.</p>}
                   </div>
                 )}
 
@@ -370,14 +410,16 @@ const AuthPage = () => {
                           name="phone"
                           value={formData.phone}
                           onChange={handleInputChange}
-                          className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                          placeholder="e.g. 0771234567 or +94 77 123 4567"
+                          className={`w-full pl-10 pr-4 py-3 border rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent ${fieldErrors.phone ? 'border-red-500' : 'border-gray-300'}`}
+                          placeholder="e.g. 0771234567"
                           required
-                          minLength={10}
-                          maxLength={18}
+                          maxLength={PHONE_DIGITS}
+                          inputMode="numeric"
+                          autoComplete="tel"
                         />
                       </div>
-                      <p className="mt-1 text-xs text-gray-500">At least 10 digits (numbers only).</p>
+                      {fieldErrors.phone && <p className="mt-1 text-sm text-red-600">{fieldErrors.phone}</p>}
+                      {!fieldErrors.phone && <p className="mt-1 text-xs text-gray-500">Exactly 10 digits (numbers only).</p>}
                     </div>
 
                     <div>
@@ -404,13 +446,13 @@ const AuthPage = () => {
 
             <button
               type="submit"
-              disabled={isLoading}
+              disabled={isLoading || isSignupSubmitting}
               className="w-full bg-green-600 text-white py-4 px-6 rounded-xl font-semibold hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2"
             >
-              {isLoading ? (
+              {(isLoading || isSignupSubmitting) ? (
                 <>
                   <Loader2 className="h-5 w-5 animate-spin" />
-                  <span>{isResetStep ? 'Updating...' : (isForgotPassword ? 'Sending...' : (isLogin ? 'Signing In...' : 'Creating Account...'))}</span>
+                  <span>{isResetStep ? 'Updating...' : (isForgotPassword ? 'Sending...' : (isLogin ? 'Signing In...' : 'Creating account...'))}</span>
                 </>
               ) : (
                 <span>{isResetStep ? 'Update Password' : (isForgotPassword ? 'Send Reset Link' : (isLogin ? 'Sign In' : 'Create Account'))}</span>
@@ -449,6 +491,7 @@ const AuthPage = () => {
                     onClick={() => {
                       setIsLogin(!isLogin);
                       setError('');
+                      setFieldErrors({});
                       setFormData({
                         email: '',
                         password: '',
