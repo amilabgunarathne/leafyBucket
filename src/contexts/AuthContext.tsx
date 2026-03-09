@@ -24,6 +24,7 @@ interface User {
   name: string;
   phone?: string;
   address?: string;
+  city?: string;
   role: 'user' | 'admin';
   subscription?: {
     id: string; // New field
@@ -42,7 +43,7 @@ interface User {
 interface AuthContextType {
   user: User | null;
   login: (email: string, password: string, rememberMe?: boolean) => Promise<{ success: boolean; error?: string }>;
-  signup: (email: string, password: string, name: string, phone: string, rememberMe?: boolean) => Promise<{ success: boolean; error?: string; data?: any }>;
+  signup: (email: string, password: string, name: string, phone: string, rememberMe?: boolean, city?: string) => Promise<{ success: boolean; error?: string; data?: any }>;
   resetPassword: (email: string) => Promise<{ success: boolean; error?: string }>;
   updateEmail: (newEmail: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
@@ -118,6 +119,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         name: profile.full_name || email.split('@')[0],
         phone,
         address: profile.address || '',
+        city: profile.city || undefined,
         role: profile.role || 'user',
         subscription: subscription ? {
           id: subscription.id,
@@ -302,7 +304,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return { success: true };
   };
 
-  const signup = async (email: string, password: string, name: string, phone: string, rememberMe: boolean = true): Promise<{ success: boolean; error?: string; data?: any }> => {
+  const signup = async (email: string, password: string, name: string, phone: string, rememberMe: boolean = true, city?: string): Promise<{ success: boolean; error?: string; data?: any }> => {
     setIsLoading(true);
     if (typeof localStorage !== 'undefined') {
       localStorage.setItem(REMEMBER_ME_KEY, rememberMe ? 'true' : 'false');
@@ -314,7 +316,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         data: {
           name: name,
           phone: phone,
-          role: 'user'
+          role: 'user',
+          ...(city && { city })
         },
         emailRedirectTo: `${window.location.origin}/auth`
       }

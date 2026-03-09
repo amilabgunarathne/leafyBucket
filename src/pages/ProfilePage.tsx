@@ -96,7 +96,7 @@ const ProfilePage = () => {
       )}
 
       <div className="pt-24 min-h-screen bg-gray-50">
-        <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="max-w-3xl xl:max-w-5xl 2xl:max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <Link
             to="/my-bucket"
             className="inline-flex items-center space-x-2 text-green-600 hover:text-green-700 transition-colors mb-6"
@@ -119,61 +119,64 @@ const ProfilePage = () => {
 
             {isEditingProfile ? (
               <div className="space-y-6">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Full Name</label>
-                  <input
-                    type="text"
-                    value={profileData.name}
-                    onChange={(e) => setProfileData(prev => ({ ...prev, name: e.target.value }))}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Email Address</label>
-                  <input
-                    type="email"
-                    value={profileData.email}
-                    onChange={(e) => {
-                      setProfileData(prev => ({ ...prev, email: e.target.value }));
-                      setProfileEmailError(null);
-                      setProfileEmailSuccess(null);
-                    }}
-                    className={`w-full px-4 py-3 border rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent ${profileEmailError ? 'border-red-500' : 'border-gray-300'}`}
-                    placeholder="you@example.com"
-                  />
-                  {profileEmailError && <p className="mt-1 text-sm text-red-600">{profileEmailError}</p>}
-                  {profileEmailSuccess && <p className="mt-1 text-sm text-green-600">{profileEmailSuccess}</p>}
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Phone Number <span className="text-red-500">*</span></label>
-                  <input
-                    type="tel"
-                    value={profileData.phone}
-                    onChange={(e) => {
-                      setProfileData(prev => ({ ...prev, phone: restrictToDigits(e.target.value, PHONE_DIGITS) }));
-                      setProfilePhoneError(null);
-                    }}
-                    className={`w-full px-4 py-3 border rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent ${profilePhoneError ? 'border-red-500' : 'border-gray-300'}`}
-                    placeholder="e.g. 0771234567"
-                    required
-                    maxLength={PHONE_DIGITS}
-                    inputMode="numeric"
-                  />
-                  {profilePhoneError && <p className="mt-1 text-sm text-red-600">{profilePhoneError}</p>}
-                  {!profilePhoneError && <p className="mt-1 text-xs text-gray-500">Exactly 10 digits (numbers only).</p>}
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Delivery Address</label>
-                  <textarea
-                    value={profileData.address}
-                    onChange={(e) => setProfileData(prev => ({ ...prev, address: e.target.value }))}
-                    rows={3}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                    placeholder="Enter your full delivery address including street, city, and postal code"
-                  />
+                <div className="grid md:grid-cols-2 gap-6">
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Full Name</label>
+                      <input
+                        type="text"
+                        value={profileData.name}
+                        onChange={(e) => setProfileData(prev => ({ ...prev, name: e.target.value }))}
+                        className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Email Address</label>
+                      <input
+                        type="email"
+                        value={profileData.email}
+                        onChange={(e) => {
+                          setProfileData(prev => ({ ...prev, email: e.target.value }));
+                          setProfileEmailError(null);
+                          setProfileEmailSuccess(null);
+                        }}
+                        className={`w-full px-4 py-3 border rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent ${profileEmailError ? 'border-red-500' : 'border-gray-300'}`}
+                        placeholder="you@example.com"
+                      />
+                      {profileEmailError && <p className="mt-1 text-sm text-red-600">{profileEmailError}</p>}
+                      {profileEmailSuccess && <p className="mt-1 text-sm text-green-600">{profileEmailSuccess}</p>}
+                    </div>
+                  </div>
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Phone Number <span className="text-red-500">*</span></label>
+                      <input
+                        type="tel"
+                        value={profileData.phone}
+                        onChange={(e) => {
+                          setProfileData(prev => ({ ...prev, phone: restrictToDigits(e.target.value, PHONE_DIGITS) }));
+                          setProfilePhoneError(null);
+                        }}
+                        className={`w-full px-4 py-3 border rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent ${profilePhoneError ? 'border-red-500' : 'border-gray-300'}`}
+                        placeholder="e.g. 0771234567"
+                        required
+                        maxLength={PHONE_DIGITS}
+                        inputMode="numeric"
+                      />
+                      {profilePhoneError && <p className="mt-1 text-sm text-red-600">{profilePhoneError}</p>}
+                      {!profilePhoneError && <p className="mt-1 text-xs text-gray-500">Exactly 10 digits (numbers only).</p>}
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Delivery Address</label>
+                      <textarea
+                        value={profileData.address}
+                        onChange={(e) => setProfileData(prev => ({ ...prev, address: e.target.value }))}
+                        rows={3}
+                        className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                        placeholder="Enter your full delivery address including street, city, and postal code"
+                      />
+                    </div>
+                  </div>
                 </div>
 
                 <div className="flex space-x-4">
