@@ -447,15 +447,15 @@ const CustomizationPage = () => {
                   </h1>
                 </div>
                 <p className="text-xl text-gray-600 max-w-3xl mx-auto leading-relaxed">
-                  <span className="font-semibold text-green-700">Fixed monthly pricing, smart budget & weight allocation!</span>
+                  <span className="font-semibold text-green-700">Fixed monthly pricing, smart budget & weight allocation! </span>
                   Choose your vegetables within this week's limit. Our system automatically balances variety and adjusts weights based on vegetable categories.
                 </p>
 
                 {/* Customization Status Banner */}
                 {!isCustomizationAllowed ? (
                   <div className="max-w-2xl mx-auto bg-orange-50 border-2 border-orange-200 rounded-xl p-4">
-                    <div className="flex items-center space-x-3">
-                      <Clock className="h-6 w-6 text-orange-600" />
+                    <div className="flex items-center justify-center space-x-3 text-center">
+                      <Clock className="h-6 w-6 text-orange-600 shrink-0" />
                       <div>
                         <div className="font-semibold text-orange-900">Customization Closed</div>
                         <div className="text-sm text-orange-700">
@@ -468,8 +468,8 @@ const CustomizationPage = () => {
                   </div>
                 ) : (
                   <div className="max-w-2xl mx-auto bg-green-50 border-2 border-green-200 rounded-xl p-4">
-                    <div className="flex items-center space-x-3">
-                      <Check className="h-6 w-6 text-green-600" />
+                    <div className="flex items-center justify-center space-x-3 text-center">
+                      <Check className="h-6 w-6 text-green-600 shrink-0" />
                       <div>
                         <div className="font-semibold text-green-900">Customization Available</div>
                         <div className="text-sm text-green-700">
