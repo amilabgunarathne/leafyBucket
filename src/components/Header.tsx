@@ -43,11 +43,9 @@ const Header = () => {
   const handleStartSubscription = () => {
     setIsMenuOpen(false);
     if (user) {
-      // User is logged in, go to subscription page
-      window.location.href = '/my-bucket';
+      navigate('/my-bucket');
     } else {
-      // User not logged in, go to auth page
-      window.location.href = '/auth';
+      navigate('/auth');
     }
   };
 

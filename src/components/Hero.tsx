@@ -1,17 +1,16 @@
 import { ArrowRight, Truck, Clock, Leaf, Settings, ShoppingCart } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 
 const Hero = () => {
   const { user } = useAuth();
+  const navigate = useNavigate();
 
   const handleStartSubscription = () => {
     if (user) {
-      // User is logged in, go to subscription page
-      window.location.href = '/my-bucket';
+      navigate('/my-bucket');
     } else {
-      // User not logged in, go to auth page
-      window.location.href = '/auth';
+      navigate('/auth');
     }
   };
 

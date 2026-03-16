@@ -20,6 +20,23 @@ const DEFAULT: CustomizationScheduleRow = {
   close_time: '23:59',
 };
 
+/** Build schedule row from a market_weeks row (per-week open/close). Uses DEFAULT only when row is null; otherwise uses DB values with per-field fallbacks. */
+export function scheduleFromMarketWeek(row: {
+  open_dow?: number | null;
+  open_time?: string | null;
+  close_dow?: number | null;
+  close_time?: string | null;
+} | null): CustomizationScheduleRow {
+  if (!row) return DEFAULT;
+  return {
+    id: '',
+    open_dow: row.open_dow ?? DEFAULT.open_dow,
+    open_time: (row.open_time ?? DEFAULT.open_time).trim() || DEFAULT.open_time,
+    close_dow: row.close_dow ?? DEFAULT.close_dow,
+    close_time: (row.close_time ?? DEFAULT.close_time).trim() || DEFAULT.close_time,
+  };
+}
+
 function parseTime(timeStr: string): { hours: number; minutes: number } {
   const parts = (timeStr || '12:00').trim().split(':');
   const hours = Math.min(23, Math.max(0, parseInt(parts[0], 10) || 0));

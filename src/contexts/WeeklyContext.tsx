@@ -102,11 +102,11 @@ export const WeeklyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         const { supabase } = await import('../lib/supabase');
 
         const bucketTypes = await SubscriptionService.getInstance().getBucketTypes();
-        const { data: weeksData } = await supabase.from('market_weeks').select('id, week_start_date, week_end_date, is_locked').order('week_start_date', { ascending: false });
+        const { data: weeksData } = await supabase.from('market_weeks').select('id, week_start_date, week_end_date, is_locked, open_dow, open_time, close_dow, close_time').order('week_start_date', { ascending: false });
         const currentWeek = getOrCreateCurrentWeek(weeksData || []);
 
-        const { data: scheduleRows } = await supabase.from('customization_schedule').select('id, open_dow, open_time, close_dow, close_time').limit(1);
-        const schedule = Array.isArray(scheduleRows) && scheduleRows.length > 0 ? scheduleRows[0] : null;
+        const { scheduleFromMarketWeek } = await import('../utils/customizationSchedule');
+        const schedule = scheduleFromMarketWeek(currentWeek);
         setScheduleContext(schedule, currentWeek.is_locked === true);
 
         const labels = formatScheduleDisplay(schedule);

@@ -1,17 +1,17 @@
 import React from 'react';
 import { MousePointer, Package, Truck, Smile, ArrowRight, ArrowDown } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
 const HowItWorks = () => {
   const { user } = useAuth();
+  const navigate = useNavigate();
 
   const handleGetStarted = () => {
     if (user) {
-      // User is logged in, go to subscription page
-      window.location.href = '/my-bucket';
+      navigate('/my-bucket');
     } else {
-      // User not logged in, go to auth page
-      window.location.href = '/auth';
+      navigate('/auth');
     }
   };
 

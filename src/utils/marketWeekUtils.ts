@@ -1,4 +1,4 @@
-/** Market week row with optional per-plan veg counts */
+/** Market week row with optional per-plan veg counts and per-week open/close. */
 export interface MarketWeekRow {
   id: string;
   week_start_date: string;
@@ -7,6 +7,11 @@ export interface MarketWeekRow {
   veg_count_small?: number | null;
   veg_count_medium?: number | null;
   veg_count_large?: number | null;
+  /** Day of week customization opens (0=Sun .. 6=Sat). */
+  open_dow?: number | null;
+  open_time?: string | null;
+  close_dow?: number | null;
+  close_time?: string | null;
 }
 
 /**
@@ -63,7 +68,11 @@ export function getOrCreateCurrentWeek(weeks: MarketWeekRow[]): MarketWeekRow {
     is_locked: false,
     veg_count_small: null,
     veg_count_medium: null,
-    veg_count_large: null
+    veg_count_large: null,
+    open_dow: 3,
+    open_time: '12:00',
+    close_dow: 5,
+    close_time: '23:59'
   };
 }
 

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ArrowLeft, Package, Settings, User, Pause, Play, Check, Calendar, Clock, Truck, Leaf, X, Loader2 } from 'lucide-react';
+import { ArrowLeft, Package, Settings, Pause, Play, Check, Calendar, Clock, Truck, Leaf, X, Loader2 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import ConfirmationModal from '../components/ConfirmationModal';
@@ -215,14 +215,6 @@ const SubscriptionPage = () => {
               >
                 <ArrowLeft className="h-5 w-5" />
                 <span>Back to Home</span>
-              </Link>
-              <div className="h-6 w-px bg-gray-300"></div>
-              <Link
-                to="/profile"
-                className="flex items-center space-x-2 text-gray-600 hover:text-green-600 transition-colors"
-              >
-                <User className="h-5 w-5" />
-                <span>Profile</span>
               </Link>
               <div className="h-6 w-px bg-gray-300"></div>
               <h1 className="text-2xl font-bold text-gray-900">My Bucket</h1>

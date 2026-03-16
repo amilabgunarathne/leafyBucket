@@ -7,6 +7,10 @@ const SESSION_ABSOLUTE_TIMEOUT_MS = 24 * 60 * 60 * 1000; // 24 hours
 const SESSION_CHECK_INTERVAL_MS = 60 * 1000;      // check every 1 minute
 const SESSION_START_KEY = 'leafy_session_started_at';
 
+// Prevent app from hanging if Supabase is slow/unreachable
+const AUTH_INIT_TIMEOUT_MS = 12 * 1000;   // 12 seconds
+const FETCH_PROFILE_TIMEOUT_MS = 10 * 1000; // 10 seconds
+
 function getAuthStorage(): Storage {
   if (typeof window === 'undefined') return localStorage;
   try {
@@ -81,9 +85,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const lastActivityAt = useRef(Date.now());
   const logoutRef = useRef<() => void>(() => {});
 
-  // Helper to fetch full user profile and subscription
+  // Helper to fetch full user profile and subscription (with timeout so app never hangs)
   const fetchUserProfile = async (userId: string, email: string) => {
-    try {
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('FETCH_PROFILE_TIMEOUT')), FETCH_PROFILE_TIMEOUT_MS)
+    );
+
+    const profileWork = async () => {
       // 1. Fetch Profile
       const { data: profile, error: profileError } = await supabase
         .from('profiles')
@@ -143,35 +151,44 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }
       setUser(userData);
+    };
+
+    try {
+      await Promise.race([profileWork(), timeoutPromise]);
     } catch (error: unknown) {
-      console.error('Error fetching user profile:', error);
-      // No profile row (e.g. deleted from profiles but still in auth.users) – sign out so they cannot use the app
-      const err = error as { code?: string; message?: string };
-      const isNoProfile = err?.code === 'PGRST116' || (typeof err?.message === 'string' && (err.message.includes('row') || err.message.includes('Rows')));
-      if (isNoProfile) {
-        await supabase.auth.signOut();
+      if (error instanceof Error && error.message === 'FETCH_PROFILE_TIMEOUT') {
+        console.warn('Profile fetch timeout – Supabase may be slow or unreachable.');
         setUser(null);
       } else {
-        // Other errors: use minimal fallback so the app doesn't break
-        let fallbackName = 'User';
-        const { data } = await supabase.auth.getUser();
-        if (data.user?.user_metadata?.name) {
-          fallbackName = data.user.user_metadata.name;
-        } else if (email) {
-          fallbackName = email.split('@')[0];
-        }
-        if (typeof window !== 'undefined') {
-          const storage = getAuthStorage();
-          if (!storage.getItem(SESSION_START_KEY)) {
-            storage.setItem(SESSION_START_KEY, String(Date.now()));
+        console.error('Error fetching user profile:', error);
+        // No profile row (e.g. deleted from profiles but still in auth.users) – sign out so they cannot use the app
+        const err = error as { code?: string; message?: string };
+        const isNoProfile = err?.code === 'PGRST116' || (typeof err?.message === 'string' && (err.message.includes('row') || err.message.includes('Rows')));
+        if (isNoProfile) {
+          await supabase.auth.signOut();
+          setUser(null);
+        } else {
+          // Other errors: use minimal fallback so the app doesn't break
+          let fallbackName = 'User';
+          const { data } = await supabase.auth.getUser();
+          if (data.user?.user_metadata?.name) {
+            fallbackName = data.user.user_metadata.name;
+          } else if (email) {
+            fallbackName = email.split('@')[0];
           }
+          if (typeof window !== 'undefined') {
+            const storage = getAuthStorage();
+            if (!storage.getItem(SESSION_START_KEY)) {
+              storage.setItem(SESSION_START_KEY, String(Date.now()));
+            }
+          }
+          setUser({
+            id: userId,
+            email: email,
+            name: fallbackName,
+            role: 'user'
+          });
         }
-        setUser({
-          id: userId,
-          email: email,
-          name: fallbackName,
-          role: 'user'
-        });
       }
     } finally {
       setIsLoading(false);
@@ -229,13 +246,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       if (session?.user) {
-        fetchUserProfile(session.user.id, session.user.email!);
+        await fetchUserProfile(session.user.id, session.user.email!);
       } else {
         setIsLoading(false);
       }
     };
 
-    initAuth();
+    let initDone = false;
+    const timeoutId = setTimeout(() => {
+      if (initDone) return;
+      initDone = true;
+      console.warn('Auth init timeout – Supabase may be slow or unreachable. Showing app.');
+      setIsLoading(false);
+      setUser(null);
+    }, AUTH_INIT_TIMEOUT_MS);
+
+    initAuth()
+      .finally(() => {
+        initDone = true;
+        clearTimeout(timeoutId);
+      });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (session?.user) {

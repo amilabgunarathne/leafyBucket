@@ -6,7 +6,7 @@ import VegetableService, { Vegetable } from '../services/vegetableService';
 import { supabase } from '../lib/supabase';
 import type { BucketType } from '../services/SubscriptionService';
 import { getCurrentWeekDateRange, getNextWeekDateRange, getVegCountFromBucketType } from '../utils/marketWeekUtils';
-import { formatScheduleDisplay, getScheduleEditState, getScheduleEditStateForNextWindow } from '../utils/customizationSchedule';
+import { formatScheduleDisplay, getScheduleEditState, scheduleFromMarketWeek, computeNextOpening } from '../utils/customizationSchedule';
 
 export interface MarketWeek {
   id: string;
@@ -14,6 +14,10 @@ export interface MarketWeek {
   week_end_date: string;
   is_locked: boolean;
   created_at?: string;
+  open_dow?: number | null;
+  open_time?: string | null;
+  close_dow?: number | null;
+  close_time?: string | null;
 }
 
 export interface CustomizationSchedule {
@@ -25,6 +29,8 @@ export interface CustomizationSchedule {
   updated_at?: string;
 }
 
+const toWeekStart = (d: string | null | undefined): string => (d ? String(d).slice(0, 10) : '');
+
 const AdminPage = () => {
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState('vegetables');
@@ -32,7 +38,6 @@ const AdminPage = () => {
   const [bucketTypes, setBucketTypes] = useState<BucketType[]>([]);
   const [profiles, setProfiles] = useState<{ id: string; email: string; full_name: string | null; role: string }[]>([]);
   const [marketWeeks, setMarketWeeks] = useState<MarketWeek[]>([]);
-  const [selectedMarketWeekId, setSelectedMarketWeekId] = useState<string | null>(null);
   const [marketPricesByWeek, setMarketPricesByWeek] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -55,6 +60,9 @@ const AdminPage = () => {
   const [nextWeekId, setNextWeekId] = useState<string | null>(null);
   /** Vegetables tab: filter by category (root, leafy, bushy) */
   const [vegetableCategoryFilter, setVegetableCategoryFilter] = useState<'all' | 'root' | 'leafy' | 'bushy'>('all');
+  /** Bucket types tab: current week customization window (open/close) editing */
+  const [currentWeekScheduleEditOpen, setCurrentWeekScheduleEditOpen] = useState(false);
+  const [currentWeekScheduleForm, setCurrentWeekScheduleForm] = useState({ open_dow: 3, open_time: '12:00', close_dow: 5, close_time: '23:59' });
 
   /** Only bulk-available veggies: used for bucket type "week vegetables" list so admin can't assign retail-only items to buckets */
   const vegetablesForBucket = useMemo(
@@ -66,19 +74,41 @@ const AdminPage = () => {
     loadData();
   }, []);
 
+  // Sync current week schedule form from DB when current week row is available (Bucket types tab)
   useEffect(() => {
-    if (!selectedMarketWeekId) return;
+    if (currentWeekScheduleEditOpen || !currentWeekId) return;
+    const row = marketWeeks.find((w) => w.id === currentWeekId);
+    if (!row) return;
+    const toHHMM = (t: string) => {
+      const s = (t || '12:00').trim();
+      const parts = s.split(':');
+      const h = Math.min(23, Math.max(0, parseInt(parts[0], 10) || 0));
+      const m = Math.min(59, Math.max(0, parseInt(parts[1], 10) || 0));
+      return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+    };
+    setCurrentWeekScheduleForm({
+      open_dow: row.open_dow ?? 3,
+      open_time: toHHMM(row.open_time ?? '12:00'),
+      close_dow: row.close_dow ?? 5,
+      close_time: toHHMM(row.close_time ?? '23:59')
+    });
+  }, [currentWeekId, marketWeeks, currentWeekScheduleEditOpen]);
+
+  // Prices tab always uses current week (no selection required)
+  const pricesWeekId = currentWeekId;
+  useEffect(() => {
+    if (!pricesWeekId) return;
     const loadPricesForWeek = async () => {
       const { data } = await supabase
         .from('market_prices')
         .select('vegetable_id, price_per_unit')
-        .eq('market_week_id', selectedMarketWeekId);
+        .eq('market_week_id', pricesWeekId);
       const map: Record<string, number> = {};
       (data || []).forEach((r: any) => { map[r.vegetable_id] = r.price_per_unit; });
       setMarketPricesByWeek(map);
     };
     loadPricesForWeek();
-  }, [selectedMarketWeekId]);
+  }, [pricesWeekId]);
 
   const loadData = async () => {
     setLoading(true);
@@ -91,7 +121,7 @@ const AdminPage = () => {
       const btList: BucketType[] = (btData || []) as BucketType[];
 
       const { data: profData } = await supabase.from('profiles').select('id, email, full_name, role');
-      const { data: weeksData } = await supabase.from('market_weeks').select('id, week_start_date, week_end_date, is_locked, created_at').order('week_start_date', { ascending: false });
+      const { data: weeksData } = await supabase.from('market_weeks').select('id, week_start_date, week_end_date, is_locked, created_at, open_dow, open_time, close_dow, close_time').order('week_start_date', { ascending: false });
       const { data: schedData } = await supabase.from('customization_schedule').select('id, open_dow, open_time, close_dow, close_time, updated_at').limit(1);
       setCustomizationSchedule(Array.isArray(schedData) && schedData.length > 0 ? (schedData[0] as CustomizationSchedule) : null);
       const { data: catData } = await supabase.from('veg_categories').select('id, name, budget_share_percent').order('name');
@@ -122,16 +152,59 @@ const AdminPage = () => {
         };
       });
       setBucketTypeRatios(ratiosByBucket);
-      const weeks = (weeksData || []) as MarketWeek[];
-      setMarketWeeks(weeks);
-      if (weeks.length > 0 && !selectedMarketWeekId) setSelectedMarketWeekId(weeks[0].id);
-
+      let weeks = (weeksData || []) as MarketWeek[];
       const curRange = getCurrentWeekDateRange();
       const nxtRange = getNextWeekDateRange();
-      const weeksList = (weeksData || []) as { id: string; week_start_date: string }[];
-      const curWeek = weeksList.find((w) => w.week_start_date === curRange.week_start_date);
-      const nxtWeek = weeksList.find((w) => w.week_start_date === nxtRange.week_start_date);
-      // Use first two weeks as fallback so "Vegetables for week" always shows when any weeks exist (for testing)
+      let weeksList = weeks.map((w) => ({ id: w.id, week_start_date: w.week_start_date }));
+      let curWeek = weeksList.find((w) => toWeekStart(w.week_start_date) === curRange.week_start_date);
+      let nxtWeek = weeksList.find((w) => toWeekStart(w.week_start_date) === nxtRange.week_start_date);
+
+      // Use first matching row per week (avoid duplicates: one row per week)
+      curWeek = curWeek ?? weeksList.find((w) => toWeekStart(w.week_start_date) === curRange.week_start_date) ?? null;
+      nxtWeek = nxtWeek ?? weeksList.find((w) => toWeekStart(w.week_start_date) === nxtRange.week_start_date) ?? null;
+      // Only insert if no row exists for this week (don't create duplicates)
+      if (!curWeek) {
+        const { data: existing } = await supabase.from('market_weeks').select('id, week_start_date, week_end_date, is_locked, created_at, open_dow, open_time, close_dow, close_time').eq('week_start_date', curRange.week_start_date).limit(1).maybeSingle();
+        if (existing) {
+          const row = existing as MarketWeek;
+          weeks = [row, ...weeks];
+          weeksList = [{ id: row.id, week_start_date: row.week_start_date }, ...weeksList];
+          curWeek = { id: row.id, week_start_date: row.week_start_date };
+        } else {
+          const { data: inserted } = await supabase.from('market_weeks').insert({
+            week_start_date: curRange.week_start_date,
+            week_end_date: curRange.week_end_date
+          }).select('id, week_start_date, week_end_date, is_locked, created_at, open_dow, open_time, close_dow, close_time').single();
+          if (inserted) {
+            const row = inserted as MarketWeek;
+            weeks = [row, ...weeks];
+            weeksList = [{ id: row.id, week_start_date: row.week_start_date }, ...weeksList];
+            curWeek = { id: row.id, week_start_date: row.week_start_date };
+          }
+        }
+      }
+      if (!nxtWeek) {
+        const { data: existing } = await supabase.from('market_weeks').select('id, week_start_date, week_end_date, is_locked, created_at, open_dow, open_time, close_dow, close_time').eq('week_start_date', nxtRange.week_start_date).limit(1).maybeSingle();
+        if (existing) {
+          const row = existing as MarketWeek;
+          weeks = [row, ...weeks];
+          weeksList = weeks.map((w) => ({ id: w.id, week_start_date: w.week_start_date }));
+          nxtWeek = { id: row.id, week_start_date: row.week_start_date };
+        } else {
+          const { data: inserted } = await supabase.from('market_weeks').insert({
+            week_start_date: nxtRange.week_start_date,
+            week_end_date: nxtRange.week_end_date
+          }).select('id, week_start_date, week_end_date, is_locked, created_at, open_dow, open_time, close_dow, close_time').single();
+          if (inserted) {
+            const row = inserted as MarketWeek;
+            weeks = [row, ...weeks];
+            weeksList = weeks.map((w) => ({ id: w.id, week_start_date: w.week_start_date }));
+            nxtWeek = { id: row.id, week_start_date: row.week_start_date };
+          }
+        }
+      }
+
+      setMarketWeeks(weeks);
       const cwId = curWeek?.id ?? weeksList[0]?.id ?? null;
       const nwId = nxtWeek?.id ?? weeksList[1]?.id ?? null;
       setCurrentWeekId(cwId);
@@ -557,14 +630,122 @@ const AdminPage = () => {
             {activeTab === 'buckets' && (
               <div className="space-y-6">
                 <h2 className="text-lg font-semibold text-gray-900">Bucket types</h2>
-                <p className="text-sm text-gray-600">Edit plan sizes and pricing. Changes affect new subscriptions.</p>
-                {!currentWeekId && !nextWeekId && (
-                  <div className="p-4 rounded-lg bg-amber-50 border border-amber-200">
-                    <p className="text-sm font-medium text-amber-900">To set vegetables per bucket per week</p>
-                    <p className="text-sm text-amber-800 mt-1">Add at least one market week in the <strong>Market weeks</strong> tab (e.g. Current week and Next week), then return here to set vegetables per bucket.</p>
-                    <button type="button" onClick={() => setActiveTab('weeks')} className="mt-3 px-3 py-2 bg-amber-600 text-white rounded-lg text-sm font-medium hover:bg-amber-700">Go to Market weeks</button>
-                  </div>
-                )}
+                <p className="text-sm text-gray-600">Edit plan sizes and pricing. Vegetables per week use the current week and next week automatically. Set when customization opens and closes in the box below.</p>
+
+                {/* Current week customization window (open/close) - always visible so you can find it */}
+                {(() => {
+                  const currentWeekRow = currentWeekId ? marketWeeks.find((w) => w.id === currentWeekId) : null;
+                  const scheduleRow = scheduleFromMarketWeek(currentWeekRow ?? undefined);
+                  const scheduleLabels = formatScheduleDisplay(scheduleRow);
+                  const now = new Date();
+                  const scheduleEditState = getScheduleEditState(now, scheduleRow);
+                  const nextOpen = computeNextOpening(now, scheduleRow);
+                  const isBeforeNextWindow = now.getTime() < nextOpen.getTime();
+                  const toHHMM = (t: string) => {
+                    const s = (t || '12:00').trim();
+                    const parts = s.split(':');
+                    const h = Math.min(23, Math.max(0, parseInt(parts[0], 10) || 0));
+                    const m = Math.min(59, Math.max(0, parseInt(parts[1], 10) || 0));
+                    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+                  };
+                  const handleSaveCurrentWeekSchedule = async () => {
+                    const openTime = toHHMM(currentWeekScheduleForm.open_time) || '12:00';
+                    const closeTime = toHHMM(currentWeekScheduleForm.close_time) || '23:59';
+                    const payload = {
+                      open_dow: currentWeekScheduleForm.open_dow,
+                      open_time: openTime,
+                      close_dow: currentWeekScheduleForm.close_dow,
+                      close_time: closeTime
+                    };
+                    const curRange = getCurrentWeekDateRange();
+                    // Use existing row for this week if any (avoid duplicates: one row per week)
+                    const existingRow = currentWeekId
+                      ? marketWeeks.find((w) => w.id === currentWeekId)
+                      : marketWeeks.find((w) => toWeekStart(w.week_start_date) === curRange.week_start_date);
+                    const rowId = existingRow?.id;
+                    if (rowId) {
+                      const { error } = await supabase.from('market_weeks').update(payload).eq('id', rowId);
+                      if (error) {
+                        setMessage({ type: 'error', text: error.message });
+                        return;
+                      }
+                    } else {
+                      const { error: insertErr } = await supabase.from('market_weeks').insert({
+                        week_start_date: curRange.week_start_date,
+                        week_end_date: curRange.week_end_date,
+                        ...payload
+                      }).select('id').single();
+                      if (insertErr) {
+                        setMessage({ type: 'error', text: insertErr.message });
+                        return;
+                      }
+                    }
+                    // Keep customization_schedule table in sync (single global row)
+                    if (customizationSchedule?.id) {
+                      await supabase.from('customization_schedule').update({
+                        ...payload,
+                        updated_at: new Date().toISOString()
+                      }).eq('id', customizationSchedule.id);
+                    } else {
+                      await supabase.from('customization_schedule').insert({
+                        open_dow: payload.open_dow,
+                        open_time: payload.open_time,
+                        close_dow: payload.close_dow,
+                        close_time: payload.close_time
+                      });
+                    }
+                    setMessage({ type: 'success', text: 'Customization times saved (market week and schedule table updated)' });
+                    setCurrentWeekScheduleEditOpen(false);
+                    loadData();
+                  };
+                  return (
+                    <div className="p-4 rounded-lg bg-gray-50 border border-gray-200 max-w-xl">
+                      <h3 className="text-sm font-semibold text-gray-900 mb-2">When can customers customize? (current week)</h3>
+                      {!currentWeekId ? (
+                        <p className="text-sm text-gray-600 mb-3">No current week in the system yet. Click &quot;Edit open/close times&quot; below, set the days and times, then click &quot;Save times&quot; to create the current week and set the customization window.</p>
+                      ) : null}
+                      {currentWeekScheduleEditOpen ? (
+                        <div className="space-y-3">
+                          {isBeforeNextWindow ? (
+                            <p className="text-sm text-green-800 bg-green-50 border border-green-200 rounded px-2 py-1.5">Opening day has not come yet. You can edit open and close times below; they will apply to the next window.</p>
+                          ) : scheduleEditState.message ? (
+                            <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1.5">{scheduleEditState.message}</p>
+                          ) : null}
+                          <div>
+                            <label className="block text-xs font-medium text-gray-600 mb-1">Open (day & time)</label>
+                            <div className="flex gap-2 items-center">
+                              <select value={currentWeekScheduleForm.open_dow} onChange={(e) => setCurrentWeekScheduleForm((f) => ({ ...f, open_dow: parseInt(e.target.value, 10) }))} className="px-2 py-1 border rounded text-sm">
+                                {[0, 1, 2, 3, 4, 5, 6].map((d) => <option key={d} value={d}>{DOW_LABELS[d]}</option>)}
+                              </select>
+                              <input type="time" value={currentWeekScheduleForm.open_time} onChange={(e) => setCurrentWeekScheduleForm((f) => ({ ...f, open_time: e.target.value }))} className="px-2 py-1 border rounded text-sm" />
+                            </div>
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-gray-600 mb-1">Close (day & time)</label>
+                            <div className="flex gap-2 items-center">
+                              <select value={currentWeekScheduleForm.close_dow} onChange={(e) => setCurrentWeekScheduleForm((f) => ({ ...f, close_dow: parseInt(e.target.value, 10) }))} className="px-2 py-1 border rounded text-sm">
+                                {[0, 1, 2, 3, 4, 5, 6].map((d) => <option key={d} value={d}>{DOW_LABELS[d]}</option>)}
+                              </select>
+                              <input type="time" value={currentWeekScheduleForm.close_time} onChange={(e) => setCurrentWeekScheduleForm((f) => ({ ...f, close_time: e.target.value }))} className="px-2 py-1 border rounded text-sm" />
+                            </div>
+                          </div>
+                          <div className="flex gap-2">
+                            <button type="button" onClick={handleSaveCurrentWeekSchedule} className="px-2 py-1.5 bg-green-600 text-white rounded text-sm hover:bg-green-700">Save times</button>
+                            <button type="button" onClick={() => setCurrentWeekScheduleEditOpen(false)} className="px-2 py-1.5 bg-gray-200 rounded text-sm">Cancel</button>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <p className="text-sm text-gray-700">
+                            {scheduleLabels ? `Opens ${scheduleLabels.openLabel} · Closes ${scheduleLabels.closeLabel}` : 'Set when customization opens and closes.'}
+                          </p>
+                          <button type="button" onClick={() => setCurrentWeekScheduleEditOpen(true)} className="mt-2 text-sm text-green-600 hover:text-green-800 font-medium">Edit open/close times</button>
+                        </>
+                      )}
+                    </div>
+                  );
+                })()}
+
                 <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                   {bucketTypes.map((bt) => (
                     <BucketTypeCard
@@ -620,23 +801,10 @@ const AdminPage = () => {
             {activeTab === 'prices' && (
               <div className="space-y-6">
                 <h2 className="text-lg font-semibold text-gray-900">Market prices (per 250g, per week)</h2>
-                <p className="text-sm text-gray-600">Select a market week, then set prices per vegetable. Used for allocation when that week is active.</p>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Market week</label>
-                  <select
-                    value={selectedMarketWeekId || ''}
-                    onChange={(e) => setSelectedMarketWeekId(e.target.value || null)}
-                    className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 max-w-xs"
-                  >
-                    <option value="">Select week</option>
-                    {marketWeeks.map((w) => (
-                      <option key={w.id} value={w.id}>
-                        {w.week_start_date} → {w.week_end_date} {w.is_locked ? '(locked)' : ''}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                {selectedMarketWeekId && (
+                <p className="text-sm text-gray-600">Prices are for the <strong>current week</strong> only. Set prices per vegetable for allocation when that week is active. Add the current week in the Market weeks tab if the table below is missing.</p>
+                {pricesWeekId ? (
+                  <>
+                    <p className="text-sm font-medium text-gray-700">Current week</p>
                   <div className="overflow-x-auto">
                     <table className="min-w-full divide-y divide-gray-200">
                       <thead>
@@ -671,7 +839,7 @@ const AdminPage = () => {
                                   const price = marketPricesByWeek[v.id] ?? v.marketPricePer250g;
                                   if (price == null) return;
                                   const { error } = await supabase.rpc('upsert_market_price', {
-                                    p_market_week_id: selectedMarketWeekId,
+                                    p_market_week_id: pricesWeekId,
                                     p_vegetable_id: v.id,
                                     p_price_per_unit: Number(price)
                                   });
@@ -691,6 +859,9 @@ const AdminPage = () => {
                       </tbody>
                     </table>
                   </div>
+                  </>
+                ) : (
+                  <p className="text-sm text-gray-500">Add the current week in the <strong>Market weeks</strong> tab to set prices.</p>
                 )}
               </div>
             )}
@@ -1113,187 +1284,67 @@ type WeekForm = {
   is_locked: boolean;
 };
 
-// Stable component outside parent so typing in inputs doesn't remount and scroll to top.
+// Market weeks tab: date range and lock only (open/close times are edited in Bucket types tab).
 const WeekCard: React.FC<{
   title: string;
   form: WeekForm;
   setForm: React.Dispatch<React.SetStateAction<WeekForm>>;
   onSave: () => void;
-  scheduleLabels: { openLabel: string; closeLabel: string } | null;
-  thisCard: 'current' | 'next';
-  scheduleEditInCard: 'current' | 'next' | null;
-  onEditSchedule: () => void;
-  onCloseScheduleEdit: () => void;
-  scheduleForm: { open_dow: number; open_time: string; close_dow: number; close_time: string };
-  setScheduleForm: React.Dispatch<React.SetStateAction<{ open_dow: number; open_time: string; close_dow: number; close_time: string }>>;
-  scheduleEditState: { canEditOpen: boolean; canEditClose: boolean; message?: string };
-  onSaveSchedule: () => void;
-}> = ({ title, form, setForm, onSave, scheduleLabels, thisCard, scheduleEditInCard, onEditSchedule, onCloseScheduleEdit, scheduleForm, setScheduleForm, scheduleEditState, onSaveSchedule }) => {
-  const showForm = scheduleEditInCard === thisCard;
-  return (
-    <div className="p-4 border rounded-lg bg-gray-50 space-y-4 max-w-xl">
-      <div>
-        <h3 className="font-semibold text-gray-900">{title} <span className="text-xs font-normal text-gray-500">(Mon–Sun)</span></h3>
-        <p className="text-sm text-gray-600">{formatDateRangeForWeek(form.week_start_date, form.week_end_date)}</p>
-      </div>
-      <div className="p-3 rounded-lg bg-white border border-gray-200">
-        {showForm ? (
-          <div className="space-y-3">
-            <h4 className="font-medium text-gray-900 text-sm">Edit open/close times for this week (applies to both weeks)</h4>
-            {scheduleEditState.message && (
-              <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1.5">{scheduleEditState.message}</p>
-            )}
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Open (day & time)</label>
-              <div className="flex gap-2 items-center">
-                <select value={scheduleForm.open_dow} onChange={(e) => setScheduleForm((f) => ({ ...f, open_dow: parseInt(e.target.value, 10) }))} className="px-2 py-1 border rounded text-sm" disabled={!scheduleEditState.canEditOpen}>
-                  {[0, 1, 2, 3, 4, 5, 6].map((d) => <option key={d} value={d}>{DOW_LABELS[d]}</option>)}
-                </select>
-                <input type="time" value={scheduleForm.open_time} onChange={(e) => setScheduleForm((f) => ({ ...f, open_time: e.target.value }))} className="px-2 py-1 border rounded text-sm" disabled={!scheduleEditState.canEditOpen} />
-              </div>
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Close (day & time)</label>
-              <div className="flex gap-2 items-center">
-                <select value={scheduleForm.close_dow} onChange={(e) => setScheduleForm((f) => ({ ...f, close_dow: parseInt(e.target.value, 10) }))} className="px-2 py-1 border rounded text-sm" disabled={!scheduleEditState.canEditClose}>
-                  {[0, 1, 2, 3, 4, 5, 6].map((d) => <option key={d} value={d}>{DOW_LABELS[d]}</option>)}
-                </select>
-                <input type="time" value={scheduleForm.close_time} onChange={(e) => setScheduleForm((f) => ({ ...f, close_time: e.target.value }))} className="px-2 py-1 border rounded text-sm" disabled={!scheduleEditState.canEditClose} />
-              </div>
-            </div>
-            <div className="flex gap-2">
-              <button type="button" onClick={onSaveSchedule} className="px-2 py-1.5 bg-green-600 text-white rounded text-sm hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed" disabled={!scheduleEditState.canEditOpen && !scheduleEditState.canEditClose}>Save times</button>
-              <button type="button" onClick={onCloseScheduleEdit} className="px-2 py-1.5 bg-gray-200 rounded text-sm">Cancel</button>
-            </div>
-          </div>
-        ) : (
-          <>
-            <p className="text-sm text-gray-700">
-              <span className="font-medium">Customization for this week:</span>{' '}
-              {scheduleLabels ? `Opens ${scheduleLabels.openLabel} · Closes ${scheduleLabels.closeLabel}` : 'Opens/closes set below'}
-            </p>
-            <button type="button" onClick={onEditSchedule} className="mt-2 text-sm text-green-600 hover:text-green-800 font-medium">Edit open/close times</button>
-          </>
-        )}
-      </div>
-      <label className="flex items-center gap-2 text-sm cursor-pointer">
-        {form.is_locked ? <ToggleRight className="h-5 w-5 text-orange-600" aria-hidden /> : <ToggleLeft className="h-5 w-5 text-green-600" aria-hidden />}
-        <input type="checkbox" checked={form.is_locked} onChange={(e) => setForm((f) => ({ ...f, is_locked: e.target.checked }))} className="sr-only" />
-        <span>Turn off availability (emergency)</span>
-      </label>
-      <button type="button" onClick={onSave} className="px-3 py-1.5 bg-green-600 text-white rounded text-sm hover:bg-green-700">Save</button>
+}> = ({ title, form, setForm, onSave }) => (
+  <div className="p-4 border rounded-lg bg-gray-50 space-y-4 max-w-xl">
+    <div>
+      <h3 className="font-semibold text-gray-900">{title} <span className="text-xs font-normal text-gray-500">(Mon–Sun)</span></h3>
+      <p className="text-sm text-gray-600">{formatDateRangeForWeek(form.week_start_date, form.week_end_date)}</p>
     </div>
-  );
-};
+    <label className="flex items-center gap-2 text-sm cursor-pointer">
+      {form.is_locked ? <ToggleRight className="h-5 w-5 text-orange-600" aria-hidden /> : <ToggleLeft className="h-5 w-5 text-green-600" aria-hidden />}
+      <input type="checkbox" checked={form.is_locked} onChange={(e) => setForm((f) => ({ ...f, is_locked: e.target.checked }))} className="sr-only" />
+      <span>Turn off availability (emergency)</span>
+    </label>
+    <button type="button" onClick={onSave} className="px-3 py-1.5 bg-green-600 text-white rounded text-sm hover:bg-green-700">Save</button>
+  </div>
+);
 
-// Market weeks: always current + next week (Mon–Sun). Open/close times shown inside each card (no separate box).
+// Market weeks: current and next week (Mon–Sun). Each week uses its own row's dates and open/close from DB.
 const MarketWeeksSection: React.FC<{
   marketWeeks: MarketWeek[];
   customizationSchedule: CustomizationSchedule | null;
   onRefresh: () => void;
   setMessage: (m: { type: 'success' | 'error'; text: string } | null) => void;
-}> = ({ marketWeeks, customizationSchedule, onRefresh, setMessage }) => {
+}> = ({ marketWeeks, onRefresh, setMessage }) => {
   const currentRange = getCurrentWeekDateRange();
   const nextRange = getNextWeekDateRange();
-  const scheduleLabels = formatScheduleDisplay(customizationSchedule);
-  const now = new Date();
-  const scheduleEditStateCurrent = getScheduleEditState(now, customizationSchedule);
-  const scheduleEditStateNext = getScheduleEditStateForNextWindow(now, customizationSchedule);
-
-  const [scheduleEditInCard, setScheduleEditInCard] = useState<'current' | 'next' | null>(null);
-  const toHHMM = (t: string) => {
-    const s = (t || '12:00').trim();
-    const parts = s.split(':');
-    const h = Math.min(23, Math.max(0, parseInt(parts[0], 10) || 0));
-    const m = Math.min(59, Math.max(0, parseInt(parts[1], 10) || 0));
-    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
-  };
-  const [scheduleForm, setScheduleForm] = useState({
-    open_dow: customizationSchedule?.open_dow ?? 3,
-    open_time: customizationSchedule?.open_time ?? '12:00',
-    close_dow: customizationSchedule?.close_dow ?? 5,
-    close_time: customizationSchedule?.close_time ?? '23:59'
-  });
-  useEffect(() => {
-    if (customizationSchedule) {
-      setScheduleForm({
-        open_dow: customizationSchedule.open_dow,
-        open_time: toHHMM(customizationSchedule.open_time),
-        close_dow: customizationSchedule.close_dow,
-        close_time: toHHMM(customizationSchedule.close_time)
-      });
-    } else {
-      setScheduleForm({ open_dow: 3, open_time: '12:00', close_dow: 5, close_time: '23:59' });
-    }
-  }, [customizationSchedule?.id, customizationSchedule?.open_dow, customizationSchedule?.open_time, customizationSchedule?.close_dow, customizationSchedule?.close_time]);
-
-  const handleSaveSchedule = async () => {
-    const openTime = toHHMM(scheduleForm.open_time) || '12:00';
-    const closeTime = toHHMM(scheduleForm.close_time) || '23:59';
-    try {
-      if (customizationSchedule?.id) {
-        const { error } = await supabase.from('customization_schedule').update({
-          open_dow: scheduleForm.open_dow,
-          open_time: openTime,
-          close_dow: scheduleForm.close_dow,
-          close_time: closeTime,
-          updated_at: new Date().toISOString()
-        }).eq('id', customizationSchedule.id);
-        if (error) {
-          setMessage({ type: 'error', text: error.message });
-          return;
-        }
-      } else {
-        const { error } = await supabase.from('customization_schedule').insert({
-          open_dow: scheduleForm.open_dow,
-          open_time: openTime,
-          close_dow: scheduleForm.close_dow,
-          close_time: closeTime
-        });
-        if (error) {
-          setMessage({ type: 'error', text: error.message });
-          return;
-        }
-      }
-      setMessage({ type: 'success', text: 'Customization times updated' });
-      setScheduleEditInCard(null);
-      onRefresh();
-    } catch (err) {
-      setMessage({ type: 'error', text: err instanceof Error ? err.message : 'Failed to save' });
-    }
-  };
-
-  const findWeek = (start: string) => marketWeeks.find(w => w.week_start_date === start);
-  const currentDb = findWeek(currentRange.week_start_date);
-  const nextDb = findWeek(nextRange.week_start_date);
+  const findWeek = (start: string) => marketWeeks.find(w => toWeekStart(w.week_start_date) === start);
+  const currentDb = findWeek(currentRange.week_start_date) ?? marketWeeks[0] ?? null;
+  const nextDb = findWeek(nextRange.week_start_date) ?? marketWeeks[1] ?? null;
 
   const [currentForm, setCurrentForm] = useState<WeekForm>({
     id: currentDb?.id ?? null,
-    week_start_date: currentRange.week_start_date,
-    week_end_date: currentRange.week_end_date,
+    week_start_date: (currentDb && toWeekStart(currentDb.week_start_date)) || currentRange.week_start_date,
+    week_end_date: (currentDb && toWeekStart(currentDb.week_end_date)) || currentRange.week_end_date,
     is_locked: currentDb?.is_locked ?? false
   });
   const [nextForm, setNextForm] = useState<WeekForm>({
     id: nextDb?.id ?? null,
-    week_start_date: nextRange.week_start_date,
-    week_end_date: nextRange.week_end_date,
+    week_start_date: (nextDb && toWeekStart(nextDb.week_start_date)) || nextRange.week_start_date,
+    week_end_date: (nextDb && toWeekStart(nextDb.week_end_date)) || nextRange.week_end_date,
     is_locked: nextDb?.is_locked ?? false
   });
 
   useEffect(() => {
     setCurrentForm({
       id: currentDb?.id ?? null,
-      week_start_date: currentRange.week_start_date,
-      week_end_date: currentRange.week_end_date,
+      week_start_date: (currentDb && toWeekStart(currentDb.week_start_date)) || currentRange.week_start_date,
+      week_end_date: (currentDb && toWeekStart(currentDb.week_end_date)) || currentRange.week_end_date,
       is_locked: currentDb?.is_locked ?? false
     });
     setNextForm({
       id: nextDb?.id ?? null,
-      week_start_date: nextRange.week_start_date,
-      week_end_date: nextRange.week_end_date,
+      week_start_date: (nextDb && toWeekStart(nextDb.week_start_date)) || nextRange.week_start_date,
+      week_end_date: (nextDb && toWeekStart(nextDb.week_end_date)) || nextRange.week_end_date,
       is_locked: nextDb?.is_locked ?? false
     });
-  }, [currentDb?.id, currentDb?.is_locked, nextDb?.id, nextDb?.is_locked, currentRange.week_start_date, nextRange.week_start_date]);
+  }, [currentDb?.id, currentDb?.week_start_date, currentDb?.week_end_date, currentDb?.is_locked, nextDb?.id, nextDb?.week_start_date, nextDb?.week_end_date, nextDb?.is_locked, currentRange.week_start_date, currentRange.week_end_date, nextRange.week_start_date, nextRange.week_end_date]);
 
   const upsertWeek = async (form: WeekForm): Promise<boolean> => {
     const payload = {
@@ -1332,11 +1383,11 @@ const MarketWeeksSection: React.FC<{
 
   return (
     <div className="space-y-6">
-      <p className="text-sm text-gray-600">Weeks run <strong>Monday to Sunday</strong>. Set veg counts and open/close times per week; use the switch to turn off availability in an emergency.</p>
+      <p className="text-sm text-gray-600">Weeks run <strong>Monday to Sunday</strong>. Edit open/close times in the <strong>Bucket types</strong> tab. Use the switch here to turn off availability in an emergency.</p>
 
       <div className="space-y-4">
-        <WeekCard title="Current week" form={currentForm} setForm={setCurrentForm} onSave={handleSaveCurrent} scheduleLabels={scheduleLabels} thisCard="current" scheduleEditInCard={scheduleEditInCard} onEditSchedule={() => setScheduleEditInCard('current')} onCloseScheduleEdit={() => setScheduleEditInCard(null)} scheduleForm={scheduleForm} setScheduleForm={setScheduleForm} scheduleEditState={scheduleEditStateCurrent} onSaveSchedule={handleSaveSchedule} />
-        <WeekCard title="Next week" form={nextForm} setForm={setNextForm} onSave={handleSaveNext} scheduleLabels={scheduleLabels} thisCard="next" scheduleEditInCard={scheduleEditInCard} onEditSchedule={() => setScheduleEditInCard('next')} onCloseScheduleEdit={() => setScheduleEditInCard(null)} scheduleForm={scheduleForm} setScheduleForm={setScheduleForm} scheduleEditState={scheduleEditStateNext} onSaveSchedule={handleSaveSchedule} />
+        <WeekCard title="Current week" form={currentForm} setForm={setCurrentForm} onSave={handleSaveCurrent} />
+        <WeekCard title="Next week" form={nextForm} setForm={setNextForm} onSave={handleSaveNext} />
       </div>
     </div>
   );
