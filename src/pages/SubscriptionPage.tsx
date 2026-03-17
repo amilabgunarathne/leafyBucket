@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ArrowLeft, Package, Settings, Pause, Play, Check, Calendar, Clock, Truck, Leaf, X, Loader2 } from 'lucide-react';
+import { ArrowLeft, Package, Settings, Pause, Play, Check, Calendar, Clock, Truck, Leaf, X } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import ConfirmationModal from '../components/ConfirmationModal';
@@ -207,64 +207,33 @@ const SubscriptionPage = () => {
       {/* Header */}
       <div className="bg-white border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-4">
-              <Link
-                to="/"
-                className="flex items-center space-x-2 text-green-600 hover:text-green-700 transition-colors"
-              >
-                <ArrowLeft className="h-5 w-5" />
-                <span>Back to Home</span>
-              </Link>
-              <div className="h-6 w-px bg-gray-300"></div>
-              <h1 className="text-2xl font-bold text-gray-900">My Bucket</h1>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-4">
+                <Link
+                  to="/"
+                  className="flex items-center space-x-2 text-green-600 hover:text-green-700 transition-colors"
+                >
+                  <ArrowLeft className="h-5 w-5" />
+                  <span>Back to Home</span>
+                </Link>
+                <div className="h-6 w-px bg-gray-300"></div>
+                <h1 className="text-2xl font-bold text-gray-900">My Bucket</h1>
+              </div>
+              {user.subscription && user.subscription.status !== 'cancelled' && (
+                <Link
+                  to="/customize"
+                  className="flex items-center space-x-2 px-4 py-2 rounded-xl bg-green-600 text-white font-medium hover:bg-green-700 transition-colors"
+                >
+                  <Settings className="h-5 w-5" />
+                  <span>Customize Bucket</span>
+                </Link>
+              )}
             </div>
-
-          </div>
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="grid lg:grid-cols-4 gap-8">
-          {/* Sidebar Navigation */}
-          <div className="lg:col-span-1">
-            <div className="bg-white rounded-2xl shadow-lg p-6 sticky top-8">
-              <nav className="space-y-2">
-                <div className="w-full flex items-center space-x-3 px-4 py-3 rounded-xl bg-green-100 text-green-800">
-                  <Package className="h-5 w-5" />
-                  <span>Overview</span>
-                </div>
-
-                {/* Quick Actions */}
-                <div className="pt-4 border-t border-gray-200 mt-4">
-                  <h4 className="text-sm font-medium text-gray-700 mb-3">Quick Actions</h4>
-                  <div className="space-y-2">
-                    {user.subscription && user.subscription.status !== 'cancelled' ? (
-                      <Link
-                        to="/customize"
-                        className="w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-left transition-colors text-gray-600 hover:bg-gray-100"
-                      >
-                        <Settings className="h-5 w-5" />
-                        <span>Customize Bucket</span>
-                      </Link>
-                    ) : (
-                      <span
-                        className="w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-left text-gray-400 cursor-not-allowed"
-                        title="Select a bucket plan first"
-                      >
-                        <Settings className="h-5 w-5" />
-                        <span>Customize Bucket</span>
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </nav>
-            </div>
-          </div>
-
-          {/* Main Content */}
-          <div className="lg:col-span-3">
-            <div className="space-y-8">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="space-y-8">
                 {(!user.subscription || user.subscription.status === 'cancelled') ? (
                   /* No Subscription - Plan Selection */
                   <div className="bg-white rounded-3xl shadow-lg p-8">
@@ -336,83 +305,114 @@ const SubscriptionPage = () => {
                 ) : (
                   /* Active Subscription Overview */
                   <>
-                    {/* Subscription Status */}
-                    <div className="bg-white rounded-3xl shadow-lg p-8">
-                      <div className="flex items-center justify-between mb-6">
-                        <h2 className="text-2xl font-bold text-gray-900">Your Subscription</h2>
-                        <div className={`px-4 py-2 rounded-full text-sm font-semibold ${user.subscription.status === 'active'
-                          ? 'bg-green-100 text-green-800'
-                          : 'bg-yellow-100 text-yellow-800'
-                          }`}>
-                          {user.subscription.status === 'active' ? 'Active' : 'Paused'}
+                    {/* E‑commerce style: main content (left) + subscription summary sidebar (right) */}
+                    <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-8">
+                      {/* Your vegetables for this week - main content (left) */}
+                      <div className="bg-white rounded-3xl shadow-lg p-8">
+                        <div className="flex items-center justify-between mb-2">
+                          <h3 className="text-xl font-bold text-gray-900">Your vegetables for this week</h3>
+                          <Link
+                            to="/customize"
+                            className="text-green-600 hover:text-green-700 font-medium text-sm flex items-center space-x-1"
+                          >
+                            <span>Customize</span>
+                            <Settings className="h-4 w-4" />
+                          </Link>
+                        </div>
+                        <p className="text-sm text-gray-600 mb-6">Here’s what’s in your bucket for the current week. Use Customize to swap or add items before we lock your selection.</p>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          {vegetables.slice(0, currentPlan?.vegetables || 7).map((veg) => (
+                            <div key={veg.id} className="flex items-center justify-between p-4 bg-green-50 rounded-xl">
+                              <div>
+                                <div className="font-medium text-gray-900">{veg.name}</div>
+                                <div className="text-sm text-gray-600">{veg.weight}</div>
+                              </div>
+                              <Leaf className="h-5 w-5 text-green-600" />
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="mt-6 p-4 bg-blue-50 border-2 border-blue-200 rounded-xl">
+                          <p className="text-sm text-blue-800">
+                            <strong>Fixed Pricing:</strong> Your monthly price stays at LKR {currentPlan?.price.toLocaleString()}.
+                            We adjust weekly quantities based on market conditions to maintain quality and value.
+                          </p>
                         </div>
                       </div>
 
-                      <div className="grid md:grid-cols-2 gap-8">
-                        <div>
-                          <h3 className="text-lg font-semibold text-gray-900 mb-4">{currentPlan?.name}</h3>
-                          <div className="space-y-3">
+                      {/* Your Subscription - right sidebar (cart-style) */}
+                      <div className="lg:sticky lg:top-28 self-start bg-white rounded-3xl shadow-lg border border-gray-200 p-6">
+                        <div className="flex items-center justify-between mb-4">
+                          <h2 className="text-lg font-bold text-gray-900">Your Subscription</h2>
+                          <div className={`px-4 py-2 rounded-full text-sm font-semibold ${user.subscription.status === 'active'
+                            ? 'bg-green-100 text-green-800'
+                            : 'bg-yellow-100 text-yellow-800'
+                            }`}>
+                            {user.subscription.status === 'active' ? 'Active' : 'Paused'}
+                          </div>
+                        </div>
+
+                        <div className="space-y-3">
+                          <div className="text-sm font-semibold text-gray-900">{currentPlan?.name}</div>
+                          <div className="space-y-2 text-sm">
                             <div className="flex justify-between">
-                              <span className="text-gray-600">Monthly Price:</span>
+                              <span className="text-gray-600">Monthly:</span>
                               <span className="font-semibold">LKR {currentPlan?.price.toLocaleString()}</span>
                             </div>
                             <div className="flex justify-between">
                               <span className="text-gray-600">Vegetables:</span>
-                              <span className="font-semibold">{currentPlan?.vegetables} varieties</span>
+                              <span className="font-medium">{currentPlan?.vegetables} varieties</span>
                             </div>
                             <div className="flex justify-between">
                               <span className="text-gray-600">Weight:</span>
-                              <span className="font-semibold">{currentPlan?.weight}</span>
+                              <span className="font-medium">{currentPlan?.weight}</span>
                             </div>
-                            <div className="flex justify-between items-center py-2 border-t border-gray-100 mt-2">
-                              <span className="text-gray-600">Plan Size:</span>
-                              <div className="flex items-center space-x-2">
-                                <span className="font-bold text-green-700">{currentPlan?.name}</span>
-                                <button
-                                  onClick={() => setIsChangingPlan(!isChangingPlan)}
-                                  className="text-xs font-medium px-2.5 py-1 rounded-md border border-gray-300 bg-gray-50 text-gray-700 hover:bg-gray-100 hover:border-gray-400 transition-colors"
-                                >
-                                  {isChangingPlan ? 'Cancel' : 'Change Plan'}
-                                </button>
-                              </div>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-gray-600">Next Delivery:</span>
+                            <div className="flex justify-between items-center pt-2 border-t border-gray-100">
+                              <span className="text-gray-600">Next delivery:</span>
                               <span className="font-semibold text-green-600">
                                 {new Date(user.subscription.nextDelivery).toLocaleDateString()}
                               </span>
                             </div>
                           </div>
-                        </div>
-
-                        <div className="space-y-4">
+                          <button
+                            onClick={() => setIsChangingPlan(!isChangingPlan)}
+                            className="w-full text-xs font-medium py-2 rounded-lg border border-gray-300 bg-gray-50 text-gray-700 hover:bg-gray-100"
+                          >
+                            {isChangingPlan ? 'Cancel' : 'Change Plan'}
+                          </button>
                           <button
                             onClick={toggleSubscriptionStatus}
-                            className={`w-full flex items-center justify-center space-x-2 py-3 px-6 rounded-xl font-semibold transition-colors ${user.subscription.status === 'active'
+                            className={`w-full flex items-center justify-center space-x-2 py-2.5 px-4 rounded-xl text-sm font-semibold transition-colors ${user.subscription.status === 'active'
                               ? 'bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200'
                               : 'bg-green-100 text-green-800 hover:bg-green-200'
                               }`}
                           >
                             {user.subscription.status === 'active' ? (
                               <>
-                                <Pause className="h-5 w-5" />
+                                <Pause className="h-4 w-4" />
                                 <span>Pause bucket</span>
                               </>
                             ) : (
                               <>
-                                <Play className="h-5 w-5" />
+                                <Play className="h-4 w-4" />
                                 <span>Resume bucket</span>
                               </>
                             )}
                           </button>
-                          <p className="text-xs text-gray-500 text-center">
+                          <button
+                            type="button"
+                            className="w-full flex items-center justify-center space-x-2 py-2.5 px-4 rounded-xl text-sm font-medium text-gray-600 hover:text-gray-800 hover:bg-gray-100 border border-gray-300 transition-colors"
+                          >
+                            <span>Cancel bucket</span>
+                          </button>
+                          <p className="text-[11px] text-gray-500 leading-tight">
                             {user.subscription.status === 'active'
-                              ? 'Pausing holds deliveries only. Your plan and preferences are saved—resume anytime.'
-                              : 'Resume when you\'re ready; your next delivery will be scheduled.'}
+                              ? 'Pausing holds deliveries only. Plan and preferences are saved—resume anytime.'
+                              : 'Resume when ready; your next delivery will be scheduled.'}
                           </p>
                         </div>
                       </div>
-
                     </div>
 
                     {/* Change Plan Modal */}
@@ -492,40 +492,6 @@ const SubscriptionPage = () => {
                       </div>
                     </div>
 
-                    {/* Current Week's Vegetables Preview */}
-                    <div className="bg-white rounded-3xl shadow-lg p-8">
-                      <div className="flex items-center justify-between mb-2">
-                        <h3 className="text-xl font-bold text-gray-900">Your vegetables for this week</h3>
-                        <Link
-                          to="/customize"
-                          className="text-green-600 hover:text-green-700 font-medium text-sm flex items-center space-x-1"
-                        >
-                          <span>Customize</span>
-                          <Settings className="h-4 w-4" />
-                        </Link>
-                      </div>
-                      <p className="text-sm text-gray-600 mb-6">Here’s what’s in your bucket for the current week. Use Customize to swap or add items before we lock your selection.</p>
-
-                      <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-                        {vegetables.slice(0, currentPlan?.vegetables || 7).map((veg) => (
-                          <div key={veg.id} className="flex items-center justify-between p-4 bg-green-50 rounded-xl">
-                            <div>
-                              <div className="font-medium text-gray-900">{veg.name}</div>
-                              <div className="text-sm text-gray-600">{veg.weight}</div>
-                            </div>
-                            <Leaf className="h-5 w-5 text-green-600" />
-                          </div>
-                        ))}
-                      </div>
-
-                      <div className="mt-6 p-4 bg-blue-50 border-2 border-blue-200 rounded-xl">
-                        <p className="text-sm text-blue-800">
-                          <strong>Fixed Pricing:</strong> Your monthly price stays at LKR {currentPlan?.price.toLocaleString()}.
-                          We adjust weekly quantities based on market conditions to maintain quality and value.
-                        </p>
-                      </div>
-                    </div>
-
                     {/* Billing Summary */}
                     <div className="bg-white rounded-3xl shadow-lg p-8">
                       <h3 className="text-xl font-bold text-gray-900 mb-6">Billing Summary</h3>
@@ -569,8 +535,6 @@ const SubscriptionPage = () => {
                     </div>
                   </>
                 )}
-              </div>
-          </div>
         </div>
       </div>
 
