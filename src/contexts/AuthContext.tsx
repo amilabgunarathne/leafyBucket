@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { supabase, REMEMBER_ME_KEY } from '../lib/supabase';
+import { normalizeSubscriptionCustomizations } from '../utils/subscriptionCustomizations';
 
 // Session timeout: idle = no activity, absolute = max session length regardless of activity
 const SESSION_IDLE_TIMEOUT_MS = 30 * 60 * 1000;   // 30 minutes
@@ -121,6 +122,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         .maybeSingle();
 
       // Construct User Object
+      const subRow = subscription as Record<string, unknown> | null | undefined;
       const userData: User = {
         id: userId,
         email: email,
@@ -134,13 +136,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           plan: mapBucketTypeToPlan(subscription.bucket_type?.name),
           status: subscription.status,
           nextDelivery: subscription.next_delivery || new Date().toISOString(), // Fallback
-          // MOCK: Customizations (need to fetch from customisation_actions eventually)
-          customizations: {
-            excludedVegetables: [],
-            removedVegetables: [],
-            addedVegetables: [],
-            deliveryDay: 'sunday'
-          }
+          customizations: normalizeSubscriptionCustomizations(subRow?.customizations)
         } : undefined
       };
 

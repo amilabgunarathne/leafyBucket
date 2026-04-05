@@ -1,6 +1,16 @@
 import { supabase } from '../lib/supabase';
+import type { SubscriptionCustomizationsState } from '../utils/subscriptionCustomizations';
 
 // Helper types matching the new schema
+export interface PaymentMethod {
+    id: string;
+    code: string;
+    name: string;
+    description: string | null;
+    sort_order: number;
+    is_enabled: boolean;
+}
+
 export interface Subscription {
     id: string;
     user_id: string;
@@ -12,8 +22,10 @@ export interface Subscription {
     started_at: string;
     next_delivery_date: string;
     shipping_address: string;
+    payment_method_id?: string | null;
     // Join fields
     bucket_type?: BucketType;
+    payment_method?: PaymentMethod | null;
 }
 
 export interface BucketType {
@@ -209,6 +221,21 @@ class SubscriptionService {
     }
 
     /**
+     * Persist bucket customizations on the subscription so they survive reload (source of truth for UI).
+     */
+    async updateSubscriptionCustomizations(
+        subscriptionId: string,
+        customizations: SubscriptionCustomizationsState
+    ): Promise<void> {
+        const { error } = await supabase
+            .from('subscriptions')
+            .update({ customizations })
+            .eq('id', subscriptionId);
+
+        if (error) throw error;
+    }
+
+    /**
      * Skip/Pause a delivery (Carry-forward logic)
      */
     async skipDelivery(deliveryId: string): Promise<void> {
@@ -289,6 +316,35 @@ class SubscriptionService {
         const { error } = await supabase
             .from('subscriptions')
             .update({ status })
+            .eq('id', subscriptionId);
+
+        if (error) throw error;
+    }
+
+    /**
+     * Get enabled payment methods (for payment setup popup)
+     */
+    async getPaymentMethods(): Promise<PaymentMethod[]> {
+        const { data, error } = await supabase
+            .from('payment_methods')
+            .select('id, code, name, description, sort_order, is_enabled')
+            .eq('is_enabled', true)
+            .order('sort_order', { ascending: true });
+
+        if (error) {
+            console.error('Error fetching payment methods:', error);
+            return [];
+        }
+        return data || [];
+    }
+
+    /**
+     * Set payment method for a subscription (called when customer completes payment setup)
+     */
+    async updateSubscriptionPaymentMethod(subscriptionId: string, paymentMethodId: string): Promise<void> {
+        const { error } = await supabase
+            .from('subscriptions')
+            .update({ payment_method_id: paymentMethodId })
             .eq('id', subscriptionId);
 
         if (error) throw error;

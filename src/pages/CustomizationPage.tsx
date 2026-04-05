@@ -41,12 +41,20 @@ const CustomizationPage = () => {
   useEffect(() => {
     const fetchVegetables = async () => {
       await vegetableService.initialize();
-      setVegetables(vegetableService.getActiveVegetablesForBulk());
+      // Full catalog for resolving names/metadata: admin "vegetables for this week" may include items
+      // not marked bulk-available; those must still appear in the bucket UI.
+      setVegetables(vegetableService.getAllVegetables().filter((v) => v.isAvailable !== false));
     };
     fetchVegetables();
   }, [vegetableService]);
 
-  const { getSelectionForPlan, isCustomizationAllowed, timeRemaining, scheduleDisplay } = useWeekly();
+  const { getSelectionForPlan, isCustomizationAllowed, timeRemaining, scheduleDisplay, refreshWeeklySelection } = useWeekly();
+
+  // Reload admin week vegetables from DB when opening this page or switching plan (picks up saves from Admin)
+  useEffect(() => {
+    const plan = (user?.subscription?.plan || selectedPlan || 'medium') as 'small' | 'medium' | 'large';
+    void refreshWeeklySelection(plan);
+  }, [selectedPlan, user?.subscription?.plan]);
 
   // Fetch dynamic limits from DB; ratios from bucket_type_category_ratios (same as Admin)
   const [adminLimits, setAdminLimits] = useState<any>(null);
@@ -57,15 +65,12 @@ const CustomizationPage = () => {
     const fetchLimits = async () => {
       try {
         const { default: SubscriptionService } = await import('../services/SubscriptionService');
-        const { getOrCreateCurrentWeek, getVegCountFromBucketType, parseVegRange } = await import('../utils/marketWeekUtils');
-        const { supabase } = await import('../lib/supabase');
+        const { getVegCountFromBucketType, parseVegRange } = await import('../utils/marketWeekUtils');
 
         // Ensure vegetables (and any initial ratios) are loaded first, then we overwrite with fresh DB ratios
         await vegetableService.initialize();
 
         const bucketTypes = await SubscriptionService.getInstance().getBucketTypes();
-        const { data: weeksData } = await supabase.from('market_weeks').select('id, week_start_date, week_end_date, is_locked').order('week_start_date', { ascending: false });
-        const currentWeek = getOrCreateCurrentWeek(weeksData || []);
 
         const limits: any = {};
         const byBucketTypeId: Record<string, { root: number; leafy: number; bushy: number }> = {};
@@ -183,8 +188,10 @@ const CustomizationPage = () => {
     };
   };
 
+  /** Use subscription plan when set so week veg matches the bucket admin configured (Mini vs Family). */
   const getDefaultVegetables = () => {
-    const selection = getSelectionForPlan(selectedPlan as any);
+    const planKey = (user?.subscription?.plan || selectedPlan || 'medium') as 'small' | 'medium' | 'large';
+    const selection = getSelectionForPlan(planKey);
     return selection?.vegetables ?? [];
   };
 
@@ -194,14 +201,16 @@ const CustomizationPage = () => {
       .filter(vegId => !customizations.removedVegetables.includes(vegId))
       .concat(customizations.addedVegetables);
 
-    // DEFENSIVE: Filter out any IDs that don't exist in our DB-fetched list
-    const validVegIds = vegetables.map(v => v.id);
-    return finalVegetables.filter(id => validVegIds.includes(id));
+    // Resolve IDs against full catalog (not bulk-only), same as admin week assignments
+    const validVegIds = new Set(vegetableService.getAllVegetables().map((v) => v.id));
+    return finalVegetables.filter((id) => validVegIds.has(id));
   };
 
+  /** Pool for adding more items: bulk-available only, excluding what's already in the bucket */
   const getAvailableVegetables = () => {
     const currentVegetables = getCurrentVegetables();
-    return vegetables.filter(veg => !currentVegetables.includes(veg.id));
+    const bulkPool = vegetableService.getActiveVegetablesForBulk();
+    return bulkPool.filter((veg) => !currentVegetables.includes(veg.id));
   };
 
   // Check if we can add more vegetables of a specific category (must not exceed total quota)
@@ -231,6 +240,16 @@ const CustomizationPage = () => {
     try {
       const { default: SubscriptionService } = await import('../services/SubscriptionService');
       const subService = SubscriptionService.getInstance();
+
+      if (user.subscription?.id) {
+        await subService.updateSubscriptionCustomizations(user.subscription.id, {
+          excludedVegetables: customizations.excludedVegetables,
+          removedVegetables: customizations.removedVegetables,
+          addedVegetables: customizations.addedVegetables,
+          deliveryDay: customizations.deliveryDay,
+        });
+      }
+
       const activeSub = await subService.getActiveSubscription(user.id);
 
       if (activeSub && activeSub.currentDelivery) {
@@ -251,6 +270,8 @@ const CustomizationPage = () => {
       }
     } catch (e) {
       console.error("Error saving customizations:", e);
+      alert('Could not save preferences. Please try again.');
+      return;
     }
 
     // Keep updating local state for fallback/UI speed
@@ -528,8 +549,7 @@ const CustomizationPage = () => {
 
                     <div className="grid md:grid-cols-2 gap-4">
                       {getDefaultVegetables()
-                        .filter(vegId => !customizations.removedVegetables.includes(vegId))
-                        .filter(id => vegetables.some(v => v.id === id)) // Ensure valid data
+                        .filter((vegId) => !customizations.removedVegetables.includes(vegId))
                         .map((vegetableId) => {
                           const vegetable = vegetables.find(v => v.id === vegetableId);
                           const allocation = getCurrentAllocation().find(v => v.id === vegetableId);

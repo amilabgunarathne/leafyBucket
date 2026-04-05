@@ -3,7 +3,6 @@ import {
   WeeklySelection,
   WeeklyHistory,
   getCurrentWeekId,
-  getWeekDates,
   getCustomizationDeadline,
   isCustomizationOpen,
   getCustomizationTimeRemaining,
@@ -11,6 +10,7 @@ import {
 } from '../utils/weeklyShuffling';
 import VegetableService from '../services/vegetableService';
 import { supabase } from '../lib/supabase';
+import { getCurrentWeekDateRange, pickMarketWeekIdForApp } from '../utils/marketWeekUtils';
 
 interface ScheduleDisplay {
   openLabel: string;
@@ -20,6 +20,8 @@ interface ScheduleDisplay {
 
 interface WeeklyContextType {
   currentWeekSelection: WeeklySelection | null;
+  /** Per-plan week selection from DB (market_week_bucket_vegetables). Exposed so My Bucket can subscribe without duplicating fetches. */
+  allSelections: Record<'small' | 'medium' | 'large', WeeklySelection | null>;
   weeklyHistory: WeeklyHistory;
   isCustomizationAllowed: boolean;
   timeRemaining: {
@@ -103,10 +105,20 @@ export const WeeklyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
         const bucketTypes = await SubscriptionService.getInstance().getBucketTypes();
         const { data: weeksData } = await supabase.from('market_weeks').select('id, week_start_date, week_end_date, is_locked, open_dow, open_time, close_dow, close_time').order('week_start_date', { ascending: false });
+        const { data: schedData } = await supabase.from('customization_schedule').select('open_dow, open_time, close_dow, close_time').limit(1).maybeSingle();
         const currentWeek = getOrCreateCurrentWeek(weeksData || []);
 
-        const { scheduleFromMarketWeek } = await import('../utils/customizationSchedule');
-        const schedule = scheduleFromMarketWeek(currentWeek);
+        const { scheduleFromMarketWeek, scheduleFromGlobalCustomizationRow } = await import('../utils/customizationSchedule');
+        const isSyntheticWeek = String(currentWeek.id).startsWith('synthetic-');
+        const weekHasNoSchedule =
+          currentWeek.open_dow == null &&
+          currentWeek.close_dow == null &&
+          (currentWeek.open_time == null || String(currentWeek.open_time).trim() === '') &&
+          (currentWeek.close_time == null || String(currentWeek.close_time).trim() === '');
+        let schedule = scheduleFromMarketWeek(currentWeek);
+        if (schedData && (isSyntheticWeek || weekHasNoSchedule)) {
+          schedule = scheduleFromGlobalCustomizationRow(schedData);
+        }
         setScheduleContext(schedule, currentWeek.is_locked === true);
 
         const labels = formatScheduleDisplay(schedule);
@@ -152,19 +164,23 @@ export const WeeklyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (!hasPlanLimits) return;
 
     const fetchWeeklyContext = async () => {
+      const vegetableService = VegetableService.getInstance();
+      await vegetableService.initialize();
+
       const currentWeekId = getCurrentWeekId();
-      const weekDates = getWeekDates(currentWeekId);
-      const mondayStr = weekDates.monday.toISOString().split('T')[0];
+      const { week_start_date: mondayStr, week_end_date: weekEndStr } = getCurrentWeekDateRange();
+
       let marketWeekDbId: string | null = null;
       try {
-        const { data: weeksRows } = await supabase.from('market_weeks').select('id').eq('week_start_date', mondayStr).limit(1);
-        if (weeksRows && weeksRows.length > 0) marketWeekDbId = (weeksRows[0] as { id: string }).id;
+        const { data: weeksForPick } = await supabase
+          .from('market_weeks')
+          .select('id, week_start_date, week_end_date')
+          .order('week_start_date', { ascending: false });
+        marketWeekDbId = pickMarketWeekIdForApp((weeksForPick || []) as import('../utils/marketWeekUtils').MarketWeekRow[]);
       } catch (_) {}
 
       const newSelections: Record<string, WeeklySelection | null> = {};
-      const vegetableService = VegetableService.getInstance();
-      const allVegetables = vegetableService.getActiveVegetablesForBulk();
-      const allActiveIds = allVegetables.map(v => v.id);
+      const allKnownIds = new Set(vegetableService.getAllVegetables().map((v) => v.id));
 
       const getOptions = (planId: 'small' | 'medium' | 'large') => {
         const limits = planLimits[planId];
@@ -178,11 +194,11 @@ export const WeeklyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       const buildSelectionFromVegIds = (vegIds: string[]): WeeklySelection => ({
         weekId: currentWeekId,
         startDate: mondayStr,
-        endDate: weekDates.weekEnd.toISOString().split('T')[0],
+        endDate: weekEndStr,
         vegetables: vegIds,
         isCustomizationOpen: isCustomizationOpen(),
         customizationDeadline: getCustomizationDeadline().toISOString(),
-        deliveryDate: weekDates.weekEnd.toISOString().split('T')[0]
+        deliveryDate: weekEndStr
       });
 
       for (const planId of ['small', 'medium', 'large'] as const) {
@@ -201,8 +217,14 @@ export const WeeklyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
               .eq('bucket_type_id', bucketTypeId)
               .order('sort_order', { ascending: true });
             if (rows && rows.length > 0) {
-              const ids = (rows as { vegetable_id: string }[]).map((r) => r.vegetable_id).filter((id) => allActiveIds.includes(id));
-              useDbVeggies = ids.slice(0, targetCount);
+              const rawIds = (rows as { vegetable_id: string }[]).map((r) => r.vegetable_id);
+              let ids = rawIds.filter((id) => allKnownIds.has(id));
+              // If admin saved IDs not yet in client cache, still show them (names resolve after init/sync)
+              if (rawIds.length > 0 && ids.length === 0) {
+                ids = rawIds;
+              }
+              const cap = targetCount > 0 ? targetCount : ids.length;
+              useDbVeggies = ids.slice(0, cap);
             }
           } catch (_) {}
         }
@@ -220,17 +242,22 @@ export const WeeklyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, [weeklyHistory, serviceInitialized, planLimits, planIdToBucketTypeId]);
 
   const refreshWeeklySelection = async (planId: 'small' | 'medium' | 'large') => {
+    const vs = VegetableService.getInstance();
+    await vs.initialize();
+
     const currentWeekId = getCurrentWeekId();
-    const weekDates = getWeekDates(currentWeekId);
-    const mondayStr = weekDates.monday.toISOString().split('T')[0];
+    const { week_start_date: mondayStr, week_end_date: weekEndStr } = getCurrentWeekDateRange();
     const bucketTypeId = planIdToBucketTypeId[planId];
     const targetCount = planLimits[planId]?.current ?? 0;
 
     let vegIds: string[] = [];
     if (bucketTypeId) {
       try {
-        const { data: weeksRows } = await supabase.from('market_weeks').select('id').eq('week_start_date', mondayStr).limit(1);
-        const marketWeekDbId = weeksRows?.[0] ? (weeksRows[0] as { id: string }).id : null;
+        const { data: weeksForPick } = await supabase
+          .from('market_weeks')
+          .select('id, week_start_date, week_end_date')
+          .order('week_start_date', { ascending: false });
+        const marketWeekDbId = pickMarketWeekIdForApp((weeksForPick || []) as import('../utils/marketWeekUtils').MarketWeekRow[]);
         if (marketWeekDbId) {
           const { data: rows } = await supabase
             .from('market_week_bucket_vegetables')
@@ -239,8 +266,12 @@ export const WeeklyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             .eq('bucket_type_id', bucketTypeId)
             .order('sort_order', { ascending: true });
           if (rows?.length) {
-            const allActiveIds = VegetableService.getInstance().getActiveVegetablesForBulk().map((v) => v.id);
-            vegIds = (rows as { vegetable_id: string }[]).map((r) => r.vegetable_id).filter((id) => allActiveIds.includes(id)).slice(0, targetCount);
+            const known = new Set(vs.getAllVegetables().map((v) => v.id));
+            const rawIds = (rows as { vegetable_id: string }[]).map((r) => r.vegetable_id);
+            let ids = rawIds.filter((id) => known.has(id));
+            if (rawIds.length > 0 && ids.length === 0) ids = rawIds;
+            const cap = targetCount > 0 ? targetCount : ids.length;
+            vegIds = ids.slice(0, cap);
           }
         }
       } catch (_) {}
@@ -249,11 +280,11 @@ export const WeeklyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const newSelection: WeeklySelection = {
       weekId: currentWeekId,
       startDate: mondayStr,
-      endDate: weekDates.weekEnd.toISOString().split('T')[0],
+      endDate: weekEndStr,
       vegetables: vegIds,
       isCustomizationOpen: isCustomizationOpen(),
       customizationDeadline: getCustomizationDeadline().toISOString(),
-      deliveryDate: weekDates.weekEnd.toISOString().split('T')[0]
+      deliveryDate: weekEndStr
     };
     setCurrentWeekSelection(newSelection);
     setAllSelections((prev) => ({ ...prev, [planId]: newSelection }));
@@ -273,6 +304,7 @@ export const WeeklyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   return (
     <WeeklyContext.Provider value={{
       currentWeekSelection,
+      allSelections,
       weeklyHistory,
       isCustomizationAllowed,
       timeRemaining,

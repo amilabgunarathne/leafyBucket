@@ -1,10 +1,13 @@
 import React, { useState } from 'react';
-import { ArrowLeft, Package, Settings, Pause, Play, Check, Calendar, Clock, Truck, Leaf, X } from 'lucide-react';
+import { ArrowLeft, Package, Pause, Play, Check, Calendar, Clock, Truck, Leaf, X, CreditCard } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { useWeekly } from '../contexts/WeeklyContext';
+import type { PaymentMethod } from '../services/SubscriptionService';
 import ConfirmationModal from '../components/ConfirmationModal';
 import SubscriptionService from '../services/SubscriptionService';
 import VegetableService from '../services/vegetableService';
+import { getWeeklyAllocationsByVegetableId } from '../utils/weeklyPlanAllocation';
 
 const SubscriptionPage = () => {
   const { user } = useAuth();
@@ -16,7 +19,46 @@ const SubscriptionPage = () => {
 
   const [activeSubscription, setActiveSubscription] = useState<any>(null);
   const [currentDelivery, setCurrentDelivery] = useState<any>(null);
+  const [hasAcceptedReview, setHasAcceptedReview] = useState(false);
+  const [showPaymentSetup, setShowPaymentSetup] = useState(false);
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
+  const [selectedPaymentMethodId, setSelectedPaymentMethodId] = useState<string | null>(null);
+  const [loadingPaymentMethods, setLoadingPaymentMethods] = useState(false);
+  const SETUP_COMPLETE_KEY = 'leafy_bucket_setup_complete';
+  const [setupComplete, setSetupComplete] = useState(false);
   const bucketTypesRef = React.useRef<any[]>([]);
+
+  // Progress bar only for first-time setup; hide once customer has completed payment setup
+  React.useEffect(() => {
+    if (!user?.id) return;
+    try {
+      const stored = localStorage.getItem(`${SETUP_COMPLETE_KEY}_${user.id}`);
+      if (stored === '1') setSetupComplete(true);
+    } catch {
+      // ignore
+    }
+  }, [user?.id]);
+
+  // Fetch payment methods when payment setup popup opens
+  React.useEffect(() => {
+    if (!showPaymentSetup) return;
+    let cancelled = false;
+    setLoadingPaymentMethods(true);
+    SubscriptionService.getInstance()
+      .getPaymentMethods()
+      .then((list) => {
+        if (!cancelled) {
+          setPaymentMethods(list);
+          setSelectedPaymentMethodId(list.length > 0 ? list[0].id : null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingPaymentMethods(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [showPaymentSetup]);
 
   // Fetch real subscription details
   React.useEffect(() => {
@@ -184,22 +226,65 @@ const SubscriptionPage = () => {
 
   const currentPlan = plans.find(p => p.id === user.subscription?.plan);
 
-  const [vegetables, setVegetables] = useState<{ id: string, name: string, weight: string }[]>([]);
+  const [vegetables, setVegetables] = useState<{ id: string; name: string; weight: string }[]>([]);
   const vegetableService = VegetableService.getInstance();
+  const { allSelections, refreshWeeklySelection } = useWeekly();
+  const planKeyForWeek = (user?.subscription?.plan || 'medium') as 'small' | 'medium' | 'large';
 
+  // Same data path as Customize (WeeklyContext → market_week_bucket_vegetables); reload week veg when landing on My Bucket
   React.useEffect(() => {
-    const fetchVegetables = async () => {
+    if (!user?.subscription || user.subscription.status === 'cancelled') return;
+    void refreshWeeklySelection(planKeyForWeek);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- refreshWeeklySelection identity changes each render; plan is enough
+  }, [user?.subscription?.status, user?.subscription?.plan, planKeyForWeek]);
+
+  /** Admin week list + customizations; weights from same allocation as Customize (budget + bulk prices from DB). */
+  React.useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      if (!user?.subscription || user.subscription.status === 'cancelled') {
+        setVegetables([]);
+        return;
+      }
       await vegetableService.initialize();
-      const activeVegetables = vegetableService.getActiveVegetablesForBulk();
-      const formattedVegetables = activeVegetables.map(v => ({
-        id: v.id,
-        name: v.name,
-        weight: v.typicalWeight
-      }));
-      setVegetables(formattedVegetables);
+      const sel = allSelections[planKeyForWeek];
+      let ids = sel?.vegetables ?? [];
+      const removed = user.subscription?.customizations?.removedVegetables ?? [];
+      const added = user.subscription?.customizations?.addedVegetables ?? [];
+      ids = ids.filter((id) => !removed.includes(id));
+      for (const a of added) {
+        if (!ids.includes(a)) ids.push(a);
+      }
+      const catalog = vegetableService.getAllVegetables();
+      const byId = new Map(catalog.map((v) => [v.id, v]));
+      let allocById: Map<string, { allocatedWeight: number; allocatedBudget: number }>;
+      try {
+        allocById = await getWeeklyAllocationsByVegetableId(planKeyForWeek, ids, catalog);
+      } catch {
+        allocById = new Map();
+      }
+      const rows = ids.map((id) => {
+        const v = byId.get(id);
+        const alloc = allocById.get(id);
+        const weight =
+          alloc != null
+            ? `~${alloc.allocatedWeight}g`
+            : v?.typicalWeight ?? '—';
+        return { id, name: v?.name ?? id, weight };
+      });
+      if (!cancelled) setVegetables(rows);
     };
-    fetchVegetables();
-  }, []);
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    user?.subscription?.status,
+    planKeyForWeek,
+    allSelections,
+    user?.subscription?.customizations?.removedVegetables,
+    user?.subscription?.customizations?.addedVegetables,
+  ]);
 
   return (
     <>
@@ -207,7 +292,7 @@ const SubscriptionPage = () => {
       {/* Header */}
       <div className="bg-white border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center">
               <div className="flex items-center space-x-4">
                 <Link
                   to="/"
@@ -219,20 +304,58 @@ const SubscriptionPage = () => {
                 <div className="h-6 w-px bg-gray-300"></div>
                 <h1 className="text-2xl font-bold text-gray-900">My Bucket</h1>
               </div>
-              {user.subscription && user.subscription.status !== 'cancelled' && (
-                <Link
-                  to="/customize"
-                  className="flex items-center space-x-2 px-4 py-2 rounded-xl bg-green-600 text-white font-medium hover:bg-green-700 transition-colors"
-                >
-                  <Settings className="h-5 w-5" />
-                  <span>Customize Bucket</span>
-                </Link>
-              )}
             </div>
         </div>
       </div>
 
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Progress bar: only for first-time setup; hidden after payment setup is done (returning customers get automatic delivery) */}
+        {!setupComplete && (() => {
+          const hasSub = user.subscription && user.subscription.status !== 'cancelled';
+          const steps = [
+            { key: 'select', label: 'Select bucket', done: hasSub },
+            { key: 'customize', label: 'Customization', optional: true, done: hasSub },
+            { key: 'review', label: 'Review and accept', done: hasAcceptedReview },
+            { key: 'payment', label: 'Set up payment', done: false },
+            { key: 'delivery', label: 'Delivery', done: false }, // Ticked only when package is delivered (use delivery status from backend when available)
+          ];
+          const currentIndex = hasAcceptedReview ? 3 : hasSub ? 2 : 0;
+          return (
+            <div className="mb-8 bg-white rounded-2xl shadow border border-gray-200 p-4 sm:p-6">
+              <div className="flex items-center w-full">
+                {steps.map((step, i) => (
+                  <React.Fragment key={step.key}>
+                    <div className="flex flex-col items-center shrink-0">
+                      <div
+                        className={`flex h-9 w-9 items-center justify-center rounded-full border-2 text-sm font-semibold ${
+                          step.done
+                            ? 'border-green-600 bg-green-600 text-white'
+                            : i === currentIndex
+                              ? 'border-green-600 bg-green-50 text-green-700'
+                              : 'border-gray-300 bg-white text-gray-400'
+                        }`}
+                      >
+                        {step.done ? <Check className="h-5 w-5" /> : i + 1}
+                      </div>
+                      <span className={`mt-1.5 text-[10px] sm:text-xs font-medium text-center leading-tight max-w-[4.5rem] sm:max-w-[5.5rem] ${step.done || i === currentIndex ? 'text-gray-900' : 'text-gray-500'}`}>
+                        {step.label}
+                        {step.optional && <span className="text-gray-400"> (optional)</span>}
+                      </span>
+                    </div>
+                    {i < steps.length - 1 && (
+                      <div
+                        className={`flex-1 h-0.5 mx-1 sm:mx-2 rounded min-w-[8px] ${
+                          step.done ? 'bg-green-600' : 'bg-gray-200'
+                        }`}
+                      />
+                    )}
+                  </React.Fragment>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
+
         <div className="space-y-8">
                 {(!user.subscription || user.subscription.status === 'cancelled') ? (
                   /* No Subscription - Plan Selection */
@@ -309,36 +432,38 @@ const SubscriptionPage = () => {
                     <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-8">
                       {/* Your vegetables for this week - main content (left) */}
                       <div className="bg-white rounded-3xl shadow-lg p-8">
-                        <div className="flex items-center justify-between mb-2">
-                          <h3 className="text-xl font-bold text-gray-900">Your vegetables for this week</h3>
-                          <Link
-                            to="/customize"
-                            className="text-green-600 hover:text-green-700 font-medium text-sm flex items-center space-x-1"
-                          >
-                            <span>Customize</span>
-                            <Settings className="h-4 w-4" />
-                          </Link>
-                        </div>
-                        <p className="text-sm text-gray-600 mb-6">Here’s what’s in your bucket for the current week. Use Customize to swap or add items before we lock your selection.</p>
+                        <h3 className="text-xl font-bold text-gray-900 mb-2">Your vegetables for this week</h3>
+                        <p className="text-sm text-gray-600 mb-6">Here’s what’s in your bucket for the current week.</p>
 
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                          {vegetables.slice(0, currentPlan?.vegetables || 7).map((veg) => (
-                            <div key={veg.id} className="flex items-center justify-between p-4 bg-green-50 rounded-xl">
-                              <div>
-                                <div className="font-medium text-gray-900">{veg.name}</div>
-                                <div className="text-sm text-gray-600">{veg.weight}</div>
+                          {vegetables.length === 0 ? (
+                            <p className="text-sm text-gray-600 col-span-full">
+                              No vegetables listed for this week yet. Your admin sets them under Bucket types → Vegetables for week.
+                            </p>
+                          ) : (
+                            vegetables.map((veg) => (
+                              <div key={veg.id} className="flex items-center justify-between p-4 bg-green-50 rounded-xl">
+                                <div>
+                                  <div className="font-medium text-gray-900">{veg.name}</div>
+                                  <div className="text-sm text-gray-600">{veg.weight}</div>
+                                </div>
+                                <Leaf className="h-5 w-5 text-green-600" />
                               </div>
-                              <Leaf className="h-5 w-5 text-green-600" />
-                            </div>
-                          ))}
+                            ))
+                          )}
                         </div>
 
-                        <div className="mt-6 p-4 bg-blue-50 border-2 border-blue-200 rounded-xl">
-                          <p className="text-sm text-blue-800">
-                            <strong>Fixed Pricing:</strong> Your monthly price stays at LKR {currentPlan?.price.toLocaleString()}.
-                            We adjust weekly quantities based on market conditions to maintain quality and value.
-                          </p>
-                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setHasAcceptedReview(true);
+                            setShowPaymentSetup(true);
+                          }}
+                          className="mt-6 w-full flex items-center justify-center space-x-2 py-3 px-6 rounded-xl font-semibold bg-green-600 text-white hover:bg-green-700 transition-colors"
+                        >
+                          <Check className="h-5 w-5" />
+                          <span>Accept and proceed to payment</span>
+                        </button>
                       </div>
 
                       {/* Your Subscription - right sidebar (cart-style) */}
@@ -456,6 +581,92 @@ const SubscriptionPage = () => {
                               className="mt-4 w-full py-2 rounded-xl border border-gray-300 text-gray-700 font-medium hover:bg-gray-50"
                             >
                               Cancel
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Payment setup popup (after Accept) */}
+                    {showPaymentSetup && (
+                      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => setShowPaymentSetup(false)}>
+                        <div className="bg-white rounded-2xl shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex items-center justify-between p-4 border-b border-gray-200">
+                            <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                              <CreditCard className="h-5 w-5 text-green-600" />
+                              Set up payment
+                            </h3>
+                            <button
+                              type="button"
+                              onClick={() => setShowPaymentSetup(false)}
+                              className="p-2 rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors"
+                              aria-label="Close"
+                            >
+                              <X className="h-5 w-5" />
+                            </button>
+                          </div>
+                          <div className="p-6">
+                            <p className="text-sm text-gray-600 mb-4">
+                              Choose how you’d like to pay for your bucket. You can update this later.
+                            </p>
+                            {loadingPaymentMethods ? (
+                              <div className="py-6 text-center text-gray-500 text-sm">Loading payment methods…</div>
+                            ) : paymentMethods.length === 0 ? (
+                              <div className="py-6 text-center text-gray-500 text-sm">No payment methods available. Please try again later.</div>
+                            ) : (
+                              <div className="space-y-3">
+                                {paymentMethods.map((pm) => (
+                                  <button
+                                    key={pm.id}
+                                    type="button"
+                                    onClick={() => setSelectedPaymentMethodId(pm.id)}
+                                    className={`w-full flex items-center gap-3 p-4 rounded-xl border-2 text-left transition-colors ${
+                                      selectedPaymentMethodId === pm.id
+                                        ? 'border-green-600 bg-green-50'
+                                        : 'border-gray-200 bg-white hover:border-green-300 hover:bg-gray-50'
+                                    }`}
+                                  >
+                                    <CreditCard className="h-6 w-6 text-green-600 shrink-0" />
+                                    <div className="flex-1 min-w-0">
+                                      <div className="font-semibold text-gray-900">{pm.name}</div>
+                                      {pm.description && (
+                                        <div className="text-sm text-gray-600 mt-0.5">{pm.description}</div>
+                                      )}
+                                    </div>
+                                    {selectedPaymentMethodId === pm.id && (
+                                      <Check className="h-5 w-5 text-green-600 shrink-0" />
+                                    )}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                            <button
+                              type="button"
+                              disabled={loadingPaymentMethods || paymentMethods.length === 0 || !selectedPaymentMethodId}
+                              onClick={async () => {
+                                const subId = user?.subscription?.id;
+                                if (selectedPaymentMethodId && subId) {
+                                  try {
+                                    await SubscriptionService.getInstance().updateSubscriptionPaymentMethod(subId, selectedPaymentMethodId);
+                                  } catch (e) {
+                                    console.error('Failed to save payment method:', e);
+                                    alert('Failed to save payment method. Please try again.');
+                                    return;
+                                  }
+                                }
+                                setShowPaymentSetup(false);
+                                if (user?.id) {
+                                  try {
+                                    localStorage.setItem(`${SETUP_COMPLETE_KEY}_${user.id}`, '1');
+                                  } catch {
+                                    // ignore
+                                  }
+                                  setSetupComplete(true);
+                                }
+                              }}
+                              className="mt-6 w-full py-3 rounded-xl font-semibold bg-green-600 text-white hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              Done
                             </button>
                           </div>
                         </div>

@@ -14,12 +14,48 @@ export interface MarketWeekRow {
   close_time?: string | null;
 }
 
+/** YYYY-MM-DD in the user's local timezone (not UTC). Avoids wrong "today" vs DB week ranges. */
+export function formatLocalDateISO(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+export function normalizeWeekStartDate(d: string | null | undefined): string {
+  return d ? String(d).slice(0, 10) : '';
+}
+
 /**
  * Find the market week that contains today (today between week_start_date and week_end_date).
+ * Uses local calendar date for "today" so it matches how admin stores week_start / week_end.
  */
 export function getCurrentMarketWeek(weeks: MarketWeekRow[]): MarketWeekRow | null {
-  const today = new Date().toISOString().split('T')[0];
+  const today = formatLocalDateISO(new Date());
   return weeks.find(w => w.week_start_date <= today && today <= w.week_end_date) ?? null;
+}
+
+/** Same as admin: row for this calendar week's Monday (where open/close times are edited). */
+export function getMarketWeekForCurrentMonday(weeks: MarketWeekRow[]): MarketWeekRow | null {
+  const { week_start_date } = getCurrentWeekDateRange();
+  const target = normalizeWeekStartDate(week_start_date);
+  return weeks.find((w) => normalizeWeekStartDate(w.week_start_date) === target) ?? null;
+}
+
+/**
+ * Resolve which market_weeks.id the app should use for week vegetables (same row as admin "current week").
+ * Prefer Monday match, then week that contains today, never synthetic ids.
+ */
+export function pickMarketWeekIdForApp(weeks: MarketWeekRow[]): string | null {
+  if (!weeks?.length) return null;
+  const byMonday = getMarketWeekForCurrentMonday(weeks);
+  if (byMonday?.id && !String(byMonday.id).startsWith('synthetic-')) return byMonday.id;
+  const byToday = getCurrentMarketWeek(weeks);
+  if (byToday?.id && !String(byToday.id).startsWith('synthetic-')) return byToday.id;
+  // Last resort: most recent market_week row (covers minor date mismatches vs local Monday)
+  const sorted = [...weeks].filter((w) => w.week_start_date).sort((a, b) => b.week_start_date.localeCompare(a.week_start_date));
+  const latest = sorted[0];
+  return latest?.id && !String(latest.id).startsWith('synthetic-') ? latest.id : null;
 }
 
 /** Get Monday of the week for a given date (ISO week). */
@@ -29,42 +65,46 @@ export function getMondayOfWeek(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), diff);
 }
 
-const fmt = (d: Date) => d.toISOString().split('T')[0];
-
-/** Current week Mon–Sun as YYYY-MM-DD. */
+/** Current week Mon–Sun as YYYY-MM-DD (local dates). */
 export function getCurrentWeekDateRange(): { week_start_date: string; week_end_date: string } {
   const today = new Date();
   const monday = getMondayOfWeek(today);
   const sunday = new Date(monday);
   sunday.setDate(monday.getDate() + 6);
-  return { week_start_date: fmt(monday), week_end_date: fmt(sunday) };
+  return { week_start_date: formatLocalDateISO(monday), week_end_date: formatLocalDateISO(sunday) };
 }
 
-/** Next week Mon–Sun as YYYY-MM-DD. */
+/** Next week Mon–Sun as YYYY-MM-DD (local dates). */
 export function getNextWeekDateRange(): { week_start_date: string; week_end_date: string } {
   const current = getCurrentWeekDateRange();
   const nextMon = new Date(current.week_start_date + 'T12:00:00');
   nextMon.setDate(nextMon.getDate() + 7);
   const nextSun = new Date(nextMon);
   nextSun.setDate(nextMon.getDate() + 6);
-  return { week_start_date: fmt(nextMon), week_end_date: fmt(nextSun) };
+  return { week_start_date: formatLocalDateISO(nextMon), week_end_date: formatLocalDateISO(nextSun) };
 }
 
 /**
- * Return the market week that contains today. If no DB row contains today, return a synthetic
- * week for the current Mon–Sun so the app always has a "current week".
+ * Return the market week used for customization schedule (same row admin edits in Bucket types).
+ * 1) Row whose week_start_date matches this week's Monday (preferred).
+ * 2) Else row that contains today's local date.
+ * 3) Else synthetic week with default Wed/Fri times (customer UI should fall back to customization_schedule if needed).
  */
 export function getOrCreateCurrentWeek(weeks: MarketWeekRow[]): MarketWeekRow {
+  const byMonday = getMarketWeekForCurrentMonday(weeks);
+  if (byMonday) return byMonday;
   const fromDb = getCurrentMarketWeek(weeks);
   if (fromDb) return fromDb;
   const today = new Date();
   const monday = getMondayOfWeek(today);
   const sunday = new Date(monday);
   sunday.setDate(monday.getDate() + 6);
+  const monStr = formatLocalDateISO(monday);
+  const sunStr = formatLocalDateISO(sunday);
   return {
-    id: `synthetic-${fmt(monday)}`,
-    week_start_date: fmt(monday),
-    week_end_date: fmt(sunday),
+    id: `synthetic-${monStr}`,
+    week_start_date: monStr,
+    week_end_date: sunStr,
     is_locked: false,
     veg_count_small: null,
     veg_count_medium: null,
