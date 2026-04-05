@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ArrowLeft, Package, Pause, Play, Check, Calendar, Clock, Truck, Leaf, X, CreditCard } from 'lucide-react';
+import { ArrowLeft, Package, Settings, Pause, Play, Check, Calendar, Clock, Truck, Leaf, X, CreditCard } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useWeekly } from '../contexts/WeeklyContext';
@@ -432,13 +432,24 @@ const SubscriptionPage = () => {
                     <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-8">
                       {/* Your vegetables for this week - main content (left) */}
                       <div className="bg-white rounded-3xl shadow-lg p-8">
-                        <h3 className="text-xl font-bold text-gray-900 mb-2">Your vegetables for this week</h3>
-                        <p className="text-sm text-gray-600 mb-6">Here’s what’s in your bucket for the current week.</p>
+                        <div className="flex items-center justify-between mb-2">
+                          <h3 className="text-xl font-bold text-gray-900">Your vegetables for this week</h3>
+                          <Link
+                            to="/customize"
+                            className="text-green-600 hover:text-green-700 font-medium text-sm flex items-center space-x-1 shrink-0"
+                          >
+                            <span>Customize</span>
+                            <Settings className="h-4 w-4" />
+                          </Link>
+                        </div>
+                        <p className="text-sm text-gray-600 mb-6">
+                          Here’s what’s in your bucket for the current week. Use Customize to swap or add items before we lock your selection.
+                        </p>
 
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                           {vegetables.length === 0 ? (
                             <p className="text-sm text-gray-600 col-span-full">
-                              No vegetables listed for this week yet. Your admin sets them under Bucket types → Vegetables for week.
+                              No vegetables listed for this week yet. Your admin sets them under Bucket types → Vegetables for week, or open Customize once your selection is ready.
                             </p>
                           ) : (
                             vegetables.map((veg) => (
