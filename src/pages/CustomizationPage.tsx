@@ -6,9 +6,19 @@ import VegetableService from '../services/vegetableService';
 import { useWeekly } from '../contexts/WeeklyContext';
 import { useAuth } from '../contexts/AuthContext';
 import WeeklyScheduleInfo from '../components/WeeklyScheduleInfo';
+import { effectiveVegCustomizations, normalizeSubscriptionCustomizations } from '../utils/subscriptionCustomizations';
 
 const CustomizationPage = () => {
   const { user, updateUser } = useAuth();
+  const weekly = useWeekly();
+  const {
+    getSelectionForPlan,
+    isCustomizationAllowed,
+    timeRemaining,
+    scheduleDisplay,
+    refreshWeeklySelection,
+  } = weekly;
+  const activeMwId = weekly.activeMarketWeekId;
   const [selectedPlan, setSelectedPlan] = useState<string>(user?.subscription?.plan || 'medium');
   const [customizations, setCustomizations] = useState<{
     excludedVegetables: string[];
@@ -22,18 +32,20 @@ const CustomizationPage = () => {
     deliveryDay: user?.subscription?.customizations?.deliveryDay || 'sunday'
   });
 
-  // Sync state if user subscription changes (e.g., plan updated in account page)
+  // Sync from profile; veg add/remove/exclude only apply to the saved market week (not last week’s “ADDED” items).
   useEffect(() => {
     if (user?.subscription) {
       setSelectedPlan(user.subscription.plan);
+      const raw = normalizeSubscriptionCustomizations(user.subscription.customizations);
+      const eff = effectiveVegCustomizations(raw, activeMwId);
       setCustomizations({
-        excludedVegetables: user.subscription.customizations.excludedVegetables || [],
-        removedVegetables: user.subscription.customizations.removedVegetables || [],
-        addedVegetables: user.subscription.customizations.addedVegetables || [],
-        deliveryDay: user.subscription.customizations.deliveryDay || 'sunday'
+        excludedVegetables: eff.excludedVegetables,
+        removedVegetables: eff.removedVegetables,
+        addedVegetables: eff.addedVegetables,
+        deliveryDay: raw.deliveryDay || 'sunday',
       });
     }
-  }, [user?.subscription?.plan, user?.subscription?.customizations]);
+  }, [user?.subscription?.plan, user?.subscription?.customizations, activeMwId]);
 
   const [vegetables, setVegetables] = useState<Vegetable[]>([]);
   const vegetableService = VegetableService.getInstance();
@@ -47,8 +59,6 @@ const CustomizationPage = () => {
     };
     fetchVegetables();
   }, [vegetableService]);
-
-  const { getSelectionForPlan, isCustomizationAllowed, timeRemaining, scheduleDisplay, refreshWeeklySelection } = useWeekly();
 
   // Reload admin week vegetables from DB when opening this page or switching plan (picks up saves from Admin)
   useEffect(() => {
@@ -247,6 +257,7 @@ const CustomizationPage = () => {
           removedVegetables: customizations.removedVegetables,
           addedVegetables: customizations.addedVegetables,
           deliveryDay: customizations.deliveryDay,
+          marketWeekId: activeMwId ?? null,
         });
       }
 
@@ -280,7 +291,8 @@ const CustomizationPage = () => {
         ...user.subscription!,
         plan: selectedPlan as 'small' | 'medium' | 'large',
         customizations: {
-          ...customizations
+          ...customizations,
+          marketWeekId: activeMwId ?? null,
         }
       }
     });

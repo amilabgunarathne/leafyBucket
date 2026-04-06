@@ -8,6 +8,12 @@ import ConfirmationModal from '../components/ConfirmationModal';
 import SubscriptionService from '../services/SubscriptionService';
 import VegetableService from '../services/vegetableService';
 import { getWeeklyAllocationsByVegetableId } from '../utils/weeklyPlanAllocation';
+import {
+  effectiveVegCustomizations,
+  normalizeSubscriptionCustomizations,
+  hasSavedVegCustomizationForCurrentWeek,
+} from '../utils/subscriptionCustomizations';
+import { isAfterCustomizationClosedForCurrentWeek } from '../utils/customizationSchedule';
 
 const SubscriptionPage = () => {
   const { user } = useAuth();
@@ -28,7 +34,7 @@ const SubscriptionPage = () => {
   const [setupComplete, setSetupComplete] = useState(false);
   const bucketTypesRef = React.useRef<any[]>([]);
 
-  // Progress bar only for first-time setup; hide once customer has completed payment setup
+  // First-time payment completion flag (local); also synced from DB when payment_method_id is set
   React.useEffect(() => {
     if (!user?.id) return;
     try {
@@ -38,6 +44,16 @@ const SubscriptionPage = () => {
       // ignore
     }
   }, [user?.id]);
+
+  React.useEffect(() => {
+    if (!user?.id || !activeSubscription?.payment_method_id) return;
+    try {
+      localStorage.setItem(`${SETUP_COMPLETE_KEY}_${user.id}`, '1');
+    } catch {
+      // ignore
+    }
+    setSetupComplete(true);
+  }, [user?.id, activeSubscription?.payment_method_id]);
 
   // Fetch payment methods when payment setup popup opens
   React.useEffect(() => {
@@ -228,7 +244,7 @@ const SubscriptionPage = () => {
 
   const [vegetables, setVegetables] = useState<{ id: string; name: string; weight: string }[]>([]);
   const vegetableService = VegetableService.getInstance();
-  const { allSelections, refreshWeeklySelection } = useWeekly();
+  const { allSelections, refreshWeeklySelection, activeMarketWeekId, timeRemaining } = useWeekly();
   const planKeyForWeek = (user?.subscription?.plan || 'medium') as 'small' | 'medium' | 'large';
 
   // Same data path as Customize (WeeklyContext → market_week_bucket_vegetables); reload week veg when landing on My Bucket
@@ -249,8 +265,10 @@ const SubscriptionPage = () => {
       await vegetableService.initialize();
       const sel = allSelections[planKeyForWeek];
       let ids = sel?.vegetables ?? [];
-      const removed = user.subscription?.customizations?.removedVegetables ?? [];
-      const added = user.subscription?.customizations?.addedVegetables ?? [];
+      const rawCust = normalizeSubscriptionCustomizations(user.subscription?.customizations);
+      const eff = effectiveVegCustomizations(rawCust, activeMarketWeekId);
+      const removed = eff.removedVegetables;
+      const added = eff.addedVegetables;
       ids = ids.filter((id) => !removed.includes(id));
       for (const a of added) {
         if (!ids.includes(a)) ids.push(a);
@@ -284,6 +302,7 @@ const SubscriptionPage = () => {
     allSelections,
     user?.subscription?.customizations?.removedVegetables,
     user?.subscription?.customizations?.addedVegetables,
+    activeMarketWeekId,
   ]);
 
   return (
@@ -309,19 +328,48 @@ const SubscriptionPage = () => {
       </div>
 
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Progress bar: only for first-time setup; hidden after payment setup is done (returning customers get automatic delivery) */}
-        {!setupComplete && (() => {
-          const hasSub = user.subscription && user.subscription.status !== 'cancelled';
-          const steps = [
-            { key: 'select', label: 'Select bucket', done: hasSub },
-            { key: 'customize', label: 'Customization', optional: true, done: hasSub },
-            { key: 'review', label: 'Review and accept', done: hasAcceptedReview },
-            { key: 'payment', label: 'Set up payment', done: false },
-            { key: 'delivery', label: 'Delivery', done: false }, // Ticked only when package is delivered (use delivery status from backend when available)
-          ];
-          const currentIndex = hasAcceptedReview ? 3 : hasSub ? 2 : 0;
+        {/* Progress: “Automated payment” ticks only after *this calendar week’s* customization close (not Mon–Tue before open; not just !isCustomizationAllowed). */}
+        {user.subscription && user.subscription.status !== 'cancelled' && (() => {
+          const rawCust = normalizeSubscriptionCustomizations(user.subscription?.customizations);
+          const hasCustomizeDone = hasSavedVegCustomizationForCurrentWeek(rawCust, activeMarketWeekId);
+
+          const paymentSaved = Boolean(activeSubscription?.payment_method_id) || setupComplete;
+          const isEstablishedSubscriber = paymentSaved;
+          const closedForThisWeek = isAfterCustomizationClosedForCurrentWeek();
+          const automatedPaymentDone = paymentSaved && closedForThisWeek;
+
+          const steps = isEstablishedSubscriber
+            ? [
+                { key: 'select', label: 'Select bucket', done: true, optional: false },
+                { key: 'customize', label: 'Customization', optional: true, done: hasCustomizeDone },
+                { key: 'payment', label: 'Automated payment', optional: false, done: automatedPaymentDone },
+                { key: 'delivery', label: 'Delivery', optional: false, done: false },
+              ]
+            : [
+                { key: 'select', label: 'Select bucket', done: true, optional: false },
+                { key: 'customize', label: 'Customization', optional: true, done: hasCustomizeDone },
+                { key: 'review', label: 'Review and accept', optional: false, done: hasAcceptedReview },
+                { key: 'payment', label: 'Set up payment', optional: false, done: false },
+                { key: 'delivery', label: 'Delivery', optional: false, done: false },
+              ];
+
+          const currentIndex = isEstablishedSubscriber
+            ? !hasCustomizeDone
+              ? 1
+              : !automatedPaymentDone
+                ? 2
+                : 3
+            : !hasCustomizeDone
+              ? 1
+              : hasAcceptedReview
+                ? 3
+                : 2;
+
           return (
-            <div className="mb-8 bg-white rounded-2xl shadow border border-gray-200 p-4 sm:p-6">
+            <div
+              className="mb-8 bg-white rounded-2xl shadow border border-gray-200 p-4 sm:p-6"
+              data-schedule-tick={`${timeRemaining.days}-${timeRemaining.hours}-${timeRemaining.minutes}-${timeRemaining.isExpired ? '1' : '0'}`}
+            >
               <div className="flex items-center w-full">
                 {steps.map((step, i) => (
                   <React.Fragment key={step.key}>
@@ -464,17 +512,25 @@ const SubscriptionPage = () => {
                           )}
                         </div>
 
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setHasAcceptedReview(true);
-                            setShowPaymentSetup(true);
-                          }}
-                          className="mt-6 w-full flex items-center justify-center space-x-2 py-3 px-6 rounded-xl font-semibold bg-green-600 text-white hover:bg-green-700 transition-colors"
-                        >
-                          <Check className="h-5 w-5" />
-                          <span>Accept and proceed to payment</span>
-                        </button>
+                        {(!activeSubscription?.payment_method_id && !setupComplete) && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setHasAcceptedReview(true);
+                              setShowPaymentSetup(true);
+                            }}
+                            className="mt-6 w-full flex items-center justify-center space-x-2 py-3 px-6 rounded-xl font-semibold bg-green-600 text-white hover:bg-green-700 transition-colors"
+                          >
+                            <Check className="h-5 w-5" />
+                            <span>Accept and proceed to payment</span>
+                          </button>
+                        )}
+                        {(Boolean(activeSubscription?.payment_method_id) || setupComplete) && (
+                          <p className="mt-6 text-sm text-gray-600 text-center">
+                            Save changes anytime from <Link to="/customize" className="text-green-600 font-medium hover:underline">Customize</Link>
+                            . Payment runs automatically; no need to accept again.
+                          </p>
+                        )}
                       </div>
 
                       {/* Your Subscription - right sidebar (cart-style) */}

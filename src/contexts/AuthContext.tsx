@@ -41,6 +41,7 @@ interface User {
       removedVegetables: string[];
       addedVegetables: string[];
       deliveryDay: string;
+      marketWeekId?: string | null;
     };
   };
 }

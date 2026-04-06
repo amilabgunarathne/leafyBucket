@@ -3,6 +3,8 @@
  * Default: Wed 12:00 open → Fri 23:59 close. Admin can change via customization_schedule and lock per week.
  */
 
+import { getMondayOfWeek } from './marketWeekUtils';
+
 export interface CustomizationScheduleRow {
   id: string;
   open_dow: number;   // 0 Sun, 1 Mon, ... 6 Sat
@@ -229,4 +231,48 @@ export function formatScheduleDisplay(schedule: CustomizationScheduleRow | null)
     openLabel: `${DAY_NAMES[s.open_dow]} ${formatTimeForDisplay(s.open_time)}`,
     closeLabel: `${DAY_NAMES[s.close_dow]} ${formatTimeForDisplay(s.close_time)}`
   };
+}
+
+/**
+ * Open/close instants for the customization window in the **local calendar week** (Mon–Sun) that contains `now`.
+ * Distinguishes Mon–Tue *before* Wed open from Sat–Sun *after* Fri close (both had `!getIsOpen()` with the old rolling window).
+ */
+export function getCustomizationWindowBoundsForLocalWeek(
+  now: Date,
+  schedule: CustomizationScheduleRow | null
+): { windowStart: Date; windowEnd: Date } {
+  const s = schedule || DEFAULT;
+  const monday = getMondayOfWeek(now);
+  const mondayDow = monday.getDay();
+  const daysFromMondayToOpen = (s.open_dow - mondayDow + 7) % 7;
+  const windowStart = new Date(monday);
+  windowStart.setDate(monday.getDate() + daysFromMondayToOpen);
+  const { hours: oh, minutes: om } = parseTime(s.open_time);
+  windowStart.setHours(oh, om, 0, 0);
+
+  const daysSpan = (s.close_dow - s.open_dow + 7) % 7;
+  const windowEnd = new Date(windowStart);
+  windowEnd.setDate(windowStart.getDate() + daysSpan);
+  const { hours: ch, minutes: cm } = parseTime(s.close_time);
+  windowEnd.setHours(ch, cm, 59, 999);
+  return { windowStart, windowEnd };
+}
+
+/** True only after this calendar week's customization close (e.g. Fri 23:59), not Mon–Tue before Wed opens. */
+export function isAfterCustomizationClosedForLocalWeek(
+  now: Date,
+  schedule: CustomizationScheduleRow | null
+): boolean {
+  const { windowEnd } = getCustomizationWindowBoundsForLocalWeek(now, schedule);
+  return now.getTime() > windowEnd.getTime();
+}
+
+/**
+ * Uses schedule from `setScheduleContext` (same as Customize). For My Bucket progress: tick “Automated payment”
+ * only after **this week’s** window has closed, not whenever `!isCustomizationAllowed`.
+ */
+export function isAfterCustomizationClosedForCurrentWeek(now: Date = new Date()): boolean {
+  const ctx = getScheduleContext();
+  const schedule = ctx?.schedule ?? null;
+  return isAfterCustomizationClosedForLocalWeek(now, schedule);
 }

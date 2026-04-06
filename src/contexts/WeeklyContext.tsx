@@ -32,6 +32,8 @@ interface WeeklyContextType {
   };
   /** From DB: when customization opens/closes and next opening (for customer copy). */
   scheduleDisplay: ScheduleDisplay | null;
+  /** Current market_weeks.id used for admin week veg + scoping subscription customizations (add/removed per week). */
+  activeMarketWeekId: string | null;
   getSelectionForPlan: (planId: 'small' | 'medium' | 'large') => WeeklySelection | null;
   refreshWeeklySelection: (planId: 'small' | 'medium' | 'large') => Promise<void>;
   updateWeeklyHistory: (weekId: string, vegetables: string[]) => void;
@@ -70,6 +72,7 @@ export const WeeklyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [planIdToBucketTypeId, setPlanIdToBucketTypeId] = useState<Record<string, string>>({});
   /** From DB: open/close labels and next opening for customer copy (no hardcoded Wed/Fri). */
   const [scheduleDisplay, setScheduleDisplay] = useState<ScheduleDisplay | null>(null);
+  const [activeMarketWeekId, setActiveMarketWeekId] = useState<string | null>(null);
 
   // Initialize VegetableService
   useEffect(() => {
@@ -179,6 +182,8 @@ export const WeeklyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         marketWeekDbId = pickMarketWeekIdForApp((weeksForPick || []) as import('../utils/marketWeekUtils').MarketWeekRow[]);
       } catch (_) {}
 
+      setActiveMarketWeekId(marketWeekDbId);
+
       const newSelections: Record<string, WeeklySelection | null> = {};
       const allKnownIds = new Set(vegetableService.getAllVegetables().map((v) => v.id));
 
@@ -258,6 +263,7 @@ export const WeeklyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           .select('id, week_start_date, week_end_date')
           .order('week_start_date', { ascending: false });
         const marketWeekDbId = pickMarketWeekIdForApp((weeksForPick || []) as import('../utils/marketWeekUtils').MarketWeekRow[]);
+        setActiveMarketWeekId(marketWeekDbId);
         if (marketWeekDbId) {
           const { data: rows } = await supabase
             .from('market_week_bucket_vegetables')
@@ -309,6 +315,7 @@ export const WeeklyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       isCustomizationAllowed,
       timeRemaining,
       scheduleDisplay,
+      activeMarketWeekId,
       getSelectionForPlan,
       refreshWeeklySelection,
       updateWeeklyHistory
