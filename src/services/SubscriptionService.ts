@@ -181,14 +181,44 @@ class SubscriptionService {
      * Paused subscriptions still return the plan so the app can show "resume when ready"
      */
     async getActiveSubscription(userId: string): Promise<{ subscription: Subscription, currentDelivery: Delivery | null } | null> {
+        // Same shape as AuthContext (no payment_method embed — a bad/missing FK embed fails the whole query and leaves activeSubscription null).
         const { data: sub, error } = await supabase
             .from('subscriptions')
             .select('*, bucket_type:bucket_types(*)')
             .eq('user_id', userId)
             .in('status', ['active', 'paused'])
+            .order('created_at', { ascending: false })
+            .limit(1)
             .maybeSingle();
 
-        if (error || !sub) return null;
+        if (error) {
+            console.error('[getActiveSubscription]', error.message, error);
+            return null;
+        }
+        if (!sub) return null;
+
+        const subAny = sub as Subscription & { payment_method?: PaymentMethod | PaymentMethod[] | null };
+        const pid = subAny.payment_method_id ?? null;
+        // Prefer RPC: reads payment_methods under SECURITY DEFINER but only for auth.uid()'s subscription (avoids RLS/embed gaps).
+        if (pid) {
+            const { data: rpcPm, error: rpcErr } = await supabase.rpc('get_payment_method_for_my_subscription');
+            if (!rpcErr && rpcPm && typeof rpcPm === 'object' && 'code' in rpcPm) {
+                subAny.payment_method = rpcPm as unknown as PaymentMethod;
+            } else {
+                const rawPm = subAny.payment_method;
+                const pmJoined = Array.isArray(rawPm) ? rawPm[0] : rawPm;
+                if (!pmJoined || !pmJoined.code) {
+                    const { data: pmFallback } = await supabase
+                        .from('payment_methods')
+                        .select('id, code, name, description, sort_order, is_enabled')
+                        .eq('id', pid)
+                        .maybeSingle();
+                    if (pmFallback) {
+                        subAny.payment_method = pmFallback as PaymentMethod;
+                    }
+                }
+            }
+        }
 
         // When paused there may be no open delivery; when active, get next open delivery
         const { data: delivery } = await supabase
@@ -339,15 +369,26 @@ class SubscriptionService {
     }
 
     /**
-     * Set payment method for a subscription (called when customer completes payment setup)
+     * Set payment method for a subscription (scoped by user_id so RLS mismatches return an error, not a silent no-op).
      */
-    async updateSubscriptionPaymentMethod(subscriptionId: string, paymentMethodId: string): Promise<void> {
-        const { error } = await supabase
+    async updateSubscriptionPaymentMethod(
+        subscriptionId: string,
+        paymentMethodId: string,
+        userId: string
+    ): Promise<{ id: string; payment_method_id: string | null }> {
+        const { data, error } = await supabase
             .from('subscriptions')
             .update({ payment_method_id: paymentMethodId })
-            .eq('id', subscriptionId);
+            .eq('id', subscriptionId)
+            .eq('user_id', userId)
+            .select('id, payment_method_id')
+            .maybeSingle();
 
         if (error) throw error;
+        if (!data) {
+            throw new Error('Could not save payment method. Check your subscription or try signing in again.');
+        }
+        return data;
     }
 
     /**

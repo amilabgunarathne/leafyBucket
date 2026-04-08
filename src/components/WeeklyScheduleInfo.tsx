@@ -2,6 +2,7 @@ import React from 'react';
 import { Calendar, Clock, CheckCircle, Truck } from 'lucide-react';
 import { useWeekly } from '../contexts/WeeklyContext';
 import { getDeliveryDate } from '../utils/weeklyShuffling';
+import { ScheduleWindowPairCards } from './ScheduleWindowPairCards';
 
 const WeeklyScheduleInfo = () => {
   const { isCustomizationAllowed, timeRemaining, scheduleDisplay } = useWeekly();
@@ -29,22 +30,26 @@ const WeeklyScheduleInfo = () => {
         <span>Weekly Schedule</span>
       </h3>
 
-      {/* Customization status: Open or Closed + open/close times */}
-      <div className={`p-4 rounded-xl mb-4 ${getStatusColor()}`}>
-        <div className="flex items-center space-x-3">
-          <StatusIcon className="h-5 w-5 flex-shrink-0" />
-          <div className="min-w-0">
-            <div className="font-semibold">
-              {isCustomizationAllowed ? 'Customization Open' : 'Customization Closed'}
+      {/* Customization status: compact title + open/close line */}
+      <div className={`p-3 rounded-xl mb-4 ${getStatusColor()}`}>
+        <div className="flex items-start gap-2.5">
+          <StatusIcon className="h-4 w-4 flex-shrink-0 mt-0.5" />
+          <div className="min-w-0 space-y-1">
+            <div className="text-sm font-semibold leading-tight">
+              {isCustomizationAllowed ? 'Customization open' : 'Customization closed'}
             </div>
-            {scheduleDisplay && (
-              <div className="text-sm opacity-90 mt-0.5">
-                Opens {scheduleDisplay.openLabel} · Closes {scheduleDisplay.closeLabel}
-              </div>
-            )}
             {isCustomizationAllowed && formatTimeRemaining() && (
-              <div className="text-sm mt-1 font-medium">
-                {formatTimeRemaining()}
+              <div className="text-xs font-medium tabular-nums opacity-95">{formatTimeRemaining()}</div>
+            )}
+            {scheduleDisplay?.windowParts && (
+              <ScheduleWindowPairCards
+                parts={scheduleDisplay.windowParts}
+                tone={isCustomizationAllowed ? 'green' : 'orange'}
+              />
+            )}
+            {scheduleDisplay && !scheduleDisplay.windowParts && (
+              <div className="text-xs opacity-90 leading-snug">
+                Opens {scheduleDisplay.openLabel} · Closes {scheduleDisplay.closeLabel}
               </div>
             )}
           </div>

@@ -3,8 +3,9 @@ import { ArrowLeft, Package, Settings, Pause, Play, Check, Calendar, Clock, Truc
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useWeekly } from '../contexts/WeeklyContext';
-import type { PaymentMethod } from '../services/SubscriptionService';
+import type { PaymentMethod, Subscription } from '../services/SubscriptionService';
 import ConfirmationModal from '../components/ConfirmationModal';
+import CustomizationWindowStatusBanner from '../components/CustomizationWindowStatusBanner';
 import SubscriptionService from '../services/SubscriptionService';
 import VegetableService from '../services/vegetableService';
 import { getWeeklyAllocationsByVegetableId } from '../utils/weeklyPlanAllocation';
@@ -14,9 +15,13 @@ import {
   hasSavedVegCustomizationForCurrentWeek,
 } from '../utils/subscriptionCustomizations';
 import { isAfterCustomizationClosedForCurrentWeek } from '../utils/customizationSchedule';
+import {
+  formatPaymentMethodLabel,
+  normalizePaymentMethodJoin,
+} from '../utils/paymentMethodDisplay';
 
 const SubscriptionPage = () => {
-  const { user } = useAuth();
+  const { user, updateUser } = useAuth();
   const navigate = useNavigate();
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
   const [pendingAction, setPendingAction] = useState<'pause' | 'resume' | 'change_plan' | null>(null);
@@ -46,26 +51,49 @@ const SubscriptionPage = () => {
   }, [user?.id]);
 
   React.useEffect(() => {
-    if (!user?.id || !activeSubscription?.payment_method_id) return;
+    const pmId = activeSubscription?.payment_method_id ?? user?.subscription?.payment_method_id;
+    if (!user?.id || !pmId) return;
     try {
       localStorage.setItem(`${SETUP_COMPLETE_KEY}_${user.id}`, '1');
     } catch {
       // ignore
     }
     setSetupComplete(true);
-  }, [user?.id, activeSubscription?.payment_method_id]);
+  }, [user?.id, activeSubscription?.payment_method_id, user?.subscription?.payment_method_id]);
 
-  // Fetch payment methods when payment setup popup opens
+  // Load payment methods for sidebar label (Cash on delivery / Card recurring) even when modal is closed
+  React.useEffect(() => {
+    if (!user?.id) return;
+    let cancelled = false;
+    SubscriptionService.getInstance()
+      .getPaymentMethods()
+      .then((list) => {
+        if (!cancelled) setPaymentMethods(list);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
+
+  // Fetch payment methods when payment setup / change modal opens; pre-select current subscription method when changing
   React.useEffect(() => {
     if (!showPaymentSetup) return;
     let cancelled = false;
     setLoadingPaymentMethods(true);
+    const preferredId =
+      activeSubscription?.payment_method_id ?? user?.subscription?.payment_method_id ?? null;
     SubscriptionService.getInstance()
       .getPaymentMethods()
       .then((list) => {
         if (!cancelled) {
           setPaymentMethods(list);
-          setSelectedPaymentMethodId(list.length > 0 ? list[0].id : null);
+          const pick =
+            preferredId && list.some((p) => p.id === preferredId)
+              ? preferredId
+              : list.length > 0
+                ? list[0].id
+                : null;
+          setSelectedPaymentMethodId(pick);
         }
       })
       .finally(() => {
@@ -74,22 +102,31 @@ const SubscriptionPage = () => {
     return () => {
       cancelled = true;
     };
-  }, [showPaymentSetup]);
+  }, [showPaymentSetup, activeSubscription?.payment_method_id, user?.subscription?.payment_method_id]);
 
-  // Fetch real subscription details
+  // Fetch real subscription details (align query with AuthContext; no payment embed)
   React.useEffect(() => {
-    if (user) {
-      const fetchSub = async () => {
-        const { default: SubscriptionService } = await import('../services/SubscriptionService');
-        const data = await SubscriptionService.getInstance().getActiveSubscription(user.id);
-        if (data) {
-          setActiveSubscription(data.subscription);
-          setCurrentDelivery(data.currentDelivery);
-        }
-      };
-      fetchSub();
-    }
-  }, [user]);
+    if (!user?.id) return;
+    const fetchSub = async () => {
+      const data = await SubscriptionService.getInstance().getActiveSubscription(user.id);
+      if (data) {
+        setActiveSubscription(data.subscription);
+        setCurrentDelivery(data.currentDelivery);
+      } else {
+        setActiveSubscription(null);
+        setCurrentDelivery(null);
+      }
+    };
+    fetchSub();
+  }, [user?.id, user?.subscription?.id]);
+
+  const resolvedPaymentMethodId = React.useMemo(
+    () =>
+      (activeSubscription as Subscription | null)?.payment_method_id ??
+      user?.subscription?.payment_method_id ??
+      null,
+    [activeSubscription, user?.subscription?.payment_method_id]
+  );
 
   // Using activeSubscription to suppress lint (will be used for detailed view later)
   React.useEffect(() => {
@@ -104,6 +141,30 @@ const SubscriptionPage = () => {
       navigate('/auth', { state: { from: { pathname: '/my-bucket' } } });
     }
   }, [user, navigate]);
+
+  /** Same source everywhere on My Bucket: subscription row + payment_methods catalog (not hardcoded copy). */
+  const paymentMethodSidebarLabel = React.useMemo(() => {
+    const sub = activeSubscription as Subscription | null;
+    const fromJoin = formatPaymentMethodLabel(normalizePaymentMethodJoin(sub?.payment_method));
+    if (fromJoin) return fromJoin;
+    const id = resolvedPaymentMethodId;
+    if (!id) return 'Not set';
+    if (paymentMethods.length === 0) return 'Loading…';
+    const found = paymentMethods.find((p) => p.id === id);
+    const fromCatalog = formatPaymentMethodLabel(found ?? undefined);
+    if (fromCatalog) return fromCatalog;
+    return 'Unknown method';
+  }, [activeSubscription, paymentMethods, resolvedPaymentMethodId]);
+
+  const paymentMethodDescription = React.useMemo(() => {
+    const sub = activeSubscription as Subscription | null;
+    const pm = normalizePaymentMethodJoin(sub?.payment_method);
+    const d = pm?.description?.trim();
+    if (d) return d;
+    const id = resolvedPaymentMethodId;
+    if (!id || paymentMethods.length === 0) return null;
+    return paymentMethods.find((p) => p.id === id)?.description?.trim() || null;
+  }, [activeSubscription, paymentMethods, resolvedPaymentMethodId]);
 
   if (!user) {
     return null;
@@ -308,26 +369,30 @@ const SubscriptionPage = () => {
   return (
     <>
       <div className="pt-24 min-h-screen bg-gray-50">
-      {/* Header */}
+      {/* Header: title row + customization status inline (no extra vertical block) */}
       <div className="bg-white border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-            <div className="flex items-center">
-              <div className="flex items-center space-x-4">
-                <Link
-                  to="/"
-                  className="flex items-center space-x-2 text-green-600 hover:text-green-700 transition-colors"
-                >
-                  <ArrowLeft className="h-5 w-5" />
-                  <span>Back to Home</span>
-                </Link>
-                <div className="h-6 w-px bg-gray-300"></div>
-                <h1 className="text-2xl font-bold text-gray-900">My Bucket</h1>
-              </div>
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 sm:py-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+            <div className="flex min-w-0 items-center space-x-4">
+              <Link
+                to="/"
+                className="flex shrink-0 items-center space-x-2 text-green-600 hover:text-green-700 transition-colors"
+              >
+                <ArrowLeft className="h-5 w-5" />
+                <span>Back to Home</span>
+              </Link>
+              <div className="h-6 w-px shrink-0 bg-gray-300" />
+              <h1 className="text-2xl font-bold text-gray-900">My Bucket</h1>
             </div>
+            {user.subscription && user.subscription.status !== 'cancelled' && (
+              <CustomizationWindowStatusBanner variant="header" />
+            )}
+          </div>
         </div>
       </div>
 
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+
         {/* Progress: “Automated payment” ticks only after *this calendar week’s* customization close (not Mon–Tue before open; not just !isCustomizationAllowed). */}
         {user.subscription && user.subscription.status !== 'cancelled' && (() => {
           const rawCust = normalizeSubscriptionCustomizations(user.subscription?.customizations);
@@ -336,15 +401,26 @@ const SubscriptionPage = () => {
           const paymentSaved = Boolean(activeSubscription?.payment_method_id) || setupComplete;
           const isEstablishedSubscriber = paymentSaved;
           const closedForThisWeek = isAfterCustomizationClosedForCurrentWeek();
-          const automatedPaymentDone = paymentSaved && closedForThisWeek;
+          const subPm = normalizePaymentMethodJoin(
+            (activeSubscription as Subscription | null)?.payment_method
+          );
+          /** DB seed: `recurring` = card; `cash_on_delivery` = COD — only card gets “Automated payment” step. */
+          const showAutomatedPaymentStep = subPm?.code === 'recurring';
+          const automatedPaymentDone = showAutomatedPaymentStep && paymentSaved && closedForThisWeek;
 
           const steps = isEstablishedSubscriber
-            ? [
-                { key: 'select', label: 'Select bucket', done: true, optional: false },
-                { key: 'customize', label: 'Customization', optional: true, done: hasCustomizeDone },
-                { key: 'payment', label: 'Automated payment', optional: false, done: automatedPaymentDone },
-                { key: 'delivery', label: 'Delivery', optional: false, done: false },
-              ]
+            ? showAutomatedPaymentStep
+              ? [
+                  { key: 'select', label: 'Select bucket', done: true, optional: false },
+                  { key: 'customize', label: 'Customization', optional: true, done: hasCustomizeDone },
+                  { key: 'automated_payment', label: 'Automated payment', optional: false, done: automatedPaymentDone },
+                  { key: 'delivery', label: 'Delivery', optional: false, done: false },
+                ]
+              : [
+                  { key: 'select', label: 'Select bucket', done: true, optional: false },
+                  { key: 'customize', label: 'Customization', optional: true, done: hasCustomizeDone },
+                  { key: 'delivery', label: 'Delivery', optional: false, done: false },
+                ]
             : [
                 { key: 'select', label: 'Select bucket', done: true, optional: false },
                 { key: 'customize', label: 'Customization', optional: true, done: hasCustomizeDone },
@@ -354,11 +430,15 @@ const SubscriptionPage = () => {
               ];
 
           const currentIndex = isEstablishedSubscriber
-            ? !hasCustomizeDone
-              ? 1
-              : !automatedPaymentDone
-                ? 2
-                : 3
+            ? showAutomatedPaymentStep
+              ? !hasCustomizeDone
+                ? 1
+                : !automatedPaymentDone
+                  ? 2
+                  : 3
+              : !hasCustomizeDone
+                ? 1
+                : 2
             : !hasCustomizeDone
               ? 1
               : hasAcceptedReview
@@ -383,7 +463,13 @@ const SubscriptionPage = () => {
                               : 'border-gray-300 bg-white text-gray-400'
                         }`}
                       >
-                        {step.done ? <Check className="h-5 w-5" /> : i + 1}
+                        {step.done ? (
+                          <Check className="h-5 w-5" />
+                        ) : step.key === 'automated_payment' ? (
+                          <CreditCard className="h-4 w-4" aria-hidden />
+                        ) : (
+                          i + 1
+                        )}
                       </div>
                       <span className={`mt-1.5 text-[10px] sm:text-xs font-medium text-center leading-tight max-w-[4.5rem] sm:max-w-[5.5rem] ${step.done || i === currentIndex ? 'text-gray-900' : 'text-gray-500'}`}>
                         {step.label}
@@ -525,12 +611,6 @@ const SubscriptionPage = () => {
                             <span>Accept and proceed to payment</span>
                           </button>
                         )}
-                        {(Boolean(activeSubscription?.payment_method_id) || setupComplete) && (
-                          <p className="mt-6 text-sm text-gray-600 text-center">
-                            Save changes anytime from <Link to="/customize" className="text-green-600 font-medium hover:underline">Customize</Link>
-                            . Payment runs automatically; no need to accept again.
-                          </p>
-                        )}
                       </div>
 
                       {/* Your Subscription - right sidebar (cart-style) */}
@@ -565,6 +645,19 @@ const SubscriptionPage = () => {
                               <span className="font-semibold text-green-600">
                                 {new Date(user.subscription.nextDelivery).toLocaleDateString()}
                               </span>
+                            </div>
+                            <div className="flex items-center justify-between gap-2 pt-2 border-t border-gray-100">
+                              <p className="min-w-0 flex-1 text-sm leading-snug">
+                                <span className="text-gray-600">Payment method: </span>
+                                <span className="font-medium text-gray-900">{paymentMethodSidebarLabel}</span>
+                              </p>
+                              <button
+                                type="button"
+                                onClick={() => setShowPaymentSetup(true)}
+                                className="shrink-0 text-[11px] font-medium px-2 py-0.5 rounded-md border border-green-200 text-green-700 bg-green-50/80 hover:bg-green-100 hover:border-green-300 transition-colors"
+                              >
+                                {activeSubscription?.payment_method_id || setupComplete ? 'Change' : 'Set up'}
+                              </button>
                             </div>
                           </div>
                           <button
@@ -661,7 +754,7 @@ const SubscriptionPage = () => {
                           <div className="flex items-center justify-between p-4 border-b border-gray-200">
                             <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
                               <CreditCard className="h-5 w-5 text-green-600" />
-                              Set up payment
+                              {activeSubscription?.payment_method_id || setupComplete ? 'Change payment method' : 'Set up payment'}
                             </h3>
                             <button
                               type="button"
@@ -674,7 +767,9 @@ const SubscriptionPage = () => {
                           </div>
                           <div className="p-6">
                             <p className="text-sm text-gray-600 mb-4">
-                              Choose how you’d like to pay for your bucket. You can update this later.
+                              {activeSubscription?.payment_method_id || setupComplete
+                                ? 'Choose how you’d like to pay. Your selection applies to future deliveries.'
+                                : 'Choose how you’d like to pay for your bucket. You can update this later.'}
                             </p>
                             {loadingPaymentMethods ? (
                               <div className="py-6 text-center text-gray-500 text-sm">Loading payment methods…</div>
@@ -711,15 +806,37 @@ const SubscriptionPage = () => {
                               type="button"
                               disabled={loadingPaymentMethods || paymentMethods.length === 0 || !selectedPaymentMethodId}
                               onClick={async () => {
-                                const subId = user?.subscription?.id;
-                                if (selectedPaymentMethodId && subId) {
-                                  try {
-                                    await SubscriptionService.getInstance().updateSubscriptionPaymentMethod(subId, selectedPaymentMethodId);
-                                  } catch (e) {
-                                    console.error('Failed to save payment method:', e);
-                                    alert('Failed to save payment method. Please try again.');
-                                    return;
+                                if (!user?.id || !selectedPaymentMethodId) return;
+                                const subId =
+                                  (activeSubscription as Subscription | null)?.id ??
+                                  user.subscription?.id;
+                                if (!subId) {
+                                  alert('No subscription found. Please refresh the page.');
+                                  return;
+                                }
+                                try {
+                                  const row =
+                                    await SubscriptionService.getInstance().updateSubscriptionPaymentMethod(
+                                      subId,
+                                      selectedPaymentMethodId,
+                                      user.id
+                                    );
+                                  const refreshed =
+                                    await SubscriptionService.getInstance().getActiveSubscription(user.id);
+                                  if (refreshed?.subscription) setActiveSubscription(refreshed.subscription);
+                                  if (user.subscription) {
+                                    await updateUser({
+                                      subscription: {
+                                        ...user.subscription,
+                                        payment_method_id:
+                                          row.payment_method_id ?? selectedPaymentMethodId,
+                                      },
+                                    });
                                   }
+                                } catch (e) {
+                                  console.error('Failed to save payment method:', e);
+                                  alert('Failed to save payment method. Please try again.');
+                                  return;
                                 }
                                 setShowPaymentSetup(false);
                                 if (user?.id) {
@@ -733,7 +850,7 @@ const SubscriptionPage = () => {
                               }}
                               className="mt-6 w-full py-3 rounded-xl font-semibold bg-green-600 text-white hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                             >
-                              Done
+                              {activeSubscription?.payment_method_id || setupComplete ? 'Save payment method' : 'Done'}
                             </button>
                           </div>
                         </div>
@@ -791,13 +908,28 @@ const SubscriptionPage = () => {
                         </div>
 
                         <div>
-                          <h4 className="font-semibold text-gray-900 mb-4">Payment Method</h4>
+                          <div className="flex items-center justify-between gap-2 mb-4">
+                            <h4 className="font-semibold text-gray-900">Payment Method</h4>
+                            <button
+                              type="button"
+                              onClick={() => setShowPaymentSetup(true)}
+                              className="shrink-0 text-[11px] font-medium px-2 py-0.5 rounded-md border border-green-200 text-green-700 bg-green-50/80 hover:bg-green-100 hover:border-green-300 transition-colors"
+                            >
+                              Change
+                            </button>
+                          </div>
                           <div className="bg-gray-50 rounded-xl p-4 mb-4">
                             <div className="flex items-center space-x-3">
-                              <Package className="h-5 w-5 text-gray-600" />
-                              <div>
-                                <div className="font-medium text-gray-900">Cash on Delivery</div>
-                                <div className="text-sm text-gray-600">Pay when you receive your vegetables</div>
+                              <Package className="h-5 w-5 text-gray-600 shrink-0" />
+                              <div className="min-w-0">
+                                <div className="font-medium text-gray-900">
+                                  {paymentMethodSidebarLabel === 'Loading…' ? 'Loading…' : paymentMethodSidebarLabel}
+                                </div>
+                                {paymentMethodDescription ? (
+                                  <div className="text-sm text-gray-600 mt-0.5">{paymentMethodDescription}</div>
+                                ) : paymentMethodSidebarLabel === 'Not set' ? (
+                                  <div className="text-sm text-gray-600 mt-0.5">Choose how you’d like to pay — use Change above.</div>
+                                ) : null}
                               </div>
                             </div>
                           </div>

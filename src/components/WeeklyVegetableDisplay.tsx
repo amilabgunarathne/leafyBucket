@@ -3,6 +3,7 @@ import { Shuffle, Lock, Leaf, TreePine, Flower, RefreshCw } from 'lucide-react';
 import { useWeekly } from '../contexts/WeeklyContext';
 import VegetableService from '../services/vegetableService';
 import { Vegetable } from '../data/vegetables';
+import { formatCustomizationInstant } from '../utils/customizationSchedule';
 
 interface WeeklyVegetableDisplayProps {
   planId: 'small' | 'medium' | 'large';
@@ -112,7 +113,7 @@ const WeeklyVegetableDisplay: React.FC<WeeklyVegetableDisplayProps> = ({
             <span className="text-sm text-orange-800">
               Customization period has ended.
               {scheduleDisplay?.nextOpeningDate
-                ? ` Changes will be available next ${scheduleDisplay.nextOpeningDate.toLocaleDateString('en-US', { weekday: 'long' })}.`
+                ? ` Changes will be available starting ${formatCustomizationInstant(scheduleDisplay.nextOpeningDate)}.`
                 : ' Changes will be available when the next customization window opens.'}
             </span>
           </div>

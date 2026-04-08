@@ -224,13 +224,25 @@ function formatTimeForDisplay(timeStr: string): string {
   return `${h}:${minutes.toString().padStart(2, '0')} ${ampm}`;
 }
 
-/** Human-readable labels from schedule (for customer UI). */
+/** Human-readable labels from schedule (weekday + time only, recurring pattern). */
 export function formatScheduleDisplay(schedule: CustomizationScheduleRow | null): { openLabel: string; closeLabel: string } | null {
   const s = schedule || DEFAULT;
   return {
     openLabel: `${DAY_NAMES[s.open_dow]} ${formatTimeForDisplay(s.open_time)}`,
     closeLabel: `${DAY_NAMES[s.close_dow]} ${formatTimeForDisplay(s.close_time)}`
   };
+}
+
+/** Formats a single instant for UI (weekday, calendar date, time). Uses local timezone. */
+export function formatCustomizationInstant(d: Date, locale = 'en-US'): string {
+  return d.toLocaleString(locale, {
+    weekday: 'long',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
 }
 
 /**
@@ -256,6 +268,52 @@ export function getCustomizationWindowBoundsForLocalWeek(
   const { hours: ch, minutes: cm } = parseTime(s.close_time);
   windowEnd.setHours(ch, cm, 59, 999);
   return { windowStart, windowEnd };
+}
+
+/**
+ * Open/close labels for the customization window in the **local calendar week** (Mon–Sun) that contains `now`,
+ * with actual calendar dates so any `open_dow` / `close_dow` from the DB is shown with concrete dates.
+ */
+export function formatScheduleDisplayWithWeekDates(
+  now: Date,
+  schedule: CustomizationScheduleRow | null
+): { openLabel: string; closeLabel: string } {
+  const { windowStart, windowEnd } = getCustomizationWindowBoundsForLocalWeek(now, schedule);
+  return {
+    openLabel: formatCustomizationInstant(windowStart),
+    closeLabel: formatCustomizationInstant(windowEnd),
+  };
+}
+
+export interface ScheduleWindowPart {
+  weekday: string;
+  dateStr: string;
+  timeStr: string;
+}
+
+export interface ScheduleWindowParts {
+  open: ScheduleWindowPart;
+  close: ScheduleWindowPart;
+}
+
+function splitInstant(d: Date, locale = 'en-US'): ScheduleWindowPart {
+  return {
+    weekday: d.toLocaleDateString(locale, { weekday: 'long' }),
+    dateStr: d.toLocaleDateString(locale, { month: 'short', day: 'numeric', year: 'numeric' }),
+    timeStr: d.toLocaleTimeString(locale, { hour: 'numeric', minute: '2-digit' }),
+  };
+}
+
+/** Same week window as {@link formatScheduleDisplayWithWeekDates}, split for scannable UI (cards / timeline). */
+export function getScheduleWindowPartsForLocalWeek(
+  now: Date,
+  schedule: CustomizationScheduleRow | null
+): ScheduleWindowParts {
+  const { windowStart, windowEnd } = getCustomizationWindowBoundsForLocalWeek(now, schedule);
+  return {
+    open: splitInstant(windowStart),
+    close: splitInstant(windowEnd),
+  };
 }
 
 /** True only after this calendar week's customization close (e.g. Fri 23:59), not Mon–Tue before Wed opens. */

@@ -11,11 +11,19 @@ import {
 import VegetableService from '../services/vegetableService';
 import { supabase } from '../lib/supabase';
 import { getCurrentWeekDateRange, pickMarketWeekIdForApp } from '../utils/marketWeekUtils';
+import {
+  computeNextOpening,
+  formatScheduleDisplayWithWeekDates,
+  getScheduleContext,
+  getScheduleWindowPartsForLocalWeek,
+  type ScheduleWindowParts,
+} from '../utils/customizationSchedule';
 
 interface ScheduleDisplay {
   openLabel: string;
   closeLabel: string;
   nextOpeningDate: Date | null;
+  windowParts: ScheduleWindowParts;
 }
 
 interface WeeklyContextType {
@@ -88,6 +96,17 @@ export const WeeklyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const updateStatus = () => {
     setIsCustomizationAllowed(isCustomizationOpen());
     setTimeRemaining(getCustomizationTimeRemaining());
+    const ctx = getScheduleContext();
+    if (ctx) {
+      const now = new Date();
+      const labels = formatScheduleDisplayWithWeekDates(now, ctx.schedule);
+      setScheduleDisplay({
+        openLabel: labels.openLabel,
+        closeLabel: labels.closeLabel,
+        nextOpeningDate: computeNextOpening(now, ctx.schedule),
+        windowParts: getScheduleWindowPartsForLocalWeek(now, ctx.schedule),
+      });
+    }
   };
 
   useEffect(() => {
@@ -103,7 +122,7 @@ export const WeeklyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       try {
         const { default: SubscriptionService } = await import('../services/SubscriptionService');
         const { getOrCreateCurrentWeek } = await import('../utils/marketWeekUtils');
-        const { setScheduleContext, formatScheduleDisplay, computeNextOpening } = await import('../utils/customizationSchedule');
+        const { setScheduleContext } = await import('../utils/customizationSchedule');
         const { supabase } = await import('../lib/supabase');
 
         const bucketTypes = await SubscriptionService.getInstance().getBucketTypes();
@@ -123,14 +142,6 @@ export const WeeklyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           schedule = scheduleFromGlobalCustomizationRow(schedData);
         }
         setScheduleContext(schedule, currentWeek.is_locked === true);
-
-        const labels = formatScheduleDisplay(schedule);
-        setScheduleDisplay(labels ? {
-          openLabel: labels.openLabel,
-          closeLabel: labels.closeLabel,
-          nextOpeningDate: computeNextOpening(new Date(), schedule)
-        } : null);
-
         updateStatus();
 
         const { getVegCountFromBucketType } = await import('../utils/marketWeekUtils');

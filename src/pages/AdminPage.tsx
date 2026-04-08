@@ -6,7 +6,14 @@ import VegetableService, { Vegetable } from '../services/vegetableService';
 import { supabase } from '../lib/supabase';
 import type { BucketType } from '../services/SubscriptionService';
 import { getCurrentWeekDateRange, getNextWeekDateRange, getVegCountFromBucketType } from '../utils/marketWeekUtils';
-import { formatScheduleDisplay, getScheduleEditState, scheduleFromMarketWeek, computeNextOpening } from '../utils/customizationSchedule';
+import {
+  formatScheduleDisplayWithWeekDates,
+  getScheduleEditState,
+  getScheduleWindowPartsForLocalWeek,
+  scheduleFromMarketWeek,
+  computeNextOpening,
+} from '../utils/customizationSchedule';
+import { ScheduleWindowPairCards } from '../components/ScheduleWindowPairCards';
 
 export interface MarketWeek {
   id: string;
@@ -634,10 +641,11 @@ const AdminPage = () => {
 
                 {/* Current week customization window (open/close) - always visible so you can find it */}
                 {(() => {
+                  const now = new Date();
                   const currentWeekRow = currentWeekId ? marketWeeks.find((w) => w.id === currentWeekId) : null;
                   const scheduleRow = scheduleFromMarketWeek(currentWeekRow ?? undefined);
-                  const scheduleLabels = formatScheduleDisplay(scheduleRow);
-                  const now = new Date();
+                  const scheduleLabels = formatScheduleDisplayWithWeekDates(now, scheduleRow);
+                  const windowParts = getScheduleWindowPartsForLocalWeek(now, scheduleRow);
                   const scheduleEditState = getScheduleEditState(now, scheduleRow);
                   const nextOpen = computeNextOpening(now, scheduleRow);
                   const isBeforeNextWindow = now.getTime() < nextOpen.getTime();
@@ -736,9 +744,11 @@ const AdminPage = () => {
                         </div>
                       ) : (
                         <>
-                          <p className="text-sm text-gray-700">
-                            {scheduleLabels ? `Opens ${scheduleLabels.openLabel} · Closes ${scheduleLabels.closeLabel}` : 'Set when customization opens and closes.'}
-                          </p>
+                          {scheduleLabels ? (
+                            <ScheduleWindowPairCards parts={windowParts} tone="muted" />
+                          ) : (
+                            <p className="text-sm text-gray-700">Set when customization opens and closes.</p>
+                          )}
                           <button type="button" onClick={() => setCurrentWeekScheduleEditOpen(true)} className="mt-2 text-sm text-green-600 hover:text-green-800 font-medium">Edit open/close times</button>
                         </>
                       )}

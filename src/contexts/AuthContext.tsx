@@ -35,6 +35,8 @@ interface User {
     id: string; // New field
     plan: 'small' | 'medium' | 'large';
     status: 'active' | 'paused' | 'cancelled';
+    /** Mirrors `subscriptions.payment_method_id` for profile load / optimistic UI */
+    payment_method_id?: string | null;
     nextDelivery: string;
     customizations: {
       excludedVegetables: string[];
@@ -136,6 +138,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           id: subscription.id,
           plan: mapBucketTypeToPlan(subscription.bucket_type?.name),
           status: subscription.status,
+          payment_method_id: (subscription as { payment_method_id?: string | null }).payment_method_id ?? null,
           nextDelivery: subscription.next_delivery || new Date().toISOString(), // Fallback
           customizations: normalizeSubscriptionCustomizations(subRow?.customizations)
         } : undefined

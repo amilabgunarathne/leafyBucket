@@ -7,6 +7,7 @@ import { useWeekly } from '../contexts/WeeklyContext';
 import { useAuth } from '../contexts/AuthContext';
 import WeeklyScheduleInfo from '../components/WeeklyScheduleInfo';
 import { effectiveVegCustomizations, normalizeSubscriptionCustomizations } from '../utils/subscriptionCustomizations';
+import { formatCustomizationInstant } from '../utils/customizationSchedule';
 
 const CustomizationPage = () => {
   const { user, updateUser } = useAuth();
@@ -14,7 +15,6 @@ const CustomizationPage = () => {
   const {
     getSelectionForPlan,
     isCustomizationAllowed,
-    timeRemaining,
     scheduleDisplay,
     refreshWeeklySelection,
   } = weekly;
@@ -416,20 +416,6 @@ const CustomizationPage = () => {
     );
   };
 
-  const formatTimeRemaining = () => {
-    if (timeRemaining.isExpired) {
-      return "Customization period has ended";
-    }
-
-    if (timeRemaining.days > 0) {
-      return `${timeRemaining.days} days, ${timeRemaining.hours} hours remaining`;
-    } else if (timeRemaining.hours > 0) {
-      return `${timeRemaining.hours} hours, ${timeRemaining.minutes} minutes remaining`;
-    } else {
-      return `${timeRemaining.minutes} minutes remaining`;
-    }
-  };
-
   // No subscription or cancelled — must select a bucket first (no default)
   if (user && (!user.subscription || user.subscription.status === 'cancelled')) {
     return (
@@ -483,35 +469,6 @@ const CustomizationPage = () => {
                   <span className="font-semibold text-green-700">Fixed monthly pricing, smart budget & weight allocation! </span>
                   Choose your vegetables within this week's limit. Our system automatically balances variety and adjusts weights based on vegetable categories.
                 </p>
-
-                {/* Customization Status Banner */}
-                {!isCustomizationAllowed ? (
-                  <div className="max-w-2xl mx-auto bg-orange-50 border-2 border-orange-200 rounded-xl p-4">
-                    <div className="flex items-center justify-center space-x-3 text-center">
-                      <Clock className="h-6 w-6 text-orange-600 shrink-0" />
-                      <div>
-                        <div className="font-semibold text-orange-900">Customization Closed</div>
-                        <div className="text-sm text-orange-700">
-                          {scheduleDisplay
-                            ? `Opens ${scheduleDisplay.openLabel}. Closes ${scheduleDisplay.closeLabel}.`
-                            : 'Opening and closing times are set by the market.'}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="max-w-2xl mx-auto bg-green-50 border-2 border-green-200 rounded-xl p-4">
-                    <div className="flex items-center justify-center space-x-3 text-center">
-                      <Check className="h-6 w-6 text-green-600 shrink-0" />
-                      <div>
-                        <div className="font-semibold text-green-900">Customization Available</div>
-                        <div className="text-sm text-green-700">
-                          {formatTimeRemaining()}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
               </div>
             </div>
           </section>
@@ -550,7 +507,7 @@ const CustomizationPage = () => {
                             <div className="text-sm text-orange-700">
                               This week's selection is finalized.
                               {scheduleDisplay?.nextOpeningDate
-                                ? ` Changes will be available next ${scheduleDisplay.nextOpeningDate.toLocaleDateString('en-US', { weekday: 'long' })}.`
+                                ? ` Changes will be available starting ${formatCustomizationInstant(scheduleDisplay.nextOpeningDate)}.`
                                 : ' Changes will be available when the next customization window opens.'}
                             </div>
                           </div>
