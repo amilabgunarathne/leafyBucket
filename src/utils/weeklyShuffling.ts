@@ -45,7 +45,7 @@ export const getWeekDates = (weekId: string) => {
   };
 };
 
-// Schedule: from DB (customization_schedule) + per-week is_locked. Default Wed 12:00 → Fri 23:59.
+// Schedule: market_weeks open/close + per-week is_locked. Default Wed 12:00 → Fri 23:59 when fields null.
 // WeeklyContext sets schedule context; these use it when available.
 
 import { getIsOpen, getDeadline, computeNextOpening, getScheduleContext, getTimeRemaining } from './customizationSchedule';

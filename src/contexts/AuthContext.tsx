@@ -115,7 +115,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       // 2. Fetch subscription (active or paused – paused is still a plan, just deliveries on hold)
-      const { data: subscription } = await supabase
+      let { data: subscription } = await supabase
         .from('subscriptions')
         .select('*, bucket_type:bucket_types(*)')
         .eq('user_id', userId)
@@ -124,8 +124,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         .limit(1)
         .maybeSingle();
 
+      // Roll past-open deliveries into the table (delivered) so the next week is current; then refetch for fresh next_delivery*
+      if (subscription) {
+        const { default: SubscriptionService } = await import('../services/SubscriptionService');
+        await SubscriptionService.getInstance().advancePastOpenDeliveries(userId);
+        const { data: subFresh } = await supabase
+          .from('subscriptions')
+          .select('*, bucket_type:bucket_types(*)')
+          .eq('user_id', userId)
+          .in('status', ['active', 'paused'])
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (subFresh) subscription = subFresh;
+      }
+
       // Construct User Object
       const subRow = subscription as Record<string, unknown> | null | undefined;
+      const subAny = subscription as {
+        next_delivery?: string | null;
+        next_delivery_date?: string | null;
+      } | null;
+      const nextDel =
+        subAny?.next_delivery_date ||
+        subAny?.next_delivery ||
+        new Date().toISOString();
       const userData: User = {
         id: userId,
         email: email,
@@ -139,7 +162,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           plan: mapBucketTypeToPlan(subscription.bucket_type?.name),
           status: subscription.status,
           payment_method_id: (subscription as { payment_method_id?: string | null }).payment_method_id ?? null,
-          nextDelivery: subscription.next_delivery || new Date().toISOString(), // Fallback
+          nextDelivery: nextDel,
           customizations: normalizeSubscriptionCustomizations(subRow?.customizations)
         } : undefined
       };

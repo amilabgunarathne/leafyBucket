@@ -115,7 +115,7 @@ export const WeeklyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return () => clearInterval(interval);
   }, []);
 
-  // Fetch bucket types, current week (auto or from DB), customization schedule from DB; set context and display
+  // Fetch bucket types, current market week (schedule + lock); set customization context and display
   useEffect(() => {
     if (!serviceInitialized) return;
     const fetchPlanLimits = async () => {
@@ -127,20 +127,11 @@ export const WeeklyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
         const bucketTypes = await SubscriptionService.getInstance().getBucketTypes();
         const { data: weeksData } = await supabase.from('market_weeks').select('id, week_start_date, week_end_date, is_locked, open_dow, open_time, close_dow, close_time').order('week_start_date', { ascending: false });
-        const { data: schedData } = await supabase.from('customization_schedule').select('open_dow, open_time, close_dow, close_time').limit(1).maybeSingle();
         const currentWeek = getOrCreateCurrentWeek(weeksData || []);
 
-        const { scheduleFromMarketWeek, scheduleFromGlobalCustomizationRow } = await import('../utils/customizationSchedule');
-        const isSyntheticWeek = String(currentWeek.id).startsWith('synthetic-');
-        const weekHasNoSchedule =
-          currentWeek.open_dow == null &&
-          currentWeek.close_dow == null &&
-          (currentWeek.open_time == null || String(currentWeek.open_time).trim() === '') &&
-          (currentWeek.close_time == null || String(currentWeek.close_time).trim() === '');
-        let schedule = scheduleFromMarketWeek(currentWeek);
-        if (schedData && (isSyntheticWeek || weekHasNoSchedule)) {
-          schedule = scheduleFromGlobalCustomizationRow(schedData);
-        }
+        const { scheduleFromMarketWeek } = await import('../utils/customizationSchedule');
+        // Source of truth: market_weeks row for the current week (open_dow/time, close_dow/time); null fields use built-in defaults.
+        const schedule = scheduleFromMarketWeek(currentWeek);
         setScheduleContext(schedule, currentWeek.is_locked === true);
         updateStatus();
 

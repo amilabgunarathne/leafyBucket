@@ -88,7 +88,7 @@ export function getNextWeekDateRange(): { week_start_date: string; week_end_date
  * Return the market week used for customization schedule (same row admin edits in Bucket types).
  * 1) Row whose week_start_date matches this week's Monday (preferred).
  * 2) Else row that contains today's local date.
- * 3) Else synthetic week with default Wed/Fri times (customer UI should fall back to customization_schedule if needed).
+ * 3) Else synthetic week with default Wed/Fri times (schedule uses built-in defaults until a real market_weeks row exists).
  */
 export function getOrCreateCurrentWeek(weeks: MarketWeekRow[]): MarketWeekRow {
   const byMonday = getMarketWeekForCurrentMonday(weeks);

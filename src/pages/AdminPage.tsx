@@ -1,11 +1,12 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { ArrowLeft, RefreshCw, Upload, Download, Settings, AlertCircle, CheckCircle, ExternalLink, Copy, Eye, EyeOff, Shield, User, Plus, Edit, Trash2, ToggleLeft, ToggleRight, Package, DollarSign, Users, LayoutGrid, Calendar, Percent } from 'lucide-react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { ArrowLeft, RefreshCw, Upload, Download, Settings, AlertCircle, CheckCircle, ExternalLink, Copy, Eye, EyeOff, Shield, User, Plus, Edit, Trash2, ToggleLeft, ToggleRight, Package, DollarSign, Users, LayoutGrid, Calendar, Percent, Truck } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import VegetableService, { Vegetable } from '../services/vegetableService';
 import { supabase } from '../lib/supabase';
 import type { BucketType } from '../services/SubscriptionService';
 import { getCurrentWeekDateRange, getNextWeekDateRange, getVegCountFromBucketType } from '../utils/marketWeekUtils';
+import { formatPaymentMethodLabel } from '../utils/paymentMethodDisplay';
 import {
   formatScheduleDisplayWithWeekDates,
   getScheduleEditState,
@@ -27,16 +28,35 @@ export interface MarketWeek {
   close_time?: string | null;
 }
 
-export interface CustomizationSchedule {
-  id: string;
-  open_dow: number;
-  open_time: string;
-  close_dow: number;
-  close_time: string;
-  updated_at?: string;
+const toWeekStart = (d: string | null | undefined): string => (d ? String(d).slice(0, 10) : '');
+
+/** Supabase/PostgREST errors are often plain objects; String(e) becomes "[object Object]". */
+function formatUnknownError(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  if (e != null && typeof e === 'object') {
+    const o = e as Record<string, unknown>;
+    const msg = o.message != null ? String(o.message) : '';
+    const details = o.details != null ? String(o.details) : '';
+    const hint = o.hint != null ? String(o.hint) : '';
+    const code = o.code != null ? String(o.code) : '';
+    const parts = [msg, details, hint, code ? `(${code})` : ''].filter((s) => s.length > 0);
+    if (parts.length) return parts.join(' — ');
+  }
+  try {
+    return JSON.stringify(e);
+  } catch {
+    return String(e);
+  }
 }
 
-const toWeekStart = (d: string | null | undefined): string => (d ? String(d).slice(0, 10) : '');
+/** Delivery statuses admins can set (must match DB / RLS). Unknown legacy values still show in the list. */
+const WEEKLY_DELIVERY_STATUSES = ['open', 'locked', 'delivered', 'skipped', 'cancelled'] as const;
+
+function statusOptionsForRow(current: string): string[] {
+  const allowed = WEEKLY_DELIVERY_STATUSES as readonly string[];
+  if (allowed.includes(current)) return [...WEEKLY_DELIVERY_STATUSES];
+  return [current, ...WEEKLY_DELIVERY_STATUSES];
+}
 
 const AdminPage = () => {
   const { user } = useAuth();
@@ -55,7 +75,6 @@ const AdminPage = () => {
   /** Inline price draft per vegetable id (string so field can be empty while editing). Cleared on blur after save. */
   const [inlinePriceDraft, setInlinePriceDraft] = useState<Record<string, string>>({});
   const [vegCategories, setVegCategories] = useState<{ id: string; name: string; budget_share_percent: number }[]>([]);
-  const [customizationSchedule, setCustomizationSchedule] = useState<CustomizationSchedule | null>(null);
   /** Per-bucket-type category ratios (root/leafy/bushy %). Key = bucket_type_id. */
   const [bucketTypeRatios, setBucketTypeRatios] = useState<Record<string, { root: number; leafy: number; bushy: number }>>({});
   /** veg_categories id by name (root, leafy, bushy) for saving ratios. */
@@ -70,6 +89,28 @@ const AdminPage = () => {
   /** Bucket types tab: current week customization window (open/close) editing */
   const [currentWeekScheduleEditOpen, setCurrentWeekScheduleEditOpen] = useState(false);
   const [currentWeekScheduleForm, setCurrentWeekScheduleForm] = useState({ open_dow: 3, open_time: '12:00', close_dow: 5, close_time: '23:59' });
+
+  /** This week’s ship list (Mon–Sun local, same range as Market weeks) */
+  const [weeklyOrders, setWeeklyOrders] = useState<
+    {
+      deliveryId: string;
+      scheduledDate: string;
+      status: string;
+      deliveryIndex: number;
+      weeklyBudget: number;
+      subscriptionId: string;
+      subscriptionStatus: string;
+      customerName: string;
+      email: string;
+      addressLine: string;
+      city: string;
+      bucketName: string;
+      paymentLabel: string;
+    }[]
+  >([]);
+  const [weeklyOrdersLoading, setWeeklyOrdersLoading] = useState(false);
+  const [weeklyOrdersRange, setWeeklyOrdersRange] = useState<{ start: string; end: string } | null>(null);
+  const [weeklyOrderSavingId, setWeeklyOrderSavingId] = useState<string | null>(null);
 
   /** Only bulk-available veggies: used for bucket type "week vegetables" list so admin can't assign retail-only items to buckets */
   const vegetablesForBucket = useMemo(
@@ -129,8 +170,6 @@ const AdminPage = () => {
 
       const { data: profData } = await supabase.from('profiles').select('id, email, full_name, role');
       const { data: weeksData } = await supabase.from('market_weeks').select('id, week_start_date, week_end_date, is_locked, created_at, open_dow, open_time, close_dow, close_time').order('week_start_date', { ascending: false });
-      const { data: schedData } = await supabase.from('customization_schedule').select('id, open_dow, open_time, close_dow, close_time, updated_at').limit(1);
-      setCustomizationSchedule(Array.isArray(schedData) && schedData.length > 0 ? (schedData[0] as CustomizationSchedule) : null);
       const { data: catData } = await supabase.from('veg_categories').select('id, name, budget_share_percent').order('name');
       // Dedupe by name so we show one row per category (DB may have had duplicate seeds)
       const byName = new Map<string, { id: string; name: string; budget_share_percent: number }>();
@@ -178,14 +217,25 @@ const AdminPage = () => {
           weeksList = [{ id: row.id, week_start_date: row.week_start_date }, ...weeksList];
           curWeek = { id: row.id, week_start_date: row.week_start_date };
         } else {
-          const { data: inserted } = await supabase.from('market_weeks').insert({
-            week_start_date: curRange.week_start_date,
-            week_end_date: curRange.week_end_date
-          }).select('id, week_start_date, week_end_date, is_locked, created_at, open_dow, open_time, close_dow, close_time').single();
-          if (inserted) {
+          const { data: inserted, error: curUpsertErr } = await supabase
+            .from('market_weeks')
+            .upsert(
+              {
+                week_start_date: curRange.week_start_date,
+                week_end_date: curRange.week_end_date,
+              },
+              { onConflict: 'week_start_date' }
+            )
+            .select('id, week_start_date, week_end_date, is_locked, created_at, open_dow, open_time, close_dow, close_time')
+            .single();
+          if (curUpsertErr) {
+            console.error('[loadData] market_weeks upsert current week', curUpsertErr.message);
+          } else if (inserted) {
             const row = inserted as MarketWeek;
-            weeks = [row, ...weeks];
-            weeksList = [{ id: row.id, week_start_date: row.week_start_date }, ...weeksList];
+            const idx = weeks.findIndex((w) => w.id === row.id);
+            if (idx >= 0) weeks[idx] = row;
+            else weeks = [row, ...weeks];
+            weeksList = weeks.map((w) => ({ id: w.id, week_start_date: w.week_start_date }));
             curWeek = { id: row.id, week_start_date: row.week_start_date };
           }
         }
@@ -198,13 +248,24 @@ const AdminPage = () => {
           weeksList = weeks.map((w) => ({ id: w.id, week_start_date: w.week_start_date }));
           nxtWeek = { id: row.id, week_start_date: row.week_start_date };
         } else {
-          const { data: inserted } = await supabase.from('market_weeks').insert({
-            week_start_date: nxtRange.week_start_date,
-            week_end_date: nxtRange.week_end_date
-          }).select('id, week_start_date, week_end_date, is_locked, created_at, open_dow, open_time, close_dow, close_time').single();
-          if (inserted) {
+          const { data: inserted, error: nxtUpsertErr } = await supabase
+            .from('market_weeks')
+            .upsert(
+              {
+                week_start_date: nxtRange.week_start_date,
+                week_end_date: nxtRange.week_end_date,
+              },
+              { onConflict: 'week_start_date' }
+            )
+            .select('id, week_start_date, week_end_date, is_locked, created_at, open_dow, open_time, close_dow, close_time')
+            .single();
+          if (nxtUpsertErr) {
+            console.error('[loadData] market_weeks upsert next week', nxtUpsertErr.message);
+          } else if (inserted) {
             const row = inserted as MarketWeek;
-            weeks = [row, ...weeks];
+            const idx = weeks.findIndex((w) => w.id === row.id);
+            if (idx >= 0) weeks[idx] = row;
+            else weeks = [row, ...weeks];
             weeksList = weeks.map((w) => ({ id: w.id, week_start_date: w.week_start_date }));
             nxtWeek = { id: row.id, week_start_date: row.week_start_date };
           }
@@ -246,6 +307,162 @@ const AdminPage = () => {
       setLoading(false);
     }
   };
+
+  const loadWeeklyOrders = useCallback(async () => {
+    const range = getCurrentWeekDateRange();
+    setWeeklyOrdersRange({ start: range.week_start_date, end: range.week_end_date });
+    setWeeklyOrdersLoading(true);
+    try {
+      const { data: pmRows, error: pmErr } = await supabase.from('payment_methods').select('id, code, name');
+      if (pmErr) throw pmErr;
+      const pmById = new Map((pmRows || []).map((r) => [r.id as string, r as { id: string; code: string; name: string }]));
+
+      const { data, error } = await supabase
+        .from('deliveries')
+        .select(
+          `
+          id,
+          scheduled_date,
+          status,
+          delivery_index,
+          weekly_budget,
+          subscriptions (
+            id,
+            status,
+            user_id,
+            payment_method_id,
+            bucket_type:bucket_types (name)
+          )
+        `
+        )
+        .gte('scheduled_date', range.week_start_date)
+        .lte('scheduled_date', range.week_end_date)
+        .order('scheduled_date', { ascending: true });
+
+      if (error) throw error;
+
+      const rawList = (data || []) as unknown[];
+      const userIds = new Set<string>();
+      for (const item of rawList) {
+        const d = item as Record<string, unknown>;
+        const subRaw = d.subscriptions;
+        const sub = Array.isArray(subRaw) ? subRaw[0] : subRaw;
+        if (sub && typeof sub === 'object' && 'user_id' in sub) {
+          const uid = (sub as { user_id?: string }).user_id;
+          if (uid) userIds.add(uid);
+        }
+      }
+      let profileById = new Map<
+        string,
+        { id: string; email?: string; full_name?: string | null; address?: string | null; city?: string | null }
+      >();
+      if (userIds.size > 0) {
+        const { data: profRows, error: profErr } = await supabase
+          .from('profiles')
+          .select('id, email, full_name, address, city')
+          .in('id', Array.from(userIds));
+        if (profErr) throw profErr;
+        profileById = new Map((profRows || []).map((p) => [p.id as string, p as { id: string; email?: string; full_name?: string | null; address?: string | null; city?: string | null }]));
+      }
+
+      const rows: {
+        deliveryId: string;
+        scheduledDate: string;
+        status: string;
+        deliveryIndex: number;
+        weeklyBudget: number;
+        subscriptionId: string;
+        subscriptionStatus: string;
+        customerName: string;
+        email: string;
+        addressLine: string;
+        city: string;
+        bucketName: string;
+        paymentLabel: string;
+      }[] = [];
+      for (const item of rawList) {
+        const d = item as Record<string, unknown>;
+        const subRaw = d.subscriptions;
+        const sub = Array.isArray(subRaw) ? subRaw[0] : subRaw;
+        if (!sub || typeof sub !== 'object') continue;
+        const s = sub as {
+          id: string;
+          status: string;
+          user_id: string;
+          payment_method_id: string | null;
+          bucket_type?: unknown;
+        };
+        const p = profileById.get(s.user_id) ?? {
+          email: undefined,
+          full_name: undefined,
+          address: undefined,
+          city: undefined,
+        };
+        const btRaw = s.bucket_type;
+        const bt = Array.isArray(btRaw) ? btRaw[0] : btRaw;
+        const b = (bt && typeof bt === 'object' ? bt : {}) as { name?: string };
+        const pm = s.payment_method_id ? pmById.get(s.payment_method_id) : null;
+        const paymentLabel = pm ? formatPaymentMethodLabel(pm) : 'Not set';
+        rows.push({
+          deliveryId: String(d.id),
+          scheduledDate: String(d.scheduled_date),
+          status: String(d.status),
+          deliveryIndex: Number(d.delivery_index),
+          weeklyBudget: Number(d.weekly_budget),
+          subscriptionId: s.id,
+          subscriptionStatus: s.status,
+          customerName: (p.full_name || '').trim() || '—',
+          email: p.email || '—',
+          addressLine: (p.address || '').trim() || '—',
+          city: (p.city || '').trim() || '—',
+          bucketName: b.name || '—',
+          paymentLabel,
+        });
+      }
+
+      rows.sort((a, b) => {
+        const da = a.scheduledDate.localeCompare(b.scheduledDate);
+        if (da !== 0) return da;
+        return a.customerName.localeCompare(b.customerName);
+      });
+      setWeeklyOrders(rows);
+    } catch (e: unknown) {
+      console.error('loadWeeklyOrders', e);
+      setMessage({ type: 'error', text: `Could not load weekly orders: ${formatUnknownError(e)}` });
+      setWeeklyOrders([]);
+    } finally {
+      setWeeklyOrdersLoading(false);
+    }
+  }, []);
+
+  const updateWeeklyDeliveryStatus = useCallback(async (deliveryId: string, newStatus: string) => {
+    setWeeklyOrderSavingId(deliveryId);
+    try {
+      const payload: Record<string, unknown> = { status: newStatus };
+      if (newStatus === 'delivered') {
+        payload.delivered_at = new Date().toISOString();
+      } else {
+        payload.delivered_at = null;
+      }
+      const { error } = await supabase.from('deliveries').update(payload).eq('id', deliveryId);
+      if (error) throw error;
+      setWeeklyOrders((prev) =>
+        prev.map((r) => (r.deliveryId === deliveryId ? { ...r, status: newStatus } : r))
+      );
+      setMessage({ type: 'success', text: 'Delivery status updated' });
+    } catch (e: unknown) {
+      console.error('updateWeeklyDeliveryStatus', e);
+      setMessage({ type: 'error', text: `Could not update status: ${formatUnknownError(e)}` });
+    } finally {
+      setWeeklyOrderSavingId(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === 'weekly-orders') {
+      void loadWeeklyOrders();
+    }
+  }, [activeTab, loadWeeklyOrders]);
 
   const handleExportData = () => {
     const dataStr = JSON.stringify({ vegetables }, null, 2);
@@ -428,6 +645,7 @@ const AdminPage = () => {
                 { id: 'buckets', label: 'Bucket types', icon: LayoutGrid },
                 { id: 'prices', label: 'Market prices', icon: DollarSign },
                 { id: 'weeks', label: 'Market weeks', icon: Calendar },
+                { id: 'weekly-orders', label: "This week's orders", icon: Truck },
                 { id: 'users', label: 'Users', icon: Users },
                 { id: 'system', label: 'System', icon: Settings }
               ].map(tab => (
@@ -678,31 +896,24 @@ const AdminPage = () => {
                         return;
                       }
                     } else {
-                      const { error: insertErr } = await supabase.from('market_weeks').insert({
-                        week_start_date: curRange.week_start_date,
-                        week_end_date: curRange.week_end_date,
-                        ...payload
-                      }).select('id').single();
+                      const { error: insertErr } = await supabase
+                        .from('market_weeks')
+                        .upsert(
+                          {
+                            week_start_date: curRange.week_start_date,
+                            week_end_date: curRange.week_end_date,
+                            ...payload,
+                          },
+                          { onConflict: 'week_start_date' }
+                        )
+                        .select('id')
+                        .single();
                       if (insertErr) {
                         setMessage({ type: 'error', text: insertErr.message });
                         return;
                       }
                     }
-                    // Keep customization_schedule table in sync (single global row)
-                    if (customizationSchedule?.id) {
-                      await supabase.from('customization_schedule').update({
-                        ...payload,
-                        updated_at: new Date().toISOString()
-                      }).eq('id', customizationSchedule.id);
-                    } else {
-                      await supabase.from('customization_schedule').insert({
-                        open_dow: payload.open_dow,
-                        open_time: payload.open_time,
-                        close_dow: payload.close_dow,
-                        close_time: payload.close_time
-                      });
-                    }
-                    setMessage({ type: 'success', text: 'Customization times saved (market week and schedule table updated)' });
+                    setMessage({ type: 'success', text: 'Customization times saved for this market week' });
                     setCurrentWeekScheduleEditOpen(false);
                     loadData();
                   };
@@ -880,7 +1091,126 @@ const AdminPage = () => {
               <div>
                 <h2 className="text-lg font-semibold text-gray-900">Market weeks</h2>
                 <p className="text-sm text-gray-600">Current week and next week (Mon–Sun). Open/close times are shown inside each week; lock a week to close customization for that week.</p>
-                <MarketWeeksSection marketWeeks={marketWeeks} customizationSchedule={customizationSchedule} onRefresh={loadData} setMessage={setMessage} />
+                <MarketWeeksSection marketWeeks={marketWeeks} onRefresh={loadData} setMessage={setMessage} />
+              </div>
+            )}
+
+            {activeTab === 'weekly-orders' && (
+              <div className="space-y-4">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div>
+                    <h2 className="text-lg font-semibold text-gray-900">This week&apos;s orders</h2>
+                    <p className="text-sm text-gray-600">
+                      Deliveries with a <strong>scheduled date</strong> in the current market week (
+                      {weeklyOrdersRange ? (
+                        <>
+                          Mon <span className="font-mono">{weeklyOrdersRange.start}</span> – Sun{' '}
+                          <span className="font-mono">{weeklyOrdersRange.end}</span>, local calendar
+                        </>
+                      ) : (
+                        'same range as Market weeks'
+                      )}
+                      ). Use this as your pack-and-ship checklist.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void loadWeeklyOrders()}
+                    disabled={weeklyOrdersLoading}
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-300 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${weeklyOrdersLoading ? 'animate-spin' : ''}`} />
+                    Refresh
+                  </button>
+                </div>
+
+                {weeklyOrdersLoading ? (
+                  <p className="text-sm text-gray-500">Loading deliveries…</p>
+                ) : weeklyOrders.length === 0 ? (
+                  <p className="text-sm text-gray-500">
+                    No delivery rows scheduled for this week. Subscriptions must have a delivery with{' '}
+                    <code className="text-xs bg-gray-100 px-1 rounded">scheduled_date</code> between the week range above.
+                  </p>
+                ) : (
+                  <div className="overflow-x-auto border border-gray-200 rounded-lg">
+                    <table className="min-w-full divide-y divide-gray-200 text-sm">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-3 py-2 text-left font-medium text-gray-700">Delivery date</th>
+                          <th className="px-3 py-2 text-left font-medium text-gray-700">Customer</th>
+                          <th className="px-3 py-2 text-left font-medium text-gray-700">Email</th>
+                          <th className="px-3 py-2 text-left font-medium text-gray-700">Address</th>
+                          <th className="px-3 py-2 text-left font-medium text-gray-700">City</th>
+                          <th className="px-3 py-2 text-left font-medium text-gray-700">Bucket</th>
+                          <th className="px-3 py-2 text-left font-medium text-gray-700">Payment</th>
+                          <th className="px-3 py-2 text-right font-medium text-gray-700">Week budget</th>
+                          <th className="px-3 py-2 text-center font-medium text-gray-700">#</th>
+                          <th className="px-3 py-2 text-left font-medium text-gray-700">Sub</th>
+                          <th className="px-3 py-2 text-left font-medium text-gray-700">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100 bg-white">
+                        {weeklyOrders.map((row) => (
+                          <tr key={row.deliveryId} className="hover:bg-gray-50/80">
+                            <td className="px-3 py-2 whitespace-nowrap font-mono text-gray-900">{row.scheduledDate}</td>
+                            <td className="px-3 py-2 text-gray-900">{row.customerName}</td>
+                            <td className="px-3 py-2 text-gray-600 max-w-[12rem] truncate" title={row.email}>
+                              {row.email}
+                            </td>
+                            <td className="px-3 py-2 text-gray-600 max-w-[14rem] truncate" title={row.addressLine}>
+                              {row.addressLine}
+                            </td>
+                            <td className="px-3 py-2 text-gray-600">{row.city}</td>
+                            <td className="px-3 py-2 text-gray-900">{row.bucketName}</td>
+                            <td className="px-3 py-2 text-gray-800">{row.paymentLabel}</td>
+                            <td className="px-3 py-2 text-right tabular-nums text-gray-900">
+                              {Number.isFinite(row.weeklyBudget) ? row.weeklyBudget.toFixed(2) : '—'}
+                            </td>
+                            <td className="px-3 py-2 text-center text-gray-600">{row.deliveryIndex}</td>
+                            <td className="px-3 py-2">
+                              <span
+                                className={`inline-block px-2 py-0.5 rounded text-xs ${
+                                  row.subscriptionStatus === 'active'
+                                    ? 'bg-green-100 text-green-800'
+                                    : row.subscriptionStatus === 'paused'
+                                      ? 'bg-amber-100 text-amber-800'
+                                      : 'bg-gray-100 text-gray-700'
+                                }`}
+                              >
+                                {row.subscriptionStatus}
+                              </span>
+                            </td>
+                            <td className="px-3 py-2 whitespace-nowrap">
+                              <select
+                                value={row.status}
+                                disabled={weeklyOrderSavingId === row.deliveryId}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  if (v !== row.status) void updateWeeklyDeliveryStatus(row.deliveryId, v);
+                                }}
+                                className={`text-sm border border-gray-300 rounded-lg px-2 py-1.5 max-w-[11rem] bg-white text-gray-900 capitalize focus:ring-2 focus:ring-green-500 focus:border-green-500 ${
+                                  weeklyOrderSavingId === row.deliveryId ? 'opacity-60 cursor-wait' : ''
+                                }`}
+                                aria-label={`Delivery status for ${row.customerName}`}
+                              >
+                                {statusOptionsForRow(row.status).map((s) => (
+                                  <option key={s} value={s}>
+                                    {s.replace(/_/g, ' ')}
+                                  </option>
+                                ))}
+                              </select>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    <p className="text-xs text-gray-500 px-3 py-2 border-t border-gray-100 bg-gray-50">
+                      {weeklyOrders.length} row{weeklyOrders.length === 1 ? '' : 's'} · Change <strong>Status</strong> to update the delivery row.{' '}
+                      <strong>Delivered</strong> sets <code className="text-xs">delivered_at</code>; other statuses clear it. Payment method comes from the subscription. Line items:{' '}
+                      <code className="text-xs">delivery_items</code> when populated.
+                    </p>
+                  </div>
+                )}
               </div>
             )}
 
@@ -1318,7 +1648,6 @@ const WeekCard: React.FC<{
 // Market weeks: current and next week (Mon–Sun). Each week uses its own row's dates and open/close from DB.
 const MarketWeeksSection: React.FC<{
   marketWeeks: MarketWeek[];
-  customizationSchedule: CustomizationSchedule | null;
   onRefresh: () => void;
   setMessage: (m: { type: 'success' | 'error'; text: string } | null) => void;
 }> = ({ marketWeeks, onRefresh, setMessage }) => {
@@ -1370,7 +1699,7 @@ const MarketWeeksSection: React.FC<{
       }
       return true;
     }
-    const { error } = await supabase.from('market_weeks').insert(payload);
+    const { error } = await supabase.from('market_weeks').upsert(payload, { onConflict: 'week_start_date' });
     if (error) {
       setMessage({ type: 'error', text: error.message });
       return false;

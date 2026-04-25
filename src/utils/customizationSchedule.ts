@@ -1,6 +1,6 @@
 /**
  * Customization window: when customers can edit their bucket.
- * Default: Wed 12:00 open → Fri 23:59 close. Admin can change via customization_schedule and lock per week.
+ * Default: Wed 12:00 open → Fri 23:59 close. Per-week values live on `market_weeks` (open_dow/time, close_dow/time); lock per week with is_locked.
  */
 
 import { getMondayOfWeek } from './marketWeekUtils';
@@ -39,21 +39,14 @@ export function scheduleFromMarketWeek(row: {
   };
 }
 
-/** Single global row from customization_schedule (kept in sync when admin saves Bucket types). */
+/** @deprecated Legacy alias — same shape as scheduleFromMarketWeek. Prefer loading open/close from `market_weeks` only. */
 export function scheduleFromGlobalCustomizationRow(row: {
   open_dow?: number | null;
   open_time?: string | null;
   close_dow?: number | null;
   close_time?: string | null;
 } | null | undefined): CustomizationScheduleRow {
-  if (!row) return DEFAULT;
-  return {
-    id: '',
-    open_dow: row.open_dow ?? DEFAULT.open_dow,
-    open_time: (row.open_time ?? DEFAULT.open_time).trim() || DEFAULT.open_time,
-    close_dow: row.close_dow ?? DEFAULT.close_dow,
-    close_time: (row.close_time ?? DEFAULT.close_time).trim() || DEFAULT.close_time,
-  };
+  return scheduleFromMarketWeek(row ?? null);
 }
 
 function parseTime(timeStr: string): { hours: number; minutes: number } {

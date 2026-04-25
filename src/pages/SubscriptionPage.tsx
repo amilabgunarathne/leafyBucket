@@ -19,6 +19,8 @@ import {
   formatPaymentMethodLabel,
   normalizePaymentMethodJoin,
 } from '../utils/paymentMethodDisplay';
+import { getCurrentWeekDateRange } from '../utils/marketWeekUtils';
+import { supabase } from '../lib/supabase';
 
 const SubscriptionPage = () => {
   const { user, updateUser } = useAuth();
@@ -30,6 +32,8 @@ const SubscriptionPage = () => {
 
   const [activeSubscription, setActiveSubscription] = useState<any>(null);
   const [currentDelivery, setCurrentDelivery] = useState<any>(null);
+  /** This calendar week’s delivery row (any status) — used to tick “Delivery” when status is delivered */
+  const [thisWeekDeliveryStatus, setThisWeekDeliveryStatus] = useState<string | null>(null);
   const [hasAcceptedReview, setHasAcceptedReview] = useState(false);
   const [showPaymentSetup, setShowPaymentSetup] = useState(false);
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
@@ -112,9 +116,24 @@ const SubscriptionPage = () => {
       if (data) {
         setActiveSubscription(data.subscription);
         setCurrentDelivery(data.currentDelivery);
+        const range = getCurrentWeekDateRange();
+        const { data: weekRow, error: weekErr } = await supabase
+          .from('deliveries')
+          .select('status')
+          .eq('subscription_id', data.subscription.id)
+          .gte('scheduled_date', range.week_start_date)
+          .lte('scheduled_date', range.week_end_date)
+          .maybeSingle();
+        if (weekErr) {
+          console.warn('[this week delivery]', weekErr.message);
+          setThisWeekDeliveryStatus(null);
+        } else {
+          setThisWeekDeliveryStatus((weekRow as { status?: string } | null)?.status ?? null);
+        }
       } else {
         setActiveSubscription(null);
         setCurrentDelivery(null);
+        setThisWeekDeliveryStatus(null);
       }
     };
     fetchSub();
@@ -407,6 +426,7 @@ const SubscriptionPage = () => {
           /** DB seed: `recurring` = card; `cash_on_delivery` = COD — only card gets “Automated payment” step. */
           const showAutomatedPaymentStep = subPm?.code === 'recurring';
           const automatedPaymentDone = showAutomatedPaymentStep && paymentSaved && closedForThisWeek;
+          const deliveryDone = thisWeekDeliveryStatus === 'delivered';
 
           const steps = isEstablishedSubscriber
             ? showAutomatedPaymentStep
@@ -414,19 +434,19 @@ const SubscriptionPage = () => {
                   { key: 'select', label: 'Select bucket', done: true, optional: false },
                   { key: 'customize', label: 'Customization', optional: true, done: hasCustomizeDone },
                   { key: 'automated_payment', label: 'Automated payment', optional: false, done: automatedPaymentDone },
-                  { key: 'delivery', label: 'Delivery', optional: false, done: false },
+                  { key: 'delivery', label: 'Delivery', optional: false, done: deliveryDone },
                 ]
               : [
                   { key: 'select', label: 'Select bucket', done: true, optional: false },
                   { key: 'customize', label: 'Customization', optional: true, done: hasCustomizeDone },
-                  { key: 'delivery', label: 'Delivery', optional: false, done: false },
+                  { key: 'delivery', label: 'Delivery', optional: false, done: deliveryDone },
                 ]
             : [
                 { key: 'select', label: 'Select bucket', done: true, optional: false },
                 { key: 'customize', label: 'Customization', optional: true, done: hasCustomizeDone },
                 { key: 'review', label: 'Review and accept', optional: false, done: hasAcceptedReview },
                 { key: 'payment', label: 'Set up payment', optional: false, done: false },
-                { key: 'delivery', label: 'Delivery', optional: false, done: false },
+                { key: 'delivery', label: 'Delivery', optional: false, done: deliveryDone },
               ];
 
           const currentIndex = isEstablishedSubscriber
@@ -435,10 +455,14 @@ const SubscriptionPage = () => {
                 ? 1
                 : !automatedPaymentDone
                   ? 2
-                  : 3
+                  : !deliveryDone
+                    ? 3
+                    : 3
               : !hasCustomizeDone
                 ? 1
-                : 2
+                : !deliveryDone
+                  ? 2
+                  : 2
             : !hasCustomizeDone
               ? 1
               : hasAcceptedReview
@@ -464,9 +488,11 @@ const SubscriptionPage = () => {
                         }`}
                       >
                         {step.done ? (
-                          <Check className="h-5 w-5" />
+                          <Check className="h-5 w-5" aria-hidden />
                         ) : step.key === 'automated_payment' ? (
                           <CreditCard className="h-4 w-4" aria-hidden />
+                        ) : step.key === 'delivery' ? (
+                          <Truck className="h-4 w-4" aria-hidden />
                         ) : (
                           i + 1
                         )}

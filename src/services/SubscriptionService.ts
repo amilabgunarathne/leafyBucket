@@ -50,7 +50,7 @@ export interface Delivery {
     subscription_id: string;
     delivery_index: number;
     scheduled_date: string;
-    status: 'open' | 'locked' | 'delivered' | 'skipped';
+    status: 'open' | 'locked' | 'delivered' | 'skipped' | 'cancelled';
     weekly_budget: number;
     locked_at?: string;
     delivered_at?: string;
@@ -76,6 +76,14 @@ export interface CustomisationAction {
     removed_vegetable_id?: string;
     added_vegetable_id?: string;
     created_at: string;
+}
+
+/** Local calendar YYYY-MM-DD (browser timezone). After a Sunday, that date is before today from Monday onward. */
+function formatLocalDate(d: Date): string {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
 }
 
 class SubscriptionService {
@@ -177,10 +185,76 @@ class SubscriptionService {
     }
 
     /**
+     * Mark any still-open deliveries whose scheduled date is before today (local) as delivered,
+     * bump subscriptions.deliveries_used, and point next delivery at the next open slot.
+     * Idempotent: safe to call on every load.
+     */
+    async advancePastOpenDeliveries(userId: string): Promise<void> {
+        const todayStr = formatLocalDate(new Date());
+        const { data: sub, error: subErr } = await supabase
+            .from('subscriptions')
+            .select('id, deliveries_used')
+            .eq('user_id', userId)
+            .in('status', ['active', 'paused'])
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+        if (subErr) {
+            console.error('[advancePastOpenDeliveries] load subscription', subErr.message);
+            return;
+        }
+        if (!sub) return;
+
+        const nowIso = new Date().toISOString();
+        const { data: closed, error: upErr } = await supabase
+            .from('deliveries')
+            .update({ status: 'delivered', delivered_at: nowIso })
+            .eq('subscription_id', sub.id)
+            .eq('status', 'open')
+            .lt('scheduled_date', todayStr)
+            .select('id');
+
+        if (upErr) {
+            console.error('[advancePastOpenDeliveries] update deliveries', upErr.message);
+            return;
+        }
+
+        const n = closed?.length ?? 0;
+        if (n === 0) return;
+
+        const prevUsed = typeof sub.deliveries_used === 'number' ? sub.deliveries_used : 0;
+        const { data: nextOpen } = await supabase
+            .from('deliveries')
+            .select('scheduled_date')
+            .eq('subscription_id', sub.id)
+            .eq('status', 'open')
+            .order('scheduled_date', { ascending: true })
+            .limit(1)
+            .maybeSingle();
+
+        const nextDate = nextOpen?.scheduled_date ?? null;
+        const payload: Record<string, unknown> = {
+            deliveries_used: prevUsed + n,
+        };
+        if (nextDate) {
+            payload.next_delivery_date = nextDate;
+            payload.next_delivery = nextDate;
+        }
+
+        const { error: subUpErr } = await supabase.from('subscriptions').update(payload).eq('id', sub.id);
+        if (subUpErr) {
+            console.error('[advancePastOpenDeliveries] update subscription', subUpErr.message);
+        }
+    }
+
+    /**
      * Get subscription for user (active or paused) with next open delivery if any
      * Paused subscriptions still return the plan so the app can show "resume when ready"
      */
     async getActiveSubscription(userId: string): Promise<{ subscription: Subscription, currentDelivery: Delivery | null } | null> {
+        await this.advancePastOpenDeliveries(userId);
+
         // Same shape as AuthContext (no payment_method embed — a bad/missing FK embed fails the whole query and leaves activeSubscription null).
         const { data: sub, error } = await supabase
             .from('subscriptions')
