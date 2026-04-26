@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Menu, X, User, ChevronDown, LogOut } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { useCustomizationLeaveInterceptor } from '../hooks/useCustomizationLeaveInterceptor';
 
 const Header = () => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -10,6 +11,7 @@ const Header = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, logout } = useAuth();
+  const { interceptLeave } = useCustomizationLeaveInterceptor();
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -27,6 +29,10 @@ const Header = () => {
     e.preventDefault();
     setIsMenuOpen(false);
 
+    if (interceptLeave({ pathname: '/', state: { scrollToSection: targetId } })) {
+      return;
+    }
+
     if (location.pathname !== '/') {
       navigate('/', { state: { scrollToSection: targetId } });
       return;
@@ -43,6 +49,7 @@ const Header = () => {
   const handleStartSubscription = () => {
     setIsMenuOpen(false);
     if (user) {
+      if (interceptLeave('/my-bucket')) return;
       navigate('/my-bucket');
     } else {
       navigate('/auth');
@@ -53,7 +60,13 @@ const Header = () => {
     <header className="fixed top-0 left-0 right-0 bg-white/95 backdrop-blur-sm z-50 border-b border-green-100">
       <nav className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-20 md:h-24">
-          <Link to="/" className="flex items-center">
+          <Link
+            to="/"
+            onClick={(e) => {
+              if (interceptLeave('/')) e.preventDefault();
+            }}
+            className="flex items-center"
+          >
             <img
               src="/full_logo_light-removebg-preview.png"
               alt="Leafy Bucket Logo"
@@ -85,12 +98,18 @@ const Header = () => {
             </a>
             <Link
               to="/products"
+              onClick={(e) => {
+                if (interceptLeave('/products')) e.preventDefault();
+              }}
               className="text-gray-700 hover:text-green-600 transition-colors"
             >
               Discover
             </Link>
             <Link
               to="/shop"
+              onClick={(e) => {
+                if (interceptLeave('/shop')) e.preventDefault();
+              }}
               className="text-gray-700 hover:text-green-600 transition-colors"
             >
               Shop Now
@@ -98,6 +117,9 @@ const Header = () => {
             {user ? (
               <Link
                 to="/my-bucket"
+                onClick={(e) => {
+                  if (interceptLeave('/my-bucket')) e.preventDefault();
+                }}
                 className="bg-green-600 text-white px-6 py-2 rounded-full hover:bg-green-700 transition-colors"
               >
                 My Bucket
@@ -121,7 +143,14 @@ const Header = () => {
                   <div className="absolute left-0 mt-2 w-48 bg-white rounded-xl shadow-lg border border-gray-200 py-1 z-50">
                     <Link
                       to="/profile"
-                      onClick={() => { setIsUserMenuOpen(false); setIsMenuOpen(false); }}
+                      onClick={(e) => {
+                        if (interceptLeave('/profile')) {
+                          e.preventDefault();
+                          return;
+                        }
+                        setIsUserMenuOpen(false);
+                        setIsMenuOpen(false);
+                      }}
                       className="flex items-center space-x-2 px-4 py-3 text-gray-700 hover:bg-gray-50 transition-colors"
                     >
                       <User className="h-4 w-4 text-gray-500" />
@@ -142,6 +171,9 @@ const Header = () => {
             ) : (
               <Link
                 to="/auth"
+                onClick={(e) => {
+                  if (interceptLeave('/auth')) e.preventDefault();
+                }}
                 className="bg-green-600 text-white px-6 py-2 rounded-full hover:bg-green-700 transition-colors inline-block"
               >
                 Select Bucket Size
@@ -186,14 +218,26 @@ const Header = () => {
               <Link
                 to="/products"
                 className="block px-3 py-2 text-gray-700 hover:text-green-600 transition-colors"
-                onClick={() => setIsMenuOpen(false)}
+                onClick={(e) => {
+                  if (interceptLeave('/products')) {
+                    e.preventDefault();
+                    return;
+                  }
+                  setIsMenuOpen(false);
+                }}
               >
                 Discover
               </Link>
               <Link
                 to="/shop"
                 className="block px-3 py-2 text-gray-700 hover:text-green-600 transition-colors"
-                onClick={() => setIsMenuOpen(false)}
+                onClick={(e) => {
+                  if (interceptLeave('/shop')) {
+                    e.preventDefault();
+                    return;
+                  }
+                  setIsMenuOpen(false);
+                }}
               >
                 Shop Now
               </Link>
@@ -203,14 +247,26 @@ const Header = () => {
                   <Link
                     to="/my-bucket"
                     className="block w-full mt-2 bg-green-600 text-white px-6 py-2 rounded-full hover:bg-green-700 transition-colors text-center"
-                    onClick={() => setIsMenuOpen(false)}
+                    onClick={(e) => {
+                      if (interceptLeave('/my-bucket')) {
+                        e.preventDefault();
+                        return;
+                      }
+                      setIsMenuOpen(false);
+                    }}
                   >
                     My Bucket
                   </Link>
                   <Link
                     to="/profile"
                     className="block px-3 py-2 text-gray-700 hover:text-green-600 transition-colors"
-                    onClick={() => setIsMenuOpen(false)}
+                    onClick={(e) => {
+                      if (interceptLeave('/profile')) {
+                        e.preventDefault();
+                        return;
+                      }
+                      setIsMenuOpen(false);
+                    }}
                   >
                     Profile
                   </Link>

@@ -2,13 +2,19 @@ import React from 'react';
 import { Mail, Phone, MapPin, Facebook, Twitter, Instagram } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { useCustomizationLeaveInterceptor } from '../hooks/useCustomizationLeaveInterceptor';
 
 const Footer = () => {
   const location = useLocation();
   const { user } = useAuth();
+  const { interceptLeave } = useCustomizationLeaveInterceptor();
 
   const handleNavClick = (e: React.MouseEvent<HTMLAnchorElement>, targetId: string) => {
     e.preventDefault();
+
+    if (interceptLeave({ pathname: '/', state: { scrollToSection: targetId } })) {
+      return;
+    }
 
     // If we're not on the home page, navigate to home first
     if (location.pathname !== '/') {
@@ -33,7 +39,13 @@ const Footer = () => {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
         <div className="grid lg:grid-cols-4 md:grid-cols-2 gap-8">
           <div className="space-y-6">
-            <Link to="/" className="flex items-center">
+            <Link
+              to="/"
+              onClick={(e) => {
+                if (interceptLeave('/')) e.preventDefault();
+              }}
+              className="flex items-center"
+            >
               <img
                 src="/full_logo_light-removebg-preview.png"
                 alt="Leafy Bucket Logo"
@@ -72,6 +84,9 @@ const Footer = () => {
               <li>
                 <Link
                   to="/shop"
+                  onClick={(e) => {
+                    if (interceptLeave('/shop')) e.preventDefault();
+                  }}
                   className="text-gray-400 hover:text-white transition-colors"
                 >
                   Shop Now
@@ -80,6 +95,9 @@ const Footer = () => {
               <li>
                 <Link
                   to="/products"
+                  onClick={(e) => {
+                    if (interceptLeave('/products')) e.preventDefault();
+                  }}
                   className="text-gray-400 hover:text-white transition-colors"
                 >
                   What's Inside
@@ -90,6 +108,9 @@ const Footer = () => {
                 <li>
                   <Link
                     to="/customize"
+                    onClick={(e) => {
+                      if (interceptLeave('/customize')) e.preventDefault();
+                    }}
                     className="text-gray-400 hover:text-white transition-colors"
                   >
                     Customize

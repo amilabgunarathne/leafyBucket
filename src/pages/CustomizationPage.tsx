@@ -1,15 +1,41 @@
-import { useState, useEffect } from 'react';
-import { ArrowLeft, Check, X, Plus, Settings, Package, RefreshCw, Lock, TreePine, Leaf, Flower, Clock } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { ArrowLeft, X, Plus, Settings, Package, RefreshCw, Lock, TreePine, Leaf, Flower, Clock } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
 import { Vegetable, calculatePlanAllocation, getWeightBreakdownByCategory } from '../data/vegetables';
 import VegetableService from '../services/vegetableService';
 import { useWeekly } from '../contexts/WeeklyContext';
 import { useAuth } from '../contexts/AuthContext';
 import WeeklyScheduleInfo from '../components/WeeklyScheduleInfo';
+import MessageModal from '../components/MessageModal';
+import UnsavedLeaveModal from '../components/UnsavedLeaveModal';
+import { useCustomizationExitContext } from '../contexts/CustomizationExitContext';
+import type { LeaveTarget } from '../contexts/CustomizationExitContext';
+import { useCustomizationLeaveInterceptor } from '../hooks/useCustomizationLeaveInterceptor';
 import { effectiveVegCustomizations, normalizeSubscriptionCustomizations } from '../utils/subscriptionCustomizations';
 import { formatCustomizationInstant } from '../utils/customizationSchedule';
 
+function makeCustomizationSnap(
+  c: {
+    excludedVegetables: string[];
+    removedVegetables: string[];
+    addedVegetables: string[];
+    deliveryDay: string;
+  },
+  plan: string
+) {
+  return JSON.stringify({
+    plan,
+    ex: [...c.excludedVegetables].sort(),
+    rm: [...c.removedVegetables].sort(),
+    ad: [...c.addedVegetables].sort(),
+    d: c.deliveryDay,
+  });
+}
+
 const CustomizationPage = () => {
+  const navigate = useNavigate();
+  const { register, unregister } = useCustomizationExitContext();
+  const { interceptLeave } = useCustomizationLeaveInterceptor();
   const { user, updateUser } = useAuth();
   const weekly = useWeekly();
   const {
@@ -38,12 +64,16 @@ const CustomizationPage = () => {
       setSelectedPlan(user.subscription.plan);
       const raw = normalizeSubscriptionCustomizations(user.subscription.customizations);
       const eff = effectiveVegCustomizations(raw, activeMwId);
-      setCustomizations({
+      const next = {
         excludedVegetables: eff.excludedVegetables,
         removedVegetables: eff.removedVegetables,
         addedVegetables: eff.addedVegetables,
         deliveryDay: raw.deliveryDay || 'sunday',
-      });
+      };
+      setCustomizations(next);
+      setBaselineSnap(makeCustomizationSnap(next, user.subscription.plan));
+    } else {
+      setBaselineSnap(null);
     }
   }, [user?.subscription?.plan, user?.subscription?.customizations, activeMwId]);
 
@@ -70,6 +100,37 @@ const CustomizationPage = () => {
   const [adminLimits, setAdminLimits] = useState<any>(null);
   const [bucketTypeRatiosFromDb, setBucketTypeRatiosFromDb] = useState<Record<string, { root: number; leafy: number; bushy: number }>>({});
   const [loadingLimits, setLoadingLimits] = useState(true);
+  const [saveFeedback, setSaveFeedback] = useState<{
+    variant: 'success' | 'error';
+    title: string;
+    message: string;
+  } | null>(null);
+  const [baselineSnap, setBaselineSnap] = useState<string | null>(null);
+  const [leaveTarget, setLeaveTarget] = useState<LeaveTarget | null>(null);
+  const [leaveSaveBusy, setLeaveSaveBusy] = useState(false);
+
+  const requestLeave = useCallback((target: LeaveTarget) => {
+    setLeaveTarget(target);
+  }, []);
+
+  const currentSnap = useMemo(
+    () => makeCustomizationSnap(customizations, selectedPlan),
+    [customizations, selectedPlan]
+  );
+
+  const isDirty =
+    baselineSnap !== null &&
+    user != null &&
+    user.subscription != null &&
+    user.subscription.status !== 'cancelled' &&
+    currentSnap !== baselineSnap;
+
+  const customizationsRef = useRef(customizations);
+  const selectedPlanRef = useRef(selectedPlan);
+  const baselineSnapRef = useRef(baselineSnap);
+  customizationsRef.current = customizations;
+  selectedPlanRef.current = selectedPlan;
+  baselineSnapRef.current = baselineSnap;
 
   useEffect(() => {
     const fetchLimits = async () => {
@@ -244,14 +305,14 @@ const CustomizationPage = () => {
     return countInCategory < limitForCategory;
   };
 
-  const handleSavePreferences = async () => {
-    if (!user) return;
+  const persistPreferences = useCallback(async (): Promise<boolean> => {
+    if (!user?.subscription) return false;
 
     try {
       const { default: SubscriptionService } = await import('../services/SubscriptionService');
       const subService = SubscriptionService.getInstance();
 
-      if (user.subscription?.id) {
+      if (user.subscription.id) {
         await subService.updateSubscriptionCustomizations(user.subscription.id, {
           excludedVegetables: customizations.excludedVegetables,
           removedVegetables: customizations.removedVegetables,
@@ -264,14 +325,12 @@ const CustomizationPage = () => {
       const activeSub = await subService.getActiveSubscription(user.id);
 
       if (activeSub && activeSub.currentDelivery) {
-        // Log removed items
         for (const removedId of customizations.removedVegetables) {
           await subService.logCustomization(activeSub.currentDelivery.id, {
             action_type: 'remove',
             removed_vegetable_id: removedId
           });
         }
-        // Log added items
         for (const addedId of customizations.addedVegetables) {
           await subService.logCustomization(activeSub.currentDelivery.id, {
             action_type: 'add',
@@ -281,14 +340,12 @@ const CustomizationPage = () => {
       }
     } catch (e) {
       console.error("Error saving customizations:", e);
-      alert('Could not save preferences. Please try again.');
-      return;
+      return false;
     }
 
-    // Keep updating local state for fallback/UI speed
     updateUser({
       subscription: {
-        ...user.subscription!,
+        ...user.subscription,
         plan: selectedPlan as 'small' | 'medium' | 'large',
         customizations: {
           ...customizations,
@@ -297,8 +354,84 @@ const CustomizationPage = () => {
       }
     });
 
-    alert('Preferences saved successfully!');
+    setBaselineSnap(makeCustomizationSnap(customizations, selectedPlan));
+    return true;
+  }, [user, customizations, selectedPlan, activeMwId, updateUser]);
+
+  const persistPreferencesRef = useRef(persistPreferences);
+  persistPreferencesRef.current = persistPreferences;
+
+  const handleSavePreferences = async () => {
+    if (!user) return;
+    const ok = await persistPreferences();
+    if (!ok) {
+      setSaveFeedback({
+        variant: 'error',
+        title: 'Could not save',
+        message: 'Something went wrong while saving your preferences. Please try again.',
+      });
+      return;
+    }
+    setSaveFeedback({
+      variant: 'success',
+      title: 'Saved',
+      message: 'Your preferences have been saved for this week.',
+    });
   };
+
+  const completeLeave = useCallback(
+    (target: LeaveTarget) => {
+      setLeaveTarget(null);
+      if (typeof target === 'string') {
+        navigate(target);
+      } else {
+        navigate(target.pathname, target.state !== undefined ? { state: target.state } : undefined);
+      }
+    },
+    [navigate]
+  );
+
+  useEffect(() => {
+    const eligible =
+      user &&
+      user.subscription &&
+      user.subscription.status !== 'cancelled' &&
+      !loadingLimits &&
+      baselineSnap !== null;
+
+    if (!eligible) {
+      unregister();
+      return;
+    }
+
+    register({
+      isDirty: () =>
+        baselineSnapRef.current !== null &&
+        makeCustomizationSnap(customizationsRef.current, selectedPlanRef.current) !== baselineSnapRef.current,
+      canSave: isCustomizationAllowed,
+      save: () => persistPreferencesRef.current(),
+      requestLeave,
+    });
+    return () => unregister();
+  }, [
+    user,
+    loadingLimits,
+    isCustomizationAllowed,
+    persistPreferences,
+    requestLeave,
+    register,
+    unregister,
+  ]);
+
+  useEffect(() => {
+    if (!isDirty) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [isDirty]);
 
   const toggleVegetableRemoval = (vegetableId: string) => {
     if (!isCustomizationAllowed) return;
@@ -437,6 +570,39 @@ const CustomizationPage = () => {
 
   return (
     <div className="pt-16">
+      <MessageModal
+        isOpen={saveFeedback !== null}
+        onClose={() => setSaveFeedback(null)}
+        title={saveFeedback?.title ?? ''}
+        message={saveFeedback?.message ?? ''}
+        variant={saveFeedback?.variant ?? 'success'}
+      />
+      <UnsavedLeaveModal
+        isOpen={leaveTarget !== null}
+        onStay={() => setLeaveTarget(null)}
+        onLeaveWithoutSaving={() => {
+          if (leaveTarget) completeLeave(leaveTarget);
+        }}
+        onSaveAndLeave={async () => {
+          setLeaveSaveBusy(true);
+          try {
+            const ok = await persistPreferences();
+            if (ok && leaveTarget) {
+              completeLeave(leaveTarget);
+            } else if (!ok) {
+              setSaveFeedback({
+                variant: 'error',
+                title: 'Could not save',
+                message: 'Something went wrong while saving your preferences. Please try again.',
+              });
+            }
+          } finally {
+            setLeaveSaveBusy(false);
+          }
+        }}
+        canSave={isCustomizationAllowed}
+        saveBusy={leaveSaveBusy}
+      />
       {loadingLimits ? (
         <div className="min-h-screen flex items-center justify-center bg-gray-50">
           <div className="text-center">
@@ -451,11 +617,14 @@ const CustomizationPage = () => {
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
               <div className="text-center space-y-6">
                 <Link
-                  to="/"
+                  to="/my-bucket"
+                  onClick={(e) => {
+                    if (interceptLeave('/my-bucket')) e.preventDefault();
+                  }}
                   className="inline-flex items-center space-x-2 text-green-600 hover:text-green-700 transition-colors mb-4"
                 >
                   <ArrowLeft className="h-5 w-5" />
-                  <span>Back to Home</span>
+                  <span>Back to My Bucket</span>
                 </Link>
 
                 <div className="flex items-center justify-center space-x-3 mb-6">
