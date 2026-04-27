@@ -41,13 +41,18 @@ const WeeklyScheduleInfo = () => {
             {isCustomizationAllowed && formatTimeRemaining() && (
               <div className="text-xs font-medium tabular-nums opacity-95">{formatTimeRemaining()}</div>
             )}
-            {scheduleDisplay?.windowParts && (
+            {scheduleDisplay?.closedWeekMessage && (
+              <div className="text-xs font-medium opacity-95 leading-snug">{scheduleDisplay.closedWeekMessage}</div>
+            )}
+            {scheduleDisplay?.windowParts && !scheduleDisplay.closedWeekMessage && (
               <ScheduleWindowPairCards
                 parts={scheduleDisplay.windowParts}
                 tone={isCustomizationAllowed ? 'green' : 'orange'}
               />
             )}
-            {scheduleDisplay && !scheduleDisplay.windowParts && (
+            {scheduleDisplay &&
+              !scheduleDisplay.windowParts &&
+              !scheduleDisplay.closedWeekMessage && (
               <div className="text-xs opacity-90 leading-snug">
                 Opens {scheduleDisplay.openLabel} · Closes {scheduleDisplay.closeLabel}
               </div>

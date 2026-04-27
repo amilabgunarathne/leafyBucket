@@ -9,10 +9,12 @@ import { getCurrentWeekDateRange, getNextWeekDateRange, getVegCountFromBucketTyp
 import { formatPaymentMethodLabel } from '../utils/paymentMethodDisplay';
 import {
   formatScheduleDisplayWithWeekDates,
+  formatCustomizationInstant,
+  getCustomizationWindowInMarketWeek,
   getScheduleEditState,
   getScheduleWindowPartsForLocalWeek,
+  validateScheduleWithinMarketWeek,
   scheduleFromMarketWeek,
-  computeNextOpening,
 } from '../utils/customizationSchedule';
 import { ScheduleWindowPairCards } from '../components/ScheduleWindowPairCards';
 
@@ -861,12 +863,10 @@ const AdminPage = () => {
                 {(() => {
                   const now = new Date();
                   const currentWeekRow = currentWeekId ? marketWeeks.find((w) => w.id === currentWeekId) : null;
-                  const scheduleRow = scheduleFromMarketWeek(currentWeekRow ?? undefined);
+                  const scheduleRow = scheduleFromMarketWeek(currentWeekRow ?? null);
                   const scheduleLabels = formatScheduleDisplayWithWeekDates(now, scheduleRow);
                   const windowParts = getScheduleWindowPartsForLocalWeek(now, scheduleRow);
                   const scheduleEditState = getScheduleEditState(now, scheduleRow);
-                  const nextOpen = computeNextOpening(now, scheduleRow);
-                  const isBeforeNextWindow = now.getTime() < nextOpen.getTime();
                   const toHHMM = (t: string) => {
                     const s = (t || '12:00').trim();
                     const parts = s.split(':');
@@ -874,6 +874,25 @@ const AdminPage = () => {
                     const m = Math.min(59, Math.max(0, parseInt(parts[1], 10) || 0));
                     return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
                   };
+                  const curRangePreview = getCurrentWeekDateRange();
+                  const previewRow = currentWeekId
+                    ? marketWeeks.find((w) => w.id === currentWeekId)
+                    : marketWeeks.find((w) => toWeekStart(w.week_start_date) === curRangePreview.week_start_date);
+                  const previewWeekStart = previewRow?.week_start_date ?? curRangePreview.week_start_date;
+                  const previewWeekEnd = previewRow?.week_end_date ?? curRangePreview.week_end_date;
+                  const previewScheduleRow: import('../utils/customizationSchedule').CustomizationScheduleRow = {
+                    id: '',
+                    open_dow: currentWeekScheduleForm.open_dow,
+                    open_time: toHHMM(currentWeekScheduleForm.open_time) || '12:00',
+                    close_dow: currentWeekScheduleForm.close_dow,
+                    close_time: toHHMM(currentWeekScheduleForm.close_time) || '23:59',
+                  };
+                  const adminWindowPreview = getCustomizationWindowInMarketWeek(
+                    previewWeekStart,
+                    previewWeekEnd,
+                    previewScheduleRow
+                  );
+
                   const handleSaveCurrentWeekSchedule = async () => {
                     const openTime = toHHMM(currentWeekScheduleForm.open_time) || '12:00';
                     const closeTime = toHHMM(currentWeekScheduleForm.close_time) || '23:59';
@@ -884,10 +903,23 @@ const AdminPage = () => {
                       close_time: closeTime
                     };
                     const curRange = getCurrentWeekDateRange();
-                    // Use existing row for this week if any (avoid duplicates: one row per week)
                     const existingRow = currentWeekId
                       ? marketWeeks.find((w) => w.id === currentWeekId)
                       : marketWeeks.find((w) => toWeekStart(w.week_start_date) === curRange.week_start_date);
+                    const weekStart = existingRow?.week_start_date ?? curRange.week_start_date;
+                    const weekEnd = existingRow?.week_end_date ?? curRange.week_end_date;
+                    const scheduleCheck: import('../utils/customizationSchedule').CustomizationScheduleRow = {
+                      id: '',
+                      open_dow: payload.open_dow,
+                      open_time: payload.open_time,
+                      close_dow: payload.close_dow,
+                      close_time: payload.close_time,
+                    };
+                    const validation = validateScheduleWithinMarketWeek(weekStart, weekEnd, scheduleCheck);
+                    if (!validation.ok) {
+                      setMessage({ type: 'error', text: validation.message });
+                      return;
+                    }
                     const rowId = existingRow?.id;
                     if (rowId) {
                       const { error } = await supabase.from('market_weeks').update(payload).eq('id', rowId);
@@ -925,9 +957,7 @@ const AdminPage = () => {
                       ) : null}
                       {currentWeekScheduleEditOpen ? (
                         <div className="space-y-3">
-                          {isBeforeNextWindow ? (
-                            <p className="text-sm text-green-800 bg-green-50 border border-green-200 rounded px-2 py-1.5">Opening day has not come yet. You can edit open and close times below; they will apply to the next window.</p>
-                          ) : scheduleEditState.message ? (
+                          {scheduleEditState.message ? (
                             <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1.5">{scheduleEditState.message}</p>
                           ) : null}
                           <div>
@@ -946,6 +976,27 @@ const AdminPage = () => {
                                 {[0, 1, 2, 3, 4, 5, 6].map((d) => <option key={d} value={d}>{DOW_LABELS[d]}</option>)}
                               </select>
                               <input type="time" value={currentWeekScheduleForm.close_time} onChange={(e) => setCurrentWeekScheduleForm((f) => ({ ...f, close_time: e.target.value }))} className="px-2 py-1 border rounded text-sm" />
+                            </div>
+                            <p className="text-xs text-gray-500 mt-1">
+                              Close must be on or before the end of this market week (Sunday 11:59 PM of the same Mon–Sun week).
+                            </p>
+                          </div>
+                          <div className="rounded-lg border border-green-200 bg-green-50/90 px-3 py-2.5 text-xs text-green-950">
+                            <div className="font-semibold text-green-900 mb-1.5">Preview for this market week ({previewWeekStart} → {previewWeekEnd})</div>
+                            <div className="space-y-1 text-green-900/95">
+                              <div>
+                                <span className="text-green-800 font-medium">Opens:</span>{' '}
+                                {formatCustomizationInstant(adminWindowPreview.windowStart)}
+                              </div>
+                              <div>
+                                <span className="text-green-800 font-medium">Closes:</span>{' '}
+                                {formatCustomizationInstant(adminWindowPreview.windowEnd)}
+                              </div>
+                              {adminWindowPreview.exceedsWeekEnd ? (
+                                <p className="text-amber-800 font-medium mt-2 pt-1 border-t border-amber-200/80">
+                                  Close extends past this week&apos;s end—Save will be blocked until you move close on or before {previewWeekEnd} 11:59 PM.
+                                </p>
+                              ) : null}
                             </div>
                           </div>
                           <div className="flex gap-2">

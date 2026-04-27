@@ -38,7 +38,6 @@ CREATE TABLE public.subscriptions (
   plan TEXT CHECK (plan IN ('small', 'medium', 'large')),
   status TEXT CHECK (status IN ('active', 'paused', 'cancelled')) DEFAULT 'active',
   next_delivery DATE,
-  customizations JSONB DEFAULT '{}'::jsonb,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL,
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );

@@ -11,7 +11,7 @@ import UnsavedLeaveModal from '../components/UnsavedLeaveModal';
 import { useCustomizationExitContext } from '../contexts/CustomizationExitContext';
 import type { LeaveTarget } from '../contexts/CustomizationExitContext';
 import { useCustomizationLeaveInterceptor } from '../hooks/useCustomizationLeaveInterceptor';
-import { effectiveVegCustomizations, normalizeSubscriptionCustomizations } from '../utils/subscriptionCustomizations';
+import { normalizeDeliveryCustomizations } from '../utils/deliveryCustomizations';
 import { formatCustomizationInstant } from '../utils/customizationSchedule';
 
 function makeCustomizationSnap(
@@ -44,7 +44,6 @@ const CustomizationPage = () => {
     scheduleDisplay,
     refreshWeeklySelection,
   } = weekly;
-  const activeMwId = weekly.activeMarketWeekId;
   const [selectedPlan, setSelectedPlan] = useState<string>(user?.subscription?.plan || 'medium');
   const [customizations, setCustomizations] = useState<{
     excludedVegetables: string[];
@@ -58,24 +57,23 @@ const CustomizationPage = () => {
     deliveryDay: user?.subscription?.customizations?.deliveryDay || 'sunday'
   });
 
-  // Sync from profile; veg add/remove/exclude only apply to the saved market week (not last week’s “ADDED” items).
+  // Sync from profile (customizations mirror the current open delivery row).
   useEffect(() => {
     if (user?.subscription) {
       setSelectedPlan(user.subscription.plan);
-      const raw = normalizeSubscriptionCustomizations(user.subscription.customizations);
-      const eff = effectiveVegCustomizations(raw, activeMwId);
+      const eff = normalizeDeliveryCustomizations(user.subscription.customizations);
       const next = {
         excludedVegetables: eff.excludedVegetables,
         removedVegetables: eff.removedVegetables,
         addedVegetables: eff.addedVegetables,
-        deliveryDay: raw.deliveryDay || 'sunday',
+        deliveryDay: eff.deliveryDay || 'sunday',
       };
       setCustomizations(next);
       setBaselineSnap(makeCustomizationSnap(next, user.subscription.plan));
     } else {
       setBaselineSnap(null);
     }
-  }, [user?.subscription?.plan, user?.subscription?.customizations, activeMwId]);
+  }, [user?.subscription?.plan, user?.subscription?.customizations, user?.subscription?.currentDeliveryId]);
 
   const [vegetables, setVegetables] = useState<Vegetable[]>([]);
   const vegetableService = VegetableService.getInstance();
@@ -307,20 +305,19 @@ const CustomizationPage = () => {
 
   const persistPreferences = useCallback(async (): Promise<boolean> => {
     if (!user?.subscription) return false;
+    const deliveryId = user.subscription.currentDeliveryId;
+    if (!deliveryId) return false;
 
     try {
       const { default: SubscriptionService } = await import('../services/SubscriptionService');
       const subService = SubscriptionService.getInstance();
 
-      if (user.subscription.id) {
-        await subService.updateSubscriptionCustomizations(user.subscription.id, {
-          excludedVegetables: customizations.excludedVegetables,
-          removedVegetables: customizations.removedVegetables,
-          addedVegetables: customizations.addedVegetables,
-          deliveryDay: customizations.deliveryDay,
-          marketWeekId: activeMwId ?? null,
-        });
-      }
+      await subService.saveDeliveryCustomizations(deliveryId, {
+        excludedVegetables: customizations.excludedVegetables,
+        removedVegetables: customizations.removedVegetables,
+        addedVegetables: customizations.addedVegetables,
+        deliveryDay: customizations.deliveryDay,
+      });
 
       const activeSub = await subService.getActiveSubscription(user.id);
 
@@ -349,14 +346,13 @@ const CustomizationPage = () => {
         plan: selectedPlan as 'small' | 'medium' | 'large',
         customizations: {
           ...customizations,
-          marketWeekId: activeMwId ?? null,
-        }
-      }
+        },
+      },
     });
 
     setBaselineSnap(makeCustomizationSnap(customizations, selectedPlan));
     return true;
-  }, [user, customizations, selectedPlan, activeMwId, updateUser]);
+  }, [user, customizations, selectedPlan, updateUser]);
 
   const persistPreferencesRef = useRef(persistPreferences);
   persistPreferencesRef.current = persistPreferences;

@@ -23,12 +23,8 @@ const toneText: Record<Tone, { wrap: string; sep: string; strong: string; label:
   },
 };
 
-function shortWeekday(full: string): string {
-  return full.length <= 3 ? full : full.slice(0, 3);
-}
-
 /**
- * Compact open/close line: fits in roughly the same space as one paragraph line (wraps on narrow screens).
+ * Compact open/close line: full weekday + date + time (avoids ambiguous “Sat / Mon” without dates).
  */
 export function ScheduleWindowPairCards({
   parts,
@@ -38,8 +34,8 @@ export function ScheduleWindowPairCards({
   tone: Tone;
 }) {
   const t = toneText[tone];
-  const openOneLine = `${shortWeekday(parts.open.weekday)} ${parts.open.dateStr} · ${parts.open.timeStr}`;
-  const closeOneLine = `${shortWeekday(parts.close.weekday)} ${parts.close.dateStr} · ${parts.close.timeStr}`;
+  const openOneLine = `${parts.open.weekday} ${parts.open.dateStr} · ${parts.open.timeStr}`;
+  const closeOneLine = `${parts.close.weekday} ${parts.close.dateStr} · ${parts.close.timeStr}`;
 
   return (
     <div

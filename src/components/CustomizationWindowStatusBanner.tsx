@@ -22,7 +22,8 @@ const CustomizationWindowStatusBanner = ({ variant = 'banner' }: Props) => {
   };
 
   if (!isCustomizationAllowed) {
-    const hasParts = scheduleDisplay?.windowParts;
+    const closedMsg = scheduleDisplay?.closedWeekMessage;
+    const hasParts = Boolean(scheduleDisplay?.windowParts);
 
     if (isHeader) {
       return (
@@ -30,7 +31,9 @@ const CustomizationWindowStatusBanner = ({ variant = 'banner' }: Props) => {
           <Clock className="h-4 w-4 shrink-0 text-orange-600 mt-0.5" aria-hidden />
           <div className="min-w-0 flex-1 space-y-0.5">
             <div className="text-xs font-semibold text-orange-900 leading-tight">Customization closed</div>
-            {hasParts ? (
+            {closedMsg ? (
+              <p className="text-[11px] text-orange-800 leading-snug">{closedMsg}</p>
+            ) : hasParts && scheduleDisplay?.windowParts ? (
               <ScheduleWindowPairCards parts={scheduleDisplay.windowParts} tone="orange" />
             ) : (
               <p className="text-[11px] text-orange-800 leading-snug">
@@ -50,7 +53,9 @@ const CustomizationWindowStatusBanner = ({ variant = 'banner' }: Props) => {
           <Clock className="h-5 w-5 shrink-0 text-orange-600 mt-0.5" aria-hidden />
           <div className="min-w-0 space-y-0.5">
             <div className="text-sm font-semibold text-orange-900">Customization closed</div>
-            {hasParts ? (
+            {closedMsg ? (
+              <p className="text-sm text-orange-800">{closedMsg}</p>
+            ) : hasParts && scheduleDisplay?.windowParts ? (
               <ScheduleWindowPairCards parts={scheduleDisplay.windowParts} tone="orange" />
             ) : (
               <p className="text-sm text-orange-800">

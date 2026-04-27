@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { supabase, REMEMBER_ME_KEY } from '../lib/supabase';
-import { normalizeSubscriptionCustomizations } from '../utils/subscriptionCustomizations';
+import { normalizeDeliveryCustomizations } from '../utils/deliveryCustomizations';
 
 // Session timeout: idle = no activity, absolute = max session length regardless of activity
 const SESSION_IDLE_TIMEOUT_MS = 30 * 60 * 1000;   // 30 minutes
@@ -38,12 +38,13 @@ interface User {
     /** Mirrors `subscriptions.payment_method_id` for profile load / optimistic UI */
     payment_method_id?: string | null;
     nextDelivery: string;
+    /** Mirrored from the earliest open `deliveries` row (per-delivery JSON in DB). */
+    currentDeliveryId?: string | null;
     customizations: {
       excludedVegetables: string[];
       removedVegetables: string[];
       addedVegetables: string[];
       deliveryDay: string;
-      marketWeekId?: string | null;
     };
   };
 }
@@ -140,7 +141,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       // Construct User Object
-      const subRow = subscription as Record<string, unknown> | null | undefined;
       const subAny = subscription as {
         next_delivery?: string | null;
         next_delivery_date?: string | null;
@@ -149,6 +149,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         subAny?.next_delivery_date ||
         subAny?.next_delivery ||
         new Date().toISOString();
+
+      let currentDeliveryId: string | null = null;
+      let deliveryCustomizations = normalizeDeliveryCustomizations({});
+      if (subscription) {
+        const { data: openDel } = await supabase
+          .from('deliveries')
+          .select('id, customizations')
+          .eq('subscription_id', subscription.id)
+          .eq('status', 'open')
+          .order('scheduled_date', { ascending: true })
+          .order('delivery_index', { ascending: true })
+          .limit(1)
+          .maybeSingle();
+        if (openDel) {
+          currentDeliveryId = openDel.id as string;
+          deliveryCustomizations = normalizeDeliveryCustomizations(
+            (openDel as { customizations?: unknown }).customizations
+          );
+        }
+      }
+
       const userData: User = {
         id: userId,
         email: email,
@@ -163,7 +184,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           status: subscription.status,
           payment_method_id: (subscription as { payment_method_id?: string | null }).payment_method_id ?? null,
           nextDelivery: nextDel,
-          customizations: normalizeSubscriptionCustomizations(subRow?.customizations)
+          currentDeliveryId,
+          customizations: deliveryCustomizations,
         } : undefined
       };
 

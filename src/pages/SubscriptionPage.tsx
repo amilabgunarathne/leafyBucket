@@ -10,10 +10,9 @@ import SubscriptionService from '../services/SubscriptionService';
 import VegetableService from '../services/vegetableService';
 import { getWeeklyAllocationsByVegetableId } from '../utils/weeklyPlanAllocation';
 import {
-  effectiveVegCustomizations,
-  normalizeSubscriptionCustomizations,
-  hasSavedVegCustomizationForCurrentWeek,
-} from '../utils/subscriptionCustomizations';
+  normalizeDeliveryCustomizations,
+  hasSavedVegCustomization,
+} from '../utils/deliveryCustomizations';
 import { isAfterCustomizationClosedForCurrentWeek } from '../utils/customizationSchedule';
 import {
   formatPaymentMethodLabel,
@@ -137,7 +136,7 @@ const SubscriptionPage = () => {
       }
     };
     fetchSub();
-  }, [user?.id, user?.subscription?.id]);
+  }, [user?.id, user?.subscription?.id, user?.subscription?.customizations]);
 
   const resolvedPaymentMethodId = React.useMemo(
     () =>
@@ -324,7 +323,7 @@ const SubscriptionPage = () => {
 
   const [vegetables, setVegetables] = useState<{ id: string; name: string; weight: string }[]>([]);
   const vegetableService = VegetableService.getInstance();
-  const { allSelections, refreshWeeklySelection, activeMarketWeekId, timeRemaining } = useWeekly();
+  const { allSelections, refreshWeeklySelection, timeRemaining } = useWeekly();
   const planKeyForWeek = (user?.subscription?.plan || 'medium') as 'small' | 'medium' | 'large';
 
   // Same data path as Customize (WeeklyContext → market_week_bucket_vegetables); reload week veg when landing on My Bucket
@@ -345,10 +344,11 @@ const SubscriptionPage = () => {
       await vegetableService.initialize();
       const sel = allSelections[planKeyForWeek];
       let ids = sel?.vegetables ?? [];
-      const rawCust = normalizeSubscriptionCustomizations(user.subscription?.customizations);
-      const eff = effectiveVegCustomizations(rawCust, activeMarketWeekId);
-      const removed = eff.removedVegetables;
-      const added = eff.addedVegetables;
+      const cust = normalizeDeliveryCustomizations(
+        currentDelivery?.customizations ?? user.subscription?.customizations
+      );
+      const removed = cust.removedVegetables;
+      const added = cust.addedVegetables;
       ids = ids.filter((id) => !removed.includes(id));
       for (const a of added) {
         if (!ids.includes(a)) ids.push(a);
@@ -380,9 +380,9 @@ const SubscriptionPage = () => {
     user?.subscription?.status,
     planKeyForWeek,
     allSelections,
-    user?.subscription?.customizations?.removedVegetables,
-    user?.subscription?.customizations?.addedVegetables,
-    activeMarketWeekId,
+    currentDelivery?.id,
+    currentDelivery?.customizations,
+    user?.subscription?.customizations,
   ]);
 
   return (
@@ -414,8 +414,10 @@ const SubscriptionPage = () => {
 
         {/* Progress: “Automated payment” ticks only after *this calendar week’s* customization close (not Mon–Tue before open; not just !isCustomizationAllowed). */}
         {user.subscription && user.subscription.status !== 'cancelled' && (() => {
-          const rawCust = normalizeSubscriptionCustomizations(user.subscription?.customizations);
-          const hasCustomizeDone = hasSavedVegCustomizationForCurrentWeek(rawCust, activeMarketWeekId);
+          const cust = normalizeDeliveryCustomizations(
+            currentDelivery?.customizations ?? user.subscription?.customizations
+          );
+          const hasCustomizeDone = hasSavedVegCustomization(cust);
 
           const paymentSaved = Boolean(activeSubscription?.payment_method_id) || setupComplete;
           const isEstablishedSubscriber = paymentSaved;

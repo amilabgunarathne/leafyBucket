@@ -1,5 +1,8 @@
 import { supabase } from '../lib/supabase';
-import type { SubscriptionCustomizationsState } from '../utils/subscriptionCustomizations';
+import {
+    type DeliveryCustomizationsState,
+    deliveryCustomizationsToJson,
+} from '../utils/deliveryCustomizations';
 
 // Helper types matching the new schema
 export interface PaymentMethod {
@@ -54,6 +57,7 @@ export interface Delivery {
     weekly_budget: number;
     locked_at?: string;
     delivered_at?: string;
+    customizations?: unknown;
 }
 
 export interface DeliveryItem {
@@ -325,17 +329,17 @@ class SubscriptionService {
     }
 
     /**
-     * Persist bucket customizations on the subscription so they survive reload (source of truth for UI).
+     * Persist bucket customizations on the open delivery row (`deliveries.customizations`).
+     * Uses SECURITY DEFINER RPC so subscribers cannot mutate other columns via broad RLS.
      */
-    async updateSubscriptionCustomizations(
-        subscriptionId: string,
-        customizations: SubscriptionCustomizationsState
+    async saveDeliveryCustomizations(
+        deliveryId: string,
+        customizations: DeliveryCustomizationsState
     ): Promise<void> {
-        const { error } = await supabase
-            .from('subscriptions')
-            .update({ customizations })
-            .eq('id', subscriptionId);
-
+        const { error } = await supabase.rpc('save_my_delivery_customizations', {
+            p_delivery_id: deliveryId,
+            p_customizations: deliveryCustomizationsToJson(customizations),
+        });
         if (error) throw error;
     }
 

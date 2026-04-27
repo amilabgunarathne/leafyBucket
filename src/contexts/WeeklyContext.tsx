@@ -13,17 +13,19 @@ import { supabase } from '../lib/supabase';
 import { getCurrentWeekDateRange, pickMarketWeekIdForApp } from '../utils/marketWeekUtils';
 import {
   computeNextOpening,
-  formatScheduleDisplayWithWeekDates,
   getScheduleContext,
-  getScheduleWindowPartsForLocalWeek,
+  resolveScheduleDisplayForStatus,
   type ScheduleWindowParts,
 } from '../utils/customizationSchedule';
+import { normalizeWeekStartDate } from '../utils/marketWeekUtils';
 
 interface ScheduleDisplay {
   openLabel: string;
   closeLabel: string;
   nextOpeningDate: Date | null;
-  windowParts: ScheduleWindowParts;
+  windowParts: ScheduleWindowParts | null;
+  /** Shown instead of open/close when the week is locked or this market week’s window has already closed. */
+  closedWeekMessage: string | null;
 }
 
 interface WeeklyContextType {
@@ -40,7 +42,7 @@ interface WeeklyContextType {
   };
   /** From DB: when customization opens/closes and next opening (for customer copy). */
   scheduleDisplay: ScheduleDisplay | null;
-  /** Current market_weeks.id used for admin week veg + scoping subscription customizations (add/removed per week). */
+  /** Current market_weeks.id used for admin week veg list (bucket defaults). Customer veg deltas live on `deliveries.customizations`. */
   activeMarketWeekId: string | null;
   getSelectionForPlan: (planId: 'small' | 'medium' | 'large') => WeeklySelection | null;
   refreshWeeklySelection: (planId: 'small' | 'medium' | 'large') => Promise<void>;
@@ -94,17 +96,26 @@ export const WeeklyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   // Update customization status and time remaining (uses DB schedule once setScheduleContext is called)
   const updateStatus = () => {
-    setIsCustomizationAllowed(isCustomizationOpen());
+    const openNow = isCustomizationOpen();
+    setIsCustomizationAllowed(openNow);
     setTimeRemaining(getCustomizationTimeRemaining());
     const ctx = getScheduleContext();
     if (ctx) {
       const now = new Date();
-      const labels = formatScheduleDisplayWithWeekDates(now, ctx.schedule);
+      const resolved = resolveScheduleDisplayForStatus(
+        now,
+        ctx.schedule,
+        openNow,
+        ctx.weekLocked,
+        ctx.marketWeekStart,
+        ctx.marketWeekEnd
+      );
       setScheduleDisplay({
-        openLabel: labels.openLabel,
-        closeLabel: labels.closeLabel,
+        openLabel: resolved.openLabel,
+        closeLabel: resolved.closeLabel,
         nextOpeningDate: computeNextOpening(now, ctx.schedule),
-        windowParts: getScheduleWindowPartsForLocalWeek(now, ctx.schedule),
+        windowParts: resolved.windowParts,
+        closedWeekMessage: resolved.closedWeekMessage,
       });
     }
   };
@@ -132,7 +143,9 @@ export const WeeklyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         const { scheduleFromMarketWeek } = await import('../utils/customizationSchedule');
         // Source of truth: market_weeks row for the current week (open_dow/time, close_dow/time); null fields use built-in defaults.
         const schedule = scheduleFromMarketWeek(currentWeek);
-        setScheduleContext(schedule, currentWeek.is_locked === true);
+        const mwStart = normalizeWeekStartDate(currentWeek.week_start_date) || null;
+        const mwEnd = normalizeWeekStartDate(currentWeek.week_end_date) || null;
+        setScheduleContext(schedule, currentWeek.is_locked === true, mwStart, mwEnd);
         updateStatus();
 
         const { getVegCountFromBucketType } = await import('../utils/marketWeekUtils');
