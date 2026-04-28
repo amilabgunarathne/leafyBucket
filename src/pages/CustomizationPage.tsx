@@ -264,11 +264,17 @@ const CustomizationPage = () => {
     return selection?.vegetables ?? [];
   };
 
+  const defaultVegSet = useMemo(() => new Set(getDefaultVegetables()), [user?.subscription?.plan, selectedPlan, getSelectionForPlan]);
+
   const getCurrentVegetables = () => {
     const defaultVegs = getDefaultVegetables();
-    const finalVegetables = defaultVegs
-      .filter(vegId => !customizations.removedVegetables.includes(vegId))
-      .concat(customizations.addedVegetables);
+    const base = defaultVegs.filter((vegId) => !customizations.removedVegetables.includes(vegId));
+    const finalVegetables: string[] = [...base];
+    for (const id of customizations.addedVegetables) {
+      // If user re-added a default item, treat it as default (not "added")
+      if (defaultVegSet.has(id)) continue;
+      if (!finalVegetables.includes(id)) finalVegetables.push(id);
+    }
 
     // Resolve IDs against full catalog (not bulk-only), same as admin week assignments
     const validVegIds = new Set(vegetableService.getAllVegetables().map((v) => v.id));
@@ -434,6 +440,7 @@ const CustomizationPage = () => {
 
     setCustomizations((prev: any) => {
       const isCurrentlyRemoved = prev.removedVegetables.includes(vegetableId);
+      const isDefault = defaultVegSet.has(vegetableId);
 
       if (isCurrentlyRemoved) {
         return {
@@ -441,20 +448,18 @@ const CustomizationPage = () => {
           removedVegetables: prev.removedVegetables.filter((id: string) => id !== vegetableId)
         };
       } else {
-        // When removing a default vegetable, it should be added to removedVegetables
-        // If it was previously added by the user, it should be removed from addedVegetables
-        const isCurrentlyAddedByUser = prev.addedVegetables.includes(vegetableId);
-        if (isCurrentlyAddedByUser) {
+        // Removing a default veg marks it removed. Removing a user-added veg just un-adds it.
+        if (isDefault) {
           return {
             ...prev,
-            addedVegetables: prev.addedVegetables.filter((id: string) => id !== vegetableId)
-          };
-        } else {
-          return {
-            ...prev,
-            removedVegetables: [...prev.removedVegetables, vegetableId]
+            removedVegetables: [...prev.removedVegetables, vegetableId],
+            addedVegetables: prev.addedVegetables.filter((id: string) => id !== vegetableId),
           };
         }
+        return {
+          ...prev,
+          addedVegetables: prev.addedVegetables.filter((id: string) => id !== vegetableId),
+        };
       }
     });
   };
@@ -463,6 +468,16 @@ const CustomizationPage = () => {
     if (!isCustomizationAllowed) return;
 
     setCustomizations((prev: any) => {
+      const isDefault = defaultVegSet.has(vegetableId);
+      // Adding a default veg should undo removal (and never keep it in "added").
+      if (isDefault) {
+        return {
+          ...prev,
+          removedVegetables: prev.removedVegetables.filter((id: string) => id !== vegetableId),
+          addedVegetables: prev.addedVegetables.filter((id: string) => id !== vegetableId),
+        };
+      }
+
       const isCurrentlyAdded = prev.addedVegetables.includes(vegetableId);
 
       if (isCurrentlyAdded) {
@@ -721,7 +736,9 @@ const CustomizationPage = () => {
                         })}
 
                       {/* Show added vegetables */}
-                      {customizations.addedVegetables.map((vegetableId) => {
+                      {customizations.addedVegetables
+                        .filter((id) => !defaultVegSet.has(id))
+                        .map((vegetableId) => {
                         const vegetable = vegetables.find(v => v.id === vegetableId);
                         const CategoryIcon = getCategoryIcon(vegetable?.category || 'leafy');
                         const allocation = getCurrentAllocation().find(v => v.id === vegetableId);

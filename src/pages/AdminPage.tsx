@@ -208,8 +208,8 @@ const AdminPage = () => {
       let nxtWeek = weeksList.find((w) => toWeekStart(w.week_start_date) === nxtRange.week_start_date);
 
       // Use first matching row per week (avoid duplicates: one row per week)
-      curWeek = curWeek ?? weeksList.find((w) => toWeekStart(w.week_start_date) === curRange.week_start_date) ?? null;
-      nxtWeek = nxtWeek ?? weeksList.find((w) => toWeekStart(w.week_start_date) === nxtRange.week_start_date) ?? null;
+      curWeek = curWeek ?? weeksList.find((w) => toWeekStart(w.week_start_date) === curRange.week_start_date);
+      nxtWeek = nxtWeek ?? weeksList.find((w) => toWeekStart(w.week_start_date) === nxtRange.week_start_date);
       // Only insert if no row exists for this week (don't create duplicates)
       if (!curWeek) {
         const { data: existing } = await supabase.from('market_weeks').select('id, week_start_date, week_end_date, is_locked, created_at, open_dow, open_time, close_dow, close_time').eq('week_start_date', curRange.week_start_date).limit(1).maybeSingle();
@@ -441,11 +441,7 @@ const AdminPage = () => {
     setWeeklyOrderSavingId(deliveryId);
     try {
       const payload: Record<string, unknown> = { status: newStatus };
-      if (newStatus === 'delivered') {
-        payload.delivered_at = new Date().toISOString();
-      } else {
-        payload.delivered_at = null;
-      }
+      // delivered_at + subscription counters are handled by DB trigger (deliveries.status transition)
       const { error } = await supabase.from('deliveries').update(payload).eq('id', deliveryId);
       if (error) throw error;
       setWeeklyOrders((prev) =>
@@ -710,7 +706,7 @@ const AdminPage = () => {
                     vegetableCategoryFilter === 'all'
                       ? vegetables
                       : vegetables.filter((v) => v.category === vegetableCategoryFilter);
-                  const groups: { category: 'root' | 'leafy' | 'bushy'; label: string; vegs: typeof vegetables }[] = [
+                  const groups: { category: string; label: string; vegs: typeof vegetables }[] = [
                     { category: 'root', label: 'Root vegetables', vegs: filtered.filter((v) => v.category === 'root') },
                     { category: 'leafy', label: 'Leafy vegetables', vegs: filtered.filter((v) => v.category === 'leafy') },
                     { category: 'bushy', label: 'Bushy vegetables', vegs: filtered.filter((v) => v.category === 'bushy') }
@@ -1789,9 +1785,22 @@ const VegetableModal: React.FC<{
   onSave: (data: any) => void;
   onClose: () => void;
 }> = ({ vegetable, onSave, onClose }) => {
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<{
+    name: string;
+    category: '' | 'root' | 'leafy' | 'bushy';
+    season: string;
+    nutritionScore: number;
+    description: string;
+    marketPricePer250g: number;
+    bulkPricePer250g: number;
+    typicalWeight: string;
+    benefits: string;
+    image: string;
+    isAvailableRetail: boolean;
+    isAvailableBulk: boolean;
+  }>({
     name: vegetable?.name || '',
-    category: vegetable?.category || 'leafy',
+    category: (vegetable?.category as 'root' | 'leafy' | 'bushy' | undefined) || 'leafy',
     season: vegetable?.season || 'Year-round',
     nutritionScore: vegetable?.nutritionScore ?? 5,
     description: vegetable?.description || '',
@@ -1837,7 +1846,7 @@ const VegetableModal: React.FC<{
               <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
               <select
                 value={formData.category}
-                onChange={(e) => setFormData(prev => ({ ...prev, category: e.target.value }))}
+                onChange={(e) => setFormData(prev => ({ ...prev, category: e.target.value as 'root' | 'leafy' | 'bushy' | '' }))}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
                 required
               >

@@ -18,8 +18,7 @@ export interface Subscription {
     id: string;
     user_id: string;
     bucket_type_id: string;
-    plan_type: 'monthly' | 'weekly';
-    total_entitled_deliveries: number;
+    subscription_plan_id?: string | null;
     deliveries_used: number;
     status: 'active' | 'paused' | 'completed' | 'cancelled';
     started_at: string;
@@ -29,6 +28,7 @@ export interface Subscription {
     // Join fields
     bucket_type?: BucketType;
     payment_method?: PaymentMethod | null;
+    subscription_plan?: { id: string; code: string; name: string; entitled_deliveries: number } | null;
 }
 
 export interface BucketType {
@@ -121,7 +121,11 @@ class SubscriptionService {
     /**
      * Create a new subscription for a user
      */
-    async createSubscription(userId: string, bucketTypeId: string, planType: 'monthly' | 'weekly' = 'monthly'): Promise<Subscription> {
+    async createSubscription(
+        userId: string,
+        bucketTypeId: string,
+        planType: 'monthly' | 'weekly' | 'one_time' = 'monthly'
+    ): Promise<Subscription> {
         // 1. Get bucket details
         const { data: bucketType, error: btError } = await supabase
             .from('bucket_types')
@@ -131,6 +135,16 @@ class SubscriptionService {
 
         if (btError) throw btError;
 
+        // 1b. Get plan details (entitlement)
+        const { data: planRow, error: planErr } = await supabase
+            .from('subscription_plans')
+            .select('id, code, entitled_deliveries')
+            .eq('code', planType)
+            .eq('is_active', true)
+            .maybeSingle();
+        if (planErr) throw planErr;
+        if (!planRow) throw new Error(`Subscription plan not found: ${planType}`);
+
         // 2. Pre-cleanup: Mark any existing active subscriptions as cancelled
         await supabase
             .from('subscriptions')
@@ -139,14 +153,15 @@ class SubscriptionService {
             .eq('status', 'active');
 
         // 3. Create New Subscription
-        const entitlement = planType === 'monthly' ? 4 : 1;
+        const entitlement = typeof planRow.entitled_deliveries === 'number' && planRow.entitled_deliveries > 0
+            ? planRow.entitled_deliveries
+            : 1;
         const { data: sub, error: subError } = await supabase
             .from('subscriptions')
             .insert({
                 user_id: userId,
                 bucket_type_id: bucketTypeId,
-                plan_type: planType,
-                total_entitled_deliveries: entitlement,
+                subscription_plan_id: planRow.id,
                 status: 'active',
                 started_at: new Date().toISOString()
             })
@@ -189,76 +204,10 @@ class SubscriptionService {
     }
 
     /**
-     * Mark any still-open deliveries whose scheduled date is before today (local) as delivered,
-     * bump subscriptions.deliveries_used, and point next delivery at the next open slot.
-     * Idempotent: safe to call on every load.
-     */
-    async advancePastOpenDeliveries(userId: string): Promise<void> {
-        const todayStr = formatLocalDate(new Date());
-        const { data: sub, error: subErr } = await supabase
-            .from('subscriptions')
-            .select('id, deliveries_used')
-            .eq('user_id', userId)
-            .in('status', ['active', 'paused'])
-            .order('created_at', { ascending: false })
-            .limit(1)
-            .maybeSingle();
-
-        if (subErr) {
-            console.error('[advancePastOpenDeliveries] load subscription', subErr.message);
-            return;
-        }
-        if (!sub) return;
-
-        const nowIso = new Date().toISOString();
-        const { data: closed, error: upErr } = await supabase
-            .from('deliveries')
-            .update({ status: 'delivered', delivered_at: nowIso })
-            .eq('subscription_id', sub.id)
-            .eq('status', 'open')
-            .lt('scheduled_date', todayStr)
-            .select('id');
-
-        if (upErr) {
-            console.error('[advancePastOpenDeliveries] update deliveries', upErr.message);
-            return;
-        }
-
-        const n = closed?.length ?? 0;
-        if (n === 0) return;
-
-        const prevUsed = typeof sub.deliveries_used === 'number' ? sub.deliveries_used : 0;
-        const { data: nextOpen } = await supabase
-            .from('deliveries')
-            .select('scheduled_date')
-            .eq('subscription_id', sub.id)
-            .eq('status', 'open')
-            .order('scheduled_date', { ascending: true })
-            .limit(1)
-            .maybeSingle();
-
-        const nextDate = nextOpen?.scheduled_date ?? null;
-        const payload: Record<string, unknown> = {
-            deliveries_used: prevUsed + n,
-        };
-        if (nextDate) {
-            payload.next_delivery_date = nextDate;
-            payload.next_delivery = nextDate;
-        }
-
-        const { error: subUpErr } = await supabase.from('subscriptions').update(payload).eq('id', sub.id);
-        if (subUpErr) {
-            console.error('[advancePastOpenDeliveries] update subscription', subUpErr.message);
-        }
-    }
-
-    /**
      * Get subscription for user (active or paused) with next open delivery if any
      * Paused subscriptions still return the plan so the app can show "resume when ready"
      */
     async getActiveSubscription(userId: string): Promise<{ subscription: Subscription, currentDelivery: Delivery | null } | null> {
-        await this.advancePastOpenDeliveries(userId);
-
         // Same shape as AuthContext (no payment_method embed — a bad/missing FK embed fails the whole query and leaves activeSubscription null).
         const { data: sub, error } = await supabase
             .from('subscriptions')

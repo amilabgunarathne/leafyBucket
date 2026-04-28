@@ -125,20 +125,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         .limit(1)
         .maybeSingle();
 
-      // Roll past-open deliveries into the table (delivered) so the next week is current; then refetch for fresh next_delivery*
-      if (subscription) {
-        const { default: SubscriptionService } = await import('../services/SubscriptionService');
-        await SubscriptionService.getInstance().advancePastOpenDeliveries(userId);
-        const { data: subFresh } = await supabase
-          .from('subscriptions')
-          .select('*, bucket_type:bucket_types(*)')
-          .eq('user_id', userId)
-          .in('status', ['active', 'paused'])
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        if (subFresh) subscription = subFresh;
-      }
+      // Subscription + deliveries are advanced by admin status changes (delivered),
+      // not by client-side "scheduled_date < today" logic.
 
       // Construct User Object
       const subAny = subscription as {
@@ -312,7 +300,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         clearTimeout(timeoutId);
       });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       if (session?.user) {
         fetchUserProfile(session.user.id, session.user.email!);
       } else {
