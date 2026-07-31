@@ -125,8 +125,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         .limit(1)
         .maybeSingle();
 
-      // Subscription + deliveries are advanced by admin status changes (delivered),
-      // not by client-side "scheduled_date < today" logic.
+      // Past open deliveries (scheduled before this week's Monday) → cancelled so their
+      // customizations no longer apply; next open delivery becomes current.
+      if (subscription) {
+        const { default: SubscriptionService } = await import('../services/SubscriptionService');
+        await SubscriptionService.getInstance().cancelStaleOpenDeliveries();
+      }
 
       // Construct User Object
       const subAny = subscription as {
@@ -141,15 +145,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       let currentDeliveryId: string | null = null;
       let deliveryCustomizations = normalizeDeliveryCustomizations({});
       if (subscription) {
-        const { data: openDel } = await supabase
+        const { data: openRows } = await supabase
           .from('deliveries')
-          .select('id, customizations')
+          .select('id, scheduled_date, customizations')
           .eq('subscription_id', subscription.id)
           .eq('status', 'open')
           .order('scheduled_date', { ascending: true })
-          .order('delivery_index', { ascending: true })
-          .limit(1)
-          .maybeSingle();
+          .order('delivery_index', { ascending: true });
+        const { isDateInCurrentCalendarWeek } = await import('../utils/marketWeekUtils');
+        const openDel =
+          (openRows || []).find((d) =>
+            isDateInCurrentCalendarWeek((d as { scheduled_date?: string }).scheduled_date)
+          ) ?? null;
         if (openDel) {
           currentDeliveryId = openDel.id as string;
           deliveryCustomizations = normalizeDeliveryCustomizations(

@@ -42,9 +42,19 @@ export function getMarketWeekForCurrentMonday(weeks: MarketWeekRow[]): MarketWee
   return weeks.find((w) => normalizeWeekStartDate(w.week_start_date) === target) ?? null;
 }
 
+/** True if YYYY-MM-DD falls in this device’s current Mon–Sun week. */
+export function isDateInCurrentCalendarWeek(isoDate: string | null | undefined): boolean {
+  const d = normalizeWeekStartDate(isoDate);
+  if (!d) return false;
+  const { week_start_date, week_end_date } = getCurrentWeekDateRange();
+  return d >= week_start_date && d <= week_end_date;
+}
+
 /**
  * Resolve which market_weeks.id the app should use for week vegetables (same row as admin "current week").
- * Prefer Monday match, then week that contains today, never synthetic ids.
+ * Prefer Monday match, then week that contains today. Never synthetic ids.
+ * Do **not** fall back to the most recent older week — that reused last week’s admin veg list
+ * when the current week row was empty / missing.
  */
 export function pickMarketWeekIdForApp(weeks: MarketWeekRow[]): string | null {
   if (!weeks?.length) return null;
@@ -52,10 +62,7 @@ export function pickMarketWeekIdForApp(weeks: MarketWeekRow[]): string | null {
   if (byMonday?.id && !String(byMonday.id).startsWith('synthetic-')) return byMonday.id;
   const byToday = getCurrentMarketWeek(weeks);
   if (byToday?.id && !String(byToday.id).startsWith('synthetic-')) return byToday.id;
-  // Last resort: most recent market_week row (covers minor date mismatches vs local Monday)
-  const sorted = [...weeks].filter((w) => w.week_start_date).sort((a, b) => b.week_start_date.localeCompare(a.week_start_date));
-  const latest = sorted[0];
-  return latest?.id && !String(latest.id).startsWith('synthetic-') ? latest.id : null;
+  return null;
 }
 
 /** Get Monday of the week for a given date (ISO week). */

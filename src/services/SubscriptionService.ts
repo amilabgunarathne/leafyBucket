@@ -3,6 +3,7 @@ import {
     type DeliveryCustomizationsState,
     deliveryCustomizationsToJson,
 } from '../utils/deliveryCustomizations';
+import { getCurrentWeekDateRange, isDateInCurrentCalendarWeek } from '../utils/marketWeekUtils';
 
 // Helper types matching the new schema
 export interface PaymentMethod {
@@ -80,14 +81,6 @@ export interface CustomisationAction {
     removed_vegetable_id?: string;
     added_vegetable_id?: string;
     created_at: string;
-}
-
-/** Local calendar YYYY-MM-DD (browser timezone). After a Sunday, that date is before today from Monday onward. */
-function formatLocalDate(d: Date): string {
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${y}-${m}-${day}`;
 }
 
 class SubscriptionService {
@@ -204,10 +197,34 @@ class SubscriptionService {
     }
 
     /**
+     * Cancel still-open deliveries scheduled before this calendar week's Monday.
+     * Admin should mark delivered on time; if not, once the next week begins those rows are stale.
+     * Cancelling them makes the next open delivery current (with its own empty customizations).
+     * Idempotent. Uses SECURITY DEFINER RPC (subscribers have no broad UPDATE on deliveries).
+     */
+    async cancelStaleOpenDeliveries(): Promise<number> {
+        const { week_start_date } = getCurrentWeekDateRange();
+        const { data, error } = await supabase.rpc('cancel_my_stale_open_deliveries', {
+            p_week_start: week_start_date,
+        });
+        if (error) {
+            console.error('[cancelStaleOpenDeliveries]', error.message, { week_start_date });
+            return 0;
+        }
+        const n = typeof data === 'number' ? data : Number(data) || 0;
+        if (n > 0) {
+            console.info('[cancelStaleOpenDeliveries] cancelled', n, 'delivery(ies) before', week_start_date);
+        }
+        return n;
+    }
+
+    /**
      * Get subscription for user (active or paused) with next open delivery if any
      * Paused subscriptions still return the plan so the app can show "resume when ready"
      */
     async getActiveSubscription(userId: string): Promise<{ subscription: Subscription, currentDelivery: Delivery | null } | null> {
+        await this.cancelStaleOpenDeliveries();
+
         // Same shape as AuthContext (no payment_method embed — a bad/missing FK embed fails the whole query and leaves activeSubscription null).
         const { data: sub, error } = await supabase
             .from('subscriptions')
@@ -247,19 +264,21 @@ class SubscriptionService {
             }
         }
 
-        // When paused there may be no open delivery; when active, get next open delivery
-        const { data: delivery } = await supabase
+        // Prefer an open delivery scheduled in *this* Mon–Sun week.
+        // Never use a leftover May (etc.) open row for customizations — even if cancel RPC did not run.
+        const { data: openRows } = await supabase
             .from('deliveries')
             .select('*')
             .eq('subscription_id', sub.id)
             .eq('status', 'open')
-            .order('scheduled_date', { ascending: true })
-            .limit(1)
-            .maybeSingle();
+            .order('scheduled_date', { ascending: true });
+
+        const inWeek =
+            (openRows || []).find((d) => isDateInCurrentCalendarWeek(d.scheduled_date)) ?? null;
 
         return {
             subscription: sub,
-            currentDelivery: delivery
+            currentDelivery: inWeek
         };
     }
 
