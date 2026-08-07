@@ -104,7 +104,10 @@ const Footer = () => {
                 </Link>
               </li>
               {/* Only show Customize link for logged-in users who have selected a bucket */}
-              {user?.subscription && user.subscription.status !== 'cancelled' && (
+              {user?.subscription &&
+                user.subscription.status !== 'cancelled' &&
+                user.subscription.status !== 'paused' &&
+                user.subscription.currentDeliveryStatus !== 'skipped' && (
                 <li>
                   <Link
                     to="/customize"

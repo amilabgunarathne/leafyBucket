@@ -40,6 +40,8 @@ interface User {
     nextDelivery: string;
     /** Mirrored from the earliest open `deliveries` row (per-delivery JSON in DB). */
     currentDeliveryId?: string | null;
+    /** This calendar week's delivery status (open | paused | skipped | …). */
+    currentDeliveryStatus?: string | null;
     customizations: {
       excludedVegetables: string[];
       removedVegetables: string[];
@@ -125,13 +127,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         .limit(1)
         .maybeSingle();
 
-      // Past open deliveries (scheduled before this week's Monday) → cancelled so their
-      // customizations no longer apply; next open delivery becomes current.
-      if (subscription) {
-        const { default: SubscriptionService } = await import('../services/SubscriptionService');
-        await SubscriptionService.getInstance().cancelStaleOpenDeliveries();
-      }
-
+      // Past open deliveries are cancelled inside resolveCustomizationDelivery.
       // Construct User Object
       const subAny = subscription as {
         next_delivery?: string | null;
@@ -143,25 +139,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         new Date().toISOString();
 
       let currentDeliveryId: string | null = null;
+      let currentDeliveryStatus: string | null = null;
       let deliveryCustomizations = normalizeDeliveryCustomizations({});
       if (subscription) {
-        const { data: openRows } = await supabase
-          .from('deliveries')
-          .select('id, scheduled_date, customizations')
-          .eq('subscription_id', subscription.id)
-          .eq('status', 'open')
-          .order('scheduled_date', { ascending: true })
-          .order('delivery_index', { ascending: true });
-        const { isDateInCurrentCalendarWeek } = await import('../utils/marketWeekUtils');
-        const openDel =
-          (openRows || []).find((d) =>
-            isDateInCurrentCalendarWeek((d as { scheduled_date?: string }).scheduled_date)
-          ) ?? null;
-        if (openDel) {
-          currentDeliveryId = openDel.id as string;
-          deliveryCustomizations = normalizeDeliveryCustomizations(
-            (openDel as { customizations?: unknown }).customizations
-          );
+        const { default: SubscriptionService } = await import('../services/SubscriptionService');
+        const svc = SubscriptionService.getInstance();
+        const weekDel = await svc.getThisWeekDelivery(subscription.id);
+        if (weekDel) {
+          currentDeliveryStatus = weekDel.status;
+          deliveryCustomizations = normalizeDeliveryCustomizations(weekDel.customizations);
+          if (weekDel.status === 'open') {
+            currentDeliveryId = weekDel.id;
+          }
+        }
+        if (!currentDeliveryId && subscription.status === 'active' && currentDeliveryStatus !== 'skipped') {
+          const openDel = await svc.resolveCustomizationDelivery(subscription.id);
+          if (openDel) {
+            currentDeliveryId = openDel.id;
+            currentDeliveryStatus = openDel.status;
+            deliveryCustomizations = normalizeDeliveryCustomizations(openDel.customizations);
+          }
         }
       }
 
@@ -180,6 +177,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           payment_method_id: (subscription as { payment_method_id?: string | null }).payment_method_id ?? null,
           nextDelivery: nextDel,
           currentDeliveryId,
+          currentDeliveryStatus,
           customizations: deliveryCustomizations,
         } : undefined
       };

@@ -1,6 +1,7 @@
 import React from 'react';
 import { Shuffle, Lock, Leaf, TreePine, Flower, RefreshCw } from 'lucide-react';
 import { useWeekly } from '../contexts/WeeklyContext';
+import { useAuth } from '../contexts/AuthContext';
 import VegetableService from '../services/vegetableService';
 import { Vegetable } from '../data/vegetables';
 import { formatCustomizationInstant } from '../utils/customizationSchedule';
@@ -14,7 +15,12 @@ const WeeklyVegetableDisplay: React.FC<WeeklyVegetableDisplayProps> = ({
   planId,
   showShuffleButton = false
 }) => {
-  const { getSelectionForPlan, isCustomizationAllowed, refreshWeeklySelection, scheduleDisplay } = useWeekly();
+  const { user } = useAuth();
+  const { getSelectionForPlan, isCustomizationAllowed: isWindowOpen, refreshWeeklySelection, scheduleDisplay } = useWeekly();
+  const editsLockedByHold =
+    user?.subscription?.status === 'paused' ||
+    user?.subscription?.currentDeliveryStatus === 'skipped';
+  const isCustomizationAllowed = Boolean(isWindowOpen && !editsLockedByHold);
   const [allVegetables, setAllVegetables] = React.useState<Vegetable[]>([]);
   const [loading, setLoading] = React.useState(true);
 

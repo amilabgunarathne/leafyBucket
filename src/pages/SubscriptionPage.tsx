@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ArrowLeft, Package, Settings, Pause, Play, Check, Calendar, Clock, Truck, Leaf, X, CreditCard } from 'lucide-react';
+import { ArrowLeft, Package, Settings, Pause, Play, Check, Calendar, Clock, Truck, Leaf, X, CreditCard, SkipForward } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useWeekly } from '../contexts/WeeklyContext';
@@ -17,6 +17,7 @@ import { isAfterCustomizationClosedForCurrentWeek } from '../utils/customization
 import {
   formatPaymentMethodLabel,
   normalizePaymentMethodJoin,
+  getEffectiveEntitledDeliveries,
 } from '../utils/paymentMethodDisplay';
 import { getCurrentWeekDateRange } from '../utils/marketWeekUtils';
 import { supabase } from '../lib/supabase';
@@ -25,7 +26,7 @@ const SubscriptionPage = () => {
   const { user, updateUser } = useAuth();
   const navigate = useNavigate();
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
-  const [pendingAction, setPendingAction] = useState<'pause' | 'resume' | 'change_plan' | null>(null);
+  const [pendingAction, setPendingAction] = useState<'pause' | 'resume' | 'change_plan' | 'skip_week' | 'unskip_week' | null>(null);
   const [isChangingPlan, setIsChangingPlan] = useState(false);
   const [pendingNewPlan, setPendingNewPlan] = useState<string | null>(null);
 
@@ -223,6 +224,12 @@ const SubscriptionPage = () => {
           window.location.reload();
         }
         setPendingNewPlan(null);
+      } else if (user.subscription && pendingAction === 'skip_week') {
+        await subService.skipDeliveryThisWeek();
+        window.location.reload();
+      } else if (user.subscription && pendingAction === 'unskip_week') {
+        await subService.unskipDeliveryThisWeek();
+        window.location.reload();
       } else if (user.subscription && (pendingAction === 'pause' || pendingAction === 'resume')) {
         // STATUS UPDATE
         const newStatus = pendingAction === 'pause' ? 'paused' : 'active';
@@ -233,7 +240,15 @@ const SubscriptionPage = () => {
       }
     } catch (error) {
       console.error("Error updating subscription:", error);
-      alert("Failed to update subscription. Please try again.");
+      const detail =
+        error && typeof error === 'object' && 'message' in error && typeof (error as { message: unknown }).message === 'string'
+          ? (error as { message: string }).message
+          : '';
+      alert(
+        detail
+          ? `Failed to update subscription: ${detail}`
+          : 'Failed to update subscription. Please try again.'
+      );
     } finally {
       setIsConfirmModalOpen(false);
       setPendingAction(null);
@@ -241,14 +256,34 @@ const SubscriptionPage = () => {
   };
 
   const toggleSubscriptionStatus = () => {
-    if (user.subscription) {
-      const isPaused = user.subscription.status === 'paused';
-      setPendingAction(isPaused ? 'resume' : 'pause');
+    if (!user.subscription) return;
+    if (user.subscription.currentDeliveryStatus === 'skipped') return;
+    const isPaused = user.subscription.status === 'paused';
+    setPendingAction(isPaused ? 'resume' : 'pause');
+    setIsConfirmModalOpen(true);
+  };
+
+  const initiateSkipThisWeek = () => {
+    if (user.subscription?.status === 'active' && user.subscription.currentDeliveryStatus !== 'skipped') {
+      setPendingAction('skip_week');
+      setIsConfirmModalOpen(true);
+    }
+  };
+
+  const initiateUnskipThisWeek = () => {
+    if (user.subscription?.status === 'active' && user.subscription.currentDeliveryStatus === 'skipped') {
+      setPendingAction('unskip_week');
       setIsConfirmModalOpen(true);
     }
   };
 
   const handlePlanChangeInitiate = (planId: string) => {
+    if (
+      user?.subscription?.status === 'paused' ||
+      user?.subscription?.currentDeliveryStatus === 'skipped'
+    ) {
+      return;
+    }
     if (planId === user.subscription?.plan) {
       setIsChangingPlan(false);
       return;
@@ -403,7 +438,10 @@ const SubscriptionPage = () => {
               <div className="h-6 w-px shrink-0 bg-gray-300" />
               <h1 className="text-2xl font-bold text-gray-900">My Bucket</h1>
             </div>
-            {user.subscription && user.subscription.status !== 'cancelled' && (
+            {user.subscription &&
+              user.subscription.status !== 'cancelled' &&
+              user.subscription.status !== 'paused' &&
+              user.subscription.currentDeliveryStatus !== 'skipped' && (
               <CustomizationWindowStatusBanner variant="header" />
             )}
           </div>
@@ -593,6 +631,25 @@ const SubscriptionPage = () => {
                     {/* E‑commerce style: main content (left) + subscription summary sidebar (right) */}
                     <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-8">
                       {/* Your vegetables for this week - main content (left) */}
+                      {(() => {
+                        const isPaused = user.subscription.status === 'paused';
+                        const isWeekSkipped = user.subscription.currentDeliveryStatus === 'skipped';
+                        if (isPaused || isWeekSkipped) {
+                          return (
+                            <div className="bg-white rounded-3xl shadow-lg p-8 flex flex-col items-center justify-center text-center min-h-[280px]">
+                              <Package className="h-12 w-12 text-gray-400 mb-4" />
+                              <h3 className="text-xl font-bold text-gray-900 mb-2">
+                                {isPaused ? 'Bucket paused' : 'Skipped this week'}
+                              </h3>
+                              <p className="text-sm text-gray-600 max-w-md">
+                                {isPaused
+                                  ? 'Customization is hidden while your bucket is paused. Resume your bucket to view and edit this week’s vegetables.'
+                                  : 'Customization is hidden while this week is skipped. Resume this week to view and edit your vegetables.'}
+                              </p>
+                            </div>
+                          );
+                        }
+                        return (
                       <div className="bg-white rounded-3xl shadow-lg p-8">
                         <div className="flex items-center justify-between mb-2">
                           <h3 className="text-xl font-bold text-gray-900">Your vegetables for this week</h3>
@@ -640,21 +697,51 @@ const SubscriptionPage = () => {
                           </button>
                         )}
                       </div>
+                        );
+                      })()}
 
                       {/* Your Subscription - right sidebar (cart-style) */}
                       <div className="lg:sticky lg:top-28 self-start bg-white rounded-3xl shadow-lg border border-gray-200 p-6">
+                        {(() => {
+                          const isPaused = user.subscription.status === 'paused';
+                          const isWeekSkipped = user.subscription.currentDeliveryStatus === 'skipped';
+                          const editsLocked = isPaused || isWeekSkipped;
+                          return (
+                        <>
                         <div className="flex items-center justify-between mb-4">
                           <h2 className="text-lg font-bold text-gray-900">Your Subscription</h2>
-                          <div className={`px-4 py-2 rounded-full text-sm font-semibold ${user.subscription.status === 'active'
-                            ? 'bg-green-100 text-green-800'
-                            : 'bg-yellow-100 text-yellow-800'
+                          <div className={`px-4 py-2 rounded-full text-sm font-semibold ${
+                            isPaused
+                              ? 'bg-yellow-100 text-yellow-800'
+                              : isWeekSkipped
+                                ? 'bg-slate-100 text-slate-800'
+                                : 'bg-green-100 text-green-800'
                             }`}>
-                            {user.subscription.status === 'active' ? 'Active' : 'Paused'}
+                            {isPaused ? 'Paused' : isWeekSkipped ? 'Skipped this week' : 'Active'}
                           </div>
                         </div>
 
                         <div className="space-y-3">
-                          <div className="text-sm font-semibold text-gray-900">{currentPlan?.name}</div>
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="min-w-0 text-sm font-semibold text-gray-900 truncate">
+                              {currentPlan?.name}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (editsLocked) return;
+                                setIsChangingPlan(!isChangingPlan);
+                              }}
+                              disabled={editsLocked}
+                              className={`shrink-0 text-[11px] font-medium px-2 py-0.5 rounded-md border transition-colors ${
+                                editsLocked
+                                  ? 'border-gray-200 text-gray-400 bg-gray-50 cursor-not-allowed'
+                                  : 'border-green-200 text-green-700 bg-green-50/80 hover:bg-green-100 hover:border-green-300'
+                              }`}
+                            >
+                              {isChangingPlan ? 'Cancel' : 'Change'}
+                            </button>
+                          </div>
                           <div className="space-y-2 text-sm">
                             <div className="flex justify-between">
                               <span className="text-gray-600">Monthly:</span>
@@ -688,31 +775,47 @@ const SubscriptionPage = () => {
                               </button>
                             </div>
                           </div>
-                          <button
-                            onClick={() => setIsChangingPlan(!isChangingPlan)}
-                            className="w-full text-xs font-medium py-2 rounded-lg border border-gray-300 bg-gray-50 text-gray-700 hover:bg-gray-100"
-                          >
-                            {isChangingPlan ? 'Cancel' : 'Change Plan'}
-                          </button>
-                          <button
-                            onClick={toggleSubscriptionStatus}
-                            className={`w-full flex items-center justify-center space-x-2 py-2.5 px-4 rounded-xl text-sm font-semibold transition-colors ${user.subscription.status === 'active'
-                              ? 'bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200'
-                              : 'bg-green-100 text-green-800 hover:bg-green-200'
+                          {isWeekSkipped ? (
+                            <button
+                              type="button"
+                              onClick={initiateUnskipThisWeek}
+                              className="w-full flex items-center justify-center space-x-2 py-2.5 px-4 rounded-xl text-sm font-semibold transition-colors bg-green-100 text-green-800 hover:bg-green-200"
+                            >
+                              <Play className="h-4 w-4" />
+                              <span>Resume this week</span>
+                            </button>
+                          ) : !isPaused ? (
+                            <button
+                              type="button"
+                              onClick={initiateSkipThisWeek}
+                              className="w-full flex items-center justify-center space-x-2 py-2.5 px-4 rounded-xl text-sm font-semibold transition-colors bg-slate-50 text-slate-800 hover:bg-slate-100 border border-slate-200"
+                            >
+                              <SkipForward className="h-4 w-4" />
+                              <span>Skip for this week</span>
+                            </button>
+                          ) : null}
+                          {!isWeekSkipped && (
+                            <button
+                              onClick={toggleSubscriptionStatus}
+                              className={`w-full flex items-center justify-center space-x-2 py-2.5 px-4 rounded-xl text-sm font-semibold transition-colors ${
+                                !isPaused
+                                  ? 'bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200'
+                                  : 'bg-green-100 text-green-800 hover:bg-green-200'
                               }`}
-                          >
-                            {user.subscription.status === 'active' ? (
-                              <>
-                                <Pause className="h-4 w-4" />
-                                <span>Pause bucket</span>
-                              </>
-                            ) : (
-                              <>
-                                <Play className="h-4 w-4" />
-                                <span>Resume bucket</span>
-                              </>
-                            )}
-                          </button>
+                            >
+                              {!isPaused ? (
+                                <>
+                                  <Pause className="h-4 w-4" />
+                                  <span>Pause bucket</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Play className="h-4 w-4" />
+                                  <span>Resume bucket</span>
+                                </>
+                              )}
+                            </button>
+                          )}
                           <button
                             type="button"
                             className="w-full flex items-center justify-center space-x-2 py-2.5 px-4 rounded-xl text-sm font-medium text-gray-600 hover:text-gray-800 hover:bg-gray-100 border border-gray-300 transition-colors"
@@ -720,11 +823,16 @@ const SubscriptionPage = () => {
                             <span>Cancel bucket</span>
                           </button>
                           <p className="text-[11px] text-gray-500 leading-tight">
-                            {user.subscription.status === 'active'
-                              ? 'Pausing holds deliveries only. Plan and preferences are saved—resume anytime.'
-                              : 'Resume when ready; your next delivery will be scheduled.'}
+                            {isWeekSkipped
+                              ? 'This week is skipped. Resume to customize or change plan. Pause is unavailable until you resume.'
+                              : isPaused
+                                ? 'Paused: plan changes and customization are locked until you resume.'
+                                : 'Skip this week only, or pause to hold deliveries. Plan and preferences are saved.'}
                           </p>
                         </div>
+                        </>
+                          );
+                        })()}
                       </div>
                     </div>
 
@@ -899,7 +1007,20 @@ const SubscriptionPage = () => {
                             })}
                           </div>
                           <div className="text-sm text-gray-600">
-                            {currentDelivery ? `Delivery #${currentDelivery.delivery_index} of 4` : 'Delivery Date'}
+                            {currentDelivery
+                              ? (() => {
+                                  const sub = activeSubscription as Subscription | null;
+                                  const entitled = getEffectiveEntitledDeliveries({
+                                    payment_method: normalizePaymentMethodJoin(sub?.payment_method),
+                                    subscription_plan: sub?.subscription_plan ?? null,
+                                  });
+                                  const idx = Math.min(
+                                    Math.max(Number(currentDelivery.delivery_index) || 1, 1),
+                                    entitled
+                                  );
+                                  return `Delivery #${idx} of ${entitled}`;
+                                })()
+                              : 'Delivery Date'}
                           </div>
                         </div>
                         <div className="text-center">
@@ -984,18 +1105,26 @@ const SubscriptionPage = () => {
         }}
         onConfirm={handleConfirmStatusChange}
         title={
+          pendingAction === 'unskip_week' ? 'Resume delivery this week?' :
+          pendingAction === 'skip_week' ? 'Skip delivery this week?' :
           pendingAction === 'pause' ? 'Pause deliveries for a while?' :
             pendingAction === 'resume' ? 'Resume deliveries?' :
               'Confirm plan'
         }
         message={
-          pendingAction === 'pause'
-            ? 'Deliveries will be put on hold. Your plan and preferences stay the same—resume anytime when you\'re ready and your next box will be scheduled.'
+          pendingAction === 'unskip_week'
+            ? 'This week’s delivery will be set back to open. You can customize and receive your box as usual.'
+            : pendingAction === 'skip_week'
+            ? 'This week’s delivery will be marked as skipped. Pause, plan changes, and customization stay locked until you resume this week.'
+            : pendingAction === 'pause'
+            ? 'Deliveries will be put on hold. Plan changes and customization stay locked until you resume.'
             : pendingAction === 'resume'
               ? 'Your vegetable deliveries will start again from the next scheduled date. Your plan is unchanged.'
               : `You're choosing the ${plans.find(p => p.id === pendingNewPlan)?.name ?? 'selected'} plan. Your billing and vegetable allocation will be based on this plan.`
         }
         confirmText={
+          pendingAction === 'unskip_week' ? 'Yes, resume this week' :
+          pendingAction === 'skip_week' ? 'Yes, skip this week' :
           pendingAction === 'pause' ? 'Yes, pause for now' :
             pendingAction === 'resume' ? 'Yes, resume' :
               'Confirm'

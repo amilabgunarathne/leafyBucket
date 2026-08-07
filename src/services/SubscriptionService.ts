@@ -3,7 +3,7 @@ import {
     type DeliveryCustomizationsState,
     deliveryCustomizationsToJson,
 } from '../utils/deliveryCustomizations';
-import { getCurrentWeekDateRange, isDateInCurrentCalendarWeek } from '../utils/marketWeekUtils';
+import { getCurrentWeekDateRange } from '../utils/marketWeekUtils';
 
 // Helper types matching the new schema
 export interface PaymentMethod {
@@ -54,7 +54,7 @@ export interface Delivery {
     subscription_id: string;
     delivery_index: number;
     scheduled_date: string;
-    status: 'open' | 'locked' | 'delivered' | 'skipped' | 'cancelled';
+    status: 'open' | 'locked' | 'delivered' | 'skipped' | 'cancelled' | 'paused';
     weekly_budget: number;
     locked_at?: string;
     delivered_at?: string;
@@ -139,11 +139,28 @@ class SubscriptionService {
         if (!planRow) throw new Error(`Subscription plan not found: ${planType}`);
 
         // 2. Pre-cleanup: Mark any existing active subscriptions as cancelled
+        const { data: priorActive } = await supabase
+            .from('subscriptions')
+            .select('id, bucket_type_id, subscription_plan_id, status')
+            .eq('user_id', userId)
+            .eq('status', 'active');
+
         await supabase
             .from('subscriptions')
             .update({ status: 'cancelled' })
             .eq('user_id', userId)
             .eq('status', 'active');
+
+        for (const old of priorActive || []) {
+            await this.logSubscriptionEvent(old.id, 'cancelled', {
+                previous_data: {
+                    status: 'active',
+                    bucket_type_id: old.bucket_type_id,
+                    subscription_plan_id: old.subscription_plan_id,
+                },
+                new_data: { status: 'cancelled' },
+            }, 'Replaced by a new subscription');
+        }
 
         // 3. Create New Subscription
         const entitlement = typeof planRow.entitled_deliveries === 'number' && planRow.entitled_deliveries > 0
@@ -163,34 +180,44 @@ class SubscriptionService {
 
         if (subError) throw subError;
 
-        // 3. Create initial deliveries (Scheduled for next 4 Sundays)
-        const deliveries = [];
-        const today = new Date();
-        // Start from next Sunday
-        const nextSunday = new Date(today);
-        nextSunday.setDate(today.getDate() + (7 - today.getDay()) % 7);
-        if (nextSunday <= today) nextSunday.setDate(nextSunday.getDate() + 7);
+        await this.logSubscriptionEvent(sub.id, 'created', {
+            previous_data: null,
+            new_data: {
+                status: 'active',
+                bucket_type_id: bucketTypeId,
+                bucket_type_name: bucketType.name,
+                subscription_plan_id: planRow.id,
+                plan_code: planRow.code,
+            },
+        });
 
-        for (let i = 1; i <= entitlement; i++) {
-            const scheduledDate = new Date(nextSunday);
-            scheduledDate.setDate(nextSunday.getDate() + (i - 1) * 7);
+        // Weekly model: create only this week's Sunday delivery (not a 4-week batch).
+        // Later weeks are ensured when Admin creates/loads that market week (or customer ensure RPC).
+        const { week_start_date, week_end_date } = getCurrentWeekDateRange();
+        const weeklyBudget = (bucketType.monthly_price - bucketType.handling_fee) / entitlement;
 
-            deliveries.push({
-                subscription_id: sub.id,
-                delivery_index: i,
-                scheduled_date: scheduledDate.toISOString().split('T')[0],
-                status: 'open',
-                weekly_budget: (bucketType.monthly_price - bucketType.handling_fee) / entitlement
-            });
-        }
-
-        const { error: delError } = await supabase
-            .from('deliveries')
-            .insert(deliveries);
+        const { error: delError } = await supabase.from('deliveries').insert({
+            subscription_id: sub.id,
+            delivery_index: 1, // first entitlement slot; advances only when marked delivered
+            scheduled_date: week_end_date,
+            status: 'open',
+            weekly_budget: weeklyBudget,
+            customizations: {},
+        });
 
         if (delError) {
-            console.error("Error creating deliveries:", delError);
-            // Note: In a real app, we'd want a transaction here or cleanup
+            console.error('Error creating first delivery:', delError);
+            // Fallback: customer-side ensure RPC (same Sunday)
+            const { error: ensureErr } = await supabase.rpc('ensure_my_open_delivery_for_week', {
+                p_week_start: week_start_date,
+                p_week_end: week_end_date,
+            });
+            if (ensureErr) console.error('ensure_my_open_delivery_for_week', ensureErr.message);
+        } else {
+            await supabase
+                .from('subscriptions')
+                .update({ next_delivery_date: week_end_date })
+                .eq('id', sub.id);
         }
 
         return sub;
@@ -219,6 +246,91 @@ class SubscriptionService {
     }
 
     /**
+     * This calendar week's delivery row (open, paused, or skipped) — for UI hold state.
+     * Does not create rows.
+     */
+    async getThisWeekDelivery(subscriptionId: string): Promise<Delivery | null> {
+        await this.cancelStaleOpenDeliveries();
+        const { week_start_date, week_end_date } = getCurrentWeekDateRange();
+        const { data, error } = await supabase
+            .from('deliveries')
+            .select('*')
+            .eq('subscription_id', subscriptionId)
+            .in('status', ['open', 'paused', 'skipped'])
+            .gte('scheduled_date', week_start_date)
+            .lte('scheduled_date', week_end_date)
+            .order('scheduled_date', { ascending: true })
+            .order('delivery_index', { ascending: true })
+            .limit(1)
+            .maybeSingle();
+        if (error) {
+            console.error('[getThisWeekDelivery]', error.message);
+            return null;
+        }
+        return (data as Delivery) ?? null;
+    }
+
+    /**
+     * Open delivery to use for reading/writing this week's customizations.
+     * Prefers scheduled_date in the current Mon–Sun week; else the next upcoming open
+     * (scheduled on/after this Monday). If none exist (e.g. after cancelling stale opens),
+     * creates an open delivery for this week's Sunday via RPC.
+     */
+    async resolveCustomizationDelivery(subscriptionId: string): Promise<Delivery | null> {
+        await this.cancelStaleOpenDeliveries();
+        const { week_start_date, week_end_date } = getCurrentWeekDateRange();
+
+        // If this week was skipped, do not create another open delivery
+        const weekDel = await this.getThisWeekDelivery(subscriptionId);
+        if (weekDel?.status === 'skipped' || weekDel?.status === 'paused') {
+            return null;
+        }
+        if (weekDel?.status === 'open') {
+            return weekDel;
+        }
+
+        const { data: openRows, error } = await supabase
+            .from('deliveries')
+            .select('*')
+            .eq('subscription_id', subscriptionId)
+            .eq('status', 'open')
+            .order('scheduled_date', { ascending: true })
+            .order('delivery_index', { ascending: true });
+
+        if (error) {
+            console.error('[resolveCustomizationDelivery]', error.message);
+        } else {
+            const rows = (openRows || []) as Delivery[];
+            const inWeek = rows.find((d) => {
+                const d0 = String(d.scheduled_date).slice(0, 10);
+                return d0 >= week_start_date && d0 <= week_end_date;
+            });
+            if (inWeek) return inWeek;
+
+            const upcoming = rows.find((d) => String(d.scheduled_date).slice(0, 10) >= week_start_date);
+            if (upcoming) return upcoming;
+        }
+
+        // No usable open delivery — create one for this week's Sunday (or paused if sub paused)
+        const { data: ensured, error: ensureErr } = await supabase.rpc('ensure_my_open_delivery_for_week', {
+            p_week_start: week_start_date,
+            p_week_end: week_end_date,
+        });
+        if (ensureErr) {
+            console.error(
+                '[resolveCustomizationDelivery] ensure failed — run migration 20260731 / 20260807 on Supabase:',
+                ensureErr.message,
+                { week_start_date, week_end_date }
+            );
+            return null;
+        }
+        const row = ensured as Delivery | null;
+        // Customization attaches only to open deliveries; paused = hold (no edit target)
+        if (!row || row.status !== 'open') return null;
+        return row;
+    }
+
+    /**
      * Get subscription for user (active or paused) with next open delivery if any
      * Paused subscriptions still return the plan so the app can show "resume when ready"
      */
@@ -228,7 +340,7 @@ class SubscriptionService {
         // Same shape as AuthContext (no payment_method embed — a bad/missing FK embed fails the whole query and leaves activeSubscription null).
         const { data: sub, error } = await supabase
             .from('subscriptions')
-            .select('*, bucket_type:bucket_types(*)')
+            .select('*, bucket_type:bucket_types(*), subscription_plan:subscription_plans(id, code, name, entitled_deliveries)')
             .eq('user_id', userId)
             .in('status', ['active', 'paused'])
             .order('created_at', { ascending: false })
@@ -264,17 +376,7 @@ class SubscriptionService {
             }
         }
 
-        // Prefer an open delivery scheduled in *this* Mon–Sun week.
-        // Never use a leftover May (etc.) open row for customizations — even if cancel RPC did not run.
-        const { data: openRows } = await supabase
-            .from('deliveries')
-            .select('*')
-            .eq('subscription_id', sub.id)
-            .eq('status', 'open')
-            .order('scheduled_date', { ascending: true });
-
-        const inWeek =
-            (openRows || []).find((d) => isDateInCurrentCalendarWeek(d.scheduled_date)) ?? null;
+        const inWeek = await this.resolveCustomizationDelivery(sub.id);
 
         return {
             subscription: sub,
@@ -283,7 +385,7 @@ class SubscriptionService {
     }
 
     /**
-     * Record a customization action
+     * Record a customization action (best-effort audit; must not block save).
      */
     async logCustomization(deliveryId: string, action: Omit<CustomisationAction, 'id' | 'created_at' | 'delivery_id'>): Promise<void> {
         const { error } = await supabase
@@ -293,7 +395,9 @@ class SubscriptionService {
                 ...action
             });
 
-        if (error) throw error;
+        if (error) {
+            console.warn('[logCustomization] skipped:', error.message);
+        }
     }
 
     /**
@@ -312,49 +416,64 @@ class SubscriptionService {
     }
 
     /**
-     * Skip/Pause a delivery (Carry-forward logic)
+     * Skip this week's open delivery (status → skipped).
+     * Uses SECURITY DEFINER RPC — subscribers cannot UPDATE deliveries directly.
+     */
+    async skipDeliveryThisWeek(): Promise<void> {
+        const { week_start_date, week_end_date } = getCurrentWeekDateRange();
+        const { data, error } = await supabase.rpc('skip_my_delivery_this_week', {
+            p_week_start: week_start_date,
+            p_week_end: week_end_date,
+        });
+        if (error) {
+            console.error('[skipDeliveryThisWeek]', error.message);
+            throw new Error(
+                error.message.includes('Could not find the function') || error.message.includes('schema cache')
+                    ? 'Skip is not available yet. Run SQL migration 20260807f_skip_my_delivery_this_week.sql on Supabase.'
+                    : error.message
+            );
+        }
+        console.info('[skipDeliveryThisWeek] ok', data);
+    }
+
+    /**
+     * Undo skip for this week (skipped → open).
+     */
+    async unskipDeliveryThisWeek(): Promise<void> {
+        const { week_start_date, week_end_date } = getCurrentWeekDateRange();
+        const { data, error } = await supabase.rpc('unskip_my_delivery_this_week', {
+            p_week_start: week_start_date,
+            p_week_end: week_end_date,
+        });
+        if (error) {
+            console.error('[unskipDeliveryThisWeek]', error.message);
+            throw new Error(
+                error.message.includes('Could not find the function') || error.message.includes('schema cache')
+                    ? 'Resume skip is not available yet. Run SQL migration 20260807g_unskip_my_delivery_this_week.sql on Supabase.'
+                    : error.message
+            );
+        }
+        console.info('[unskipDeliveryThisWeek] ok', data);
+    }
+
+    /**
+     * @deprecated Prefer skipDeliveryThisWeek(). Kept for any legacy callers.
      */
     async skipDelivery(deliveryId: string): Promise<void> {
-        // 1. Mark current as skipped
-        const { data: skippedDelivery, error: updateError } = await supabase
-            .from('deliveries')
-            .update({ status: 'skipped' })
-            .eq('id', deliveryId)
-            .select()
-            .single();
-
-        if (updateError) throw updateError;
-
-        // 2. Create a new delivery at the end of the chain
-        const { data: lastDelivery } = await supabase
-            .from('deliveries')
-            .select('delivery_index, scheduled_date')
-            .eq('subscription_id', skippedDelivery.subscription_id)
-            .order('delivery_index', { ascending: false })
-            .limit(1)
-            .single();
-
-        if (lastDelivery) {
-            const lastDate = new Date(lastDelivery.scheduled_date);
-            const newDate = new Date(lastDate);
-            newDate.setDate(lastDate.getDate() + 7);
-
-            await supabase
-                .from('deliveries')
-                .insert({
-                    subscription_id: skippedDelivery.subscription_id,
-                    delivery_index: lastDelivery.delivery_index + 1,
-                    scheduled_date: newDate.toISOString().split('T')[0],
-                    status: 'open',
-                    weekly_budget: skippedDelivery.weekly_budget
-                });
-        }
+        void deliveryId;
+        await this.skipDeliveryThisWeek();
     }
 
     /**
      * Update subscription plan (Bucket Type)
      */
     async updateSubscriptionPlan(subscriptionId: string, bucketTypeId: string): Promise<void> {
+        const { data: prevSub } = await supabase
+            .from('subscriptions')
+            .select('id, bucket_type_id, bucket_type:bucket_types(id, name)')
+            .eq('id', subscriptionId)
+            .maybeSingle();
+
         // 1. Get bucket details for new budget
         const { data: bucketType, error: btError } = await supabase
             .from('bucket_types')
@@ -383,18 +502,90 @@ class SubscriptionService {
         if (delError) {
             console.error("Error updating future delivery budgets:", delError);
         }
+
+        const prevBt = prevSub as {
+            bucket_type_id?: string;
+            bucket_type?: { id: string; name: string } | { id: string; name: string }[] | null;
+        } | null;
+        const prevJoined = Array.isArray(prevBt?.bucket_type) ? prevBt?.bucket_type[0] : prevBt?.bucket_type;
+
+        await this.logSubscriptionEvent(subscriptionId, 'plan_changed', {
+            previous_data: {
+                bucket_type_id: prevBt?.bucket_type_id ?? null,
+                plan: prevJoined?.name ?? null,
+            },
+            new_data: {
+                bucket_type_id: bucketTypeId,
+                plan: bucketType.name,
+            },
+        });
     }
 
     /**
-     * Update subscription status (Active/Paused/Cancelled)
+     * Pause or resume subscription and sync current + next week deliveries (open ↔ paused).
+     * Requires set_my_subscription_paused on Supabase (20260807c_pause_resume_ensure_deliveries.sql).
      */
     async updateSubscriptionStatus(subscriptionId: string, status: Subscription['status']): Promise<void> {
+        if (status === 'paused' || status === 'active') {
+            const { week_start_date } = getCurrentWeekDateRange();
+            const { data, error: rpcError } = await supabase.rpc('set_my_subscription_paused', {
+                p_paused: status === 'paused',
+                p_current_week_start: week_start_date,
+            });
+            if (rpcError) {
+                console.error('[updateSubscriptionStatus] set_my_subscription_paused', rpcError.message);
+                throw new Error(
+                    `Could not sync subscription + deliveries. Run SQL migration 20260807e_fix_pause_resume_status_enum_cast.sql on Supabase. (${rpcError.message})`
+                );
+            }
+            console.info('[updateSubscriptionStatus] pause/resume ok', data);
+            return;
+        }
+
         const { error } = await supabase
             .from('subscriptions')
             .update({ status })
             .eq('id', subscriptionId);
 
         if (error) throw error;
+
+        if (status === 'cancelled') {
+            await this.logSubscriptionEvent(subscriptionId, 'cancelled', {
+                previous_data: { status: 'active' },
+                new_data: { status: 'cancelled' },
+            });
+        }
+    }
+
+    /**
+     * Append-only subscription action ledger (best-effort; never blocks the main action).
+     */
+    async logSubscriptionEvent(
+        subscriptionId: string,
+        eventType:
+            | 'created'
+            | 'plan_changed'
+            | 'paused'
+            | 'resumed'
+            | 'skipped'
+            | 'unskipped'
+            | 'cancelled'
+            | 'payment_method_changed'
+            | 'admin_override',
+        eventData?: { previous_data?: unknown; new_data?: unknown } | null,
+        reason?: string | null,
+        deliveryId?: string | null
+    ): Promise<void> {
+        const { error } = await supabase.rpc('log_my_subscription_event', {
+            p_subscription_id: subscriptionId,
+            p_event_type: eventType,
+            p_event_data: eventData ?? null,
+            p_reason: reason ?? null,
+            p_delivery_id: deliveryId ?? null,
+        });
+        if (error) {
+            console.warn('[logSubscriptionEvent]', eventType, error.message);
+        }
     }
 
     /**
@@ -422,6 +613,13 @@ class SubscriptionService {
         paymentMethodId: string,
         userId: string
     ): Promise<{ id: string; payment_method_id: string | null }> {
+        const { data: prev } = await supabase
+            .from('subscriptions')
+            .select('payment_method_id')
+            .eq('id', subscriptionId)
+            .eq('user_id', userId)
+            .maybeSingle();
+
         const { data, error } = await supabase
             .from('subscriptions')
             .update({ payment_method_id: paymentMethodId })
@@ -434,6 +632,12 @@ class SubscriptionService {
         if (!data) {
             throw new Error('Could not save payment method. Check your subscription or try signing in again.');
         }
+
+        await this.logSubscriptionEvent(subscriptionId, 'payment_method_changed', {
+            previous_data: { payment_method_id: prev?.payment_method_id ?? null },
+            new_data: { payment_method_id: data.payment_method_id },
+        });
+
         return data;
     }
 

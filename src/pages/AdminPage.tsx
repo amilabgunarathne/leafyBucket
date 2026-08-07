@@ -52,7 +52,7 @@ function formatUnknownError(e: unknown): string {
 }
 
 /** Delivery statuses admins can set (must match DB / RLS). Unknown legacy values still show in the list. */
-const WEEKLY_DELIVERY_STATUSES = ['open', 'locked', 'delivered', 'skipped', 'cancelled'] as const;
+const WEEKLY_DELIVERY_STATUSES = ['open', 'paused', 'locked', 'delivered', 'skipped', 'cancelled'] as const;
 
 function statusOptionsForRow(current: string): string[] {
   const allowed = WEEKLY_DELIVERY_STATUSES as readonly string[];
@@ -279,6 +279,22 @@ const AdminPage = () => {
       const nwId = nxtWeek?.id ?? weeksList[1]?.id ?? null;
       setCurrentWeekId(cwId);
       setNextWeekId(nwId);
+
+      // Active sub + market week ⇒ ensure open delivery on that week's Sunday
+      try {
+        const { error: ensureCurErr } = await supabase.rpc('ensure_open_deliveries_for_market_week', {
+          p_week_start: curRange.week_start_date,
+          p_week_end: curRange.week_end_date,
+        });
+        if (ensureCurErr) console.error('[loadData] ensure deliveries current week', ensureCurErr.message);
+        const { error: ensureNxtErr } = await supabase.rpc('ensure_open_deliveries_for_market_week', {
+          p_week_start: nxtRange.week_start_date,
+          p_week_end: nxtRange.week_end_date,
+        });
+        if (ensureNxtErr) console.error('[loadData] ensure deliveries next week', ensureNxtErr.message);
+      } catch (ensureErr) {
+        console.error('[loadData] ensure_open_deliveries_for_market_week', ensureErr);
+      }
 
       const weekIds = [cwId, nwId].filter(Boolean) as string[];
       let weekVeggies: Record<string, string[]> = {};

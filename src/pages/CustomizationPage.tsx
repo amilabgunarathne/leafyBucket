@@ -40,10 +40,14 @@ const CustomizationPage = () => {
   const weekly = useWeekly();
   const {
     getSelectionForPlan,
-    isCustomizationAllowed,
+    isCustomizationAllowed: isWindowOpen,
     scheduleDisplay,
     refreshWeeklySelection,
   } = weekly;
+  const editsLockedByHold =
+    user?.subscription?.status === 'paused' ||
+    user?.subscription?.currentDeliveryStatus === 'skipped';
+  const isCustomizationAllowed = Boolean(isWindowOpen && !editsLockedByHold);
   const [selectedPlan, setSelectedPlan] = useState<string>(user?.subscription?.plan || 'medium');
   const [customizations, setCustomizations] = useState<{
     excludedVegetables: string[];
@@ -309,14 +313,22 @@ const CustomizationPage = () => {
     return countInCategory < limitForCategory;
   };
 
-  const persistPreferences = useCallback(async (): Promise<boolean> => {
-    if (!user?.subscription) return false;
-    const deliveryId = user.subscription.currentDeliveryId;
-    if (!deliveryId) return false;
+  const persistPreferences = useCallback(async (): Promise<true | string> => {
+    if (!user?.subscription) return 'You need an active subscription to save preferences.';
 
     try {
       const { default: SubscriptionService } = await import('../services/SubscriptionService');
       const subService = SubscriptionService.getInstance();
+
+      // Resolve at save time (auth mirror may be null if stale opens were cancelled / no in-week row yet)
+      let deliveryId = user.subscription.currentDeliveryId ?? null;
+      const resolved = await subService.resolveCustomizationDelivery(user.subscription.id);
+      if (resolved?.id) deliveryId = resolved.id;
+
+      if (!deliveryId) {
+        console.error('Error saving customizations: no open delivery for this/next week');
+        return 'No open delivery is available for this week. Ask admin to check your deliveries, or try again after a delivery is scheduled.';
+      }
 
       await subService.saveDeliveryCustomizations(deliveryId, {
         excludedVegetables: customizations.excludedVegetables,
@@ -325,39 +337,41 @@ const CustomizationPage = () => {
         deliveryDay: customizations.deliveryDay,
       });
 
-      const activeSub = await subService.getActiveSubscription(user.id);
-
-      if (activeSub && activeSub.currentDelivery) {
-        for (const removedId of customizations.removedVegetables) {
-          await subService.logCustomization(activeSub.currentDelivery.id, {
-            action_type: 'remove',
-            removed_vegetable_id: removedId
-          });
-        }
-        for (const addedId of customizations.addedVegetables) {
-          await subService.logCustomization(activeSub.currentDelivery.id, {
-            action_type: 'add',
-            added_vegetable_id: addedId
-          });
-        }
+      // Audit log is best-effort (does not fail the save)
+      for (const removedId of customizations.removedVegetables) {
+        await subService.logCustomization(deliveryId, {
+          action_type: 'remove',
+          removed_vegetable_id: removedId,
+        });
       }
-    } catch (e) {
-      console.error("Error saving customizations:", e);
-      return false;
-    }
+      for (const addedId of customizations.addedVegetables) {
+        await subService.logCustomization(deliveryId, {
+          action_type: 'add',
+          added_vegetable_id: addedId,
+        });
+      }
 
-    updateUser({
-      subscription: {
-        ...user.subscription,
-        plan: selectedPlan as 'small' | 'medium' | 'large',
-        customizations: {
-          ...customizations,
+      updateUser({
+        subscription: {
+          ...user.subscription,
+          plan: selectedPlan as 'small' | 'medium' | 'large',
+          currentDeliveryId: deliveryId,
+          customizations: {
+            ...customizations,
+          },
         },
-      },
-    });
+      });
 
-    setBaselineSnap(makeCustomizationSnap(customizations, selectedPlan));
-    return true;
+      setBaselineSnap(makeCustomizationSnap(customizations, selectedPlan));
+      return true;
+    } catch (e) {
+      console.error('Error saving customizations:', e);
+      const msg =
+        e && typeof e === 'object' && 'message' in e && typeof (e as { message: unknown }).message === 'string'
+          ? (e as { message: string }).message
+          : 'Something went wrong while saving your preferences. Please try again.';
+      return msg;
+    }
   }, [user, customizations, selectedPlan, updateUser]);
 
   const persistPreferencesRef = useRef(persistPreferences);
@@ -365,12 +379,12 @@ const CustomizationPage = () => {
 
   const handleSavePreferences = async () => {
     if (!user) return;
-    const ok = await persistPreferences();
-    if (!ok) {
+    const result = await persistPreferences();
+    if (result !== true) {
       setSaveFeedback({
         variant: 'error',
         title: 'Could not save',
-        message: 'Something went wrong while saving your preferences. Please try again.',
+        message: result,
       });
       return;
     }
@@ -411,7 +425,7 @@ const CustomizationPage = () => {
         baselineSnapRef.current !== null &&
         makeCustomizationSnap(customizationsRef.current, selectedPlanRef.current) !== baselineSnapRef.current,
       canSave: isCustomizationAllowed,
-      save: () => persistPreferencesRef.current(),
+      save: async () => (await persistPreferencesRef.current()) === true,
       requestLeave,
     });
     return () => unregister();
@@ -579,6 +593,34 @@ const CustomizationPage = () => {
     );
   }
 
+  if (
+    user?.subscription &&
+    (user.subscription.status === 'paused' || user.subscription.currentDeliveryStatus === 'skipped')
+  ) {
+    const paused = user.subscription.status === 'paused';
+    return (
+      <div className="pt-24 min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-center max-w-md mx-auto px-4">
+          <Package className="h-16 w-16 text-gray-400 mx-auto mb-4" />
+          <h2 className="text-xl font-bold text-gray-900 mb-2">
+            {paused ? 'Bucket paused' : 'Skipped this week'}
+          </h2>
+          <p className="text-gray-600 mb-6">
+            {paused
+              ? 'Customization is unavailable while your bucket is paused. Resume from My Bucket to continue.'
+              : 'Customization is unavailable while this week is skipped. Resume this week from My Bucket to continue.'}
+          </p>
+          <Link
+            to="/my-bucket"
+            className="inline-flex items-center space-x-2 bg-green-600 text-white px-6 py-3 rounded-xl font-semibold hover:bg-green-700 transition-colors"
+          >
+            <span>Go to My Bucket</span>
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="pt-16">
       <MessageModal
@@ -597,14 +639,15 @@ const CustomizationPage = () => {
         onSaveAndLeave={async () => {
           setLeaveSaveBusy(true);
           try {
-            const ok = await persistPreferences();
-            if (ok && leaveTarget) {
+            const result = await persistPreferences();
+            if (result === true && leaveTarget) {
               completeLeave(leaveTarget);
-            } else if (!ok) {
+            } else if (result !== true) {
+              setLeaveTarget(null);
               setSaveFeedback({
                 variant: 'error',
                 title: 'Could not save',
-                message: 'Something went wrong while saving your preferences. Please try again.',
+                message: result,
               });
             }
           } finally {
@@ -786,7 +829,13 @@ const CustomizationPage = () => {
                       <div className="flex items-center space-x-4">
                         {getCurrentVegetableCount() >= getCurrentPlan().maxLimit && (
                           <span className="text-sm text-red-600 font-medium">
-                            {!isCustomizationAllowed ? 'Customization Closed' : 'Weekly Limit Reached'}
+                            {!isCustomizationAllowed
+                              ? editsLockedByHold
+                                ? user?.subscription?.status === 'paused'
+                                  ? 'Paused — resume to customize'
+                                  : 'Skipped — resume this week to customize'
+                                : 'Customization Closed'
+                              : 'Weekly Limit Reached'}
                           </span>
                         )}
                         <button
@@ -849,7 +898,11 @@ const CustomizationPage = () => {
                                       </p>
                                       {!canAdd && (
                                         <p className="text-xs text-red-500 mt-1">
-                                          {!isCustomizationAllowed ? 'Customization closed' : 'Weekly limit reached'}
+                                          {!isCustomizationAllowed
+                                            ? editsLockedByHold
+                                              ? 'Locked while paused/skipped'
+                                              : 'Customization closed'
+                                            : 'Weekly limit reached'}
                                         </p>
                                       )}
                                     </div>
