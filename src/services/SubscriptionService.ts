@@ -4,6 +4,15 @@ import {
     deliveryCustomizationsToJson,
 } from '../utils/deliveryCustomizations';
 import { getCurrentWeekDateRange } from '../utils/marketWeekUtils';
+import {
+    type BillingPlanCode,
+    type ChargeBreakdown,
+    type SubscriptionPlanRow,
+    DEFAULT_PACK_WEEKS,
+    computeSubscriptionCharge,
+    getPlanBillingListPrice,
+    getWeeklyVegetableBudget,
+} from '../utils/paymentMethodDisplay';
 
 // Helper types matching the new schema
 export interface PaymentMethod {
@@ -13,7 +22,11 @@ export interface PaymentMethod {
     description: string | null;
     sort_order: number;
     is_enabled: boolean;
+    discount_pct?: number;
+    discount_fixed?: number;
 }
+
+export type SubscriptionPlan = SubscriptionPlanRow;
 
 export interface Subscription {
     id: string;
@@ -24,12 +37,17 @@ export interface Subscription {
     status: 'active' | 'paused' | 'completed' | 'cancelled';
     started_at: string;
     next_delivery_date: string;
-    shipping_address: string;
+    shipping_address?: string | null;
     payment_method_id?: string | null;
-    // Join fields
+    previous_subscription_id?: string | null;
+    completed_at?: string | null;
+    list_price?: number | null;
+    discount_total?: number | null;
+    charge_amount?: number | null;
+    discount_breakdown?: ChargeBreakdown | null;
     bucket_type?: BucketType;
     payment_method?: PaymentMethod | null;
-    subscription_plan?: { id: string; code: string; name: string; entitled_deliveries: number } | null;
+    subscription_plan?: SubscriptionPlan | null;
 }
 
 export interface BucketType {
@@ -52,7 +70,8 @@ export interface BucketType {
 export interface Delivery {
     id: string;
     subscription_id: string;
-    delivery_index: number;
+    /** Definitive when delivered; provisional for current week only; null for future weeks. */
+    delivery_index: number | null;
     scheduled_date: string;
     status: 'open' | 'locked' | 'delivered' | 'skipped' | 'cancelled' | 'paused';
     weekly_budget: number;
@@ -111,15 +130,29 @@ class SubscriptionService {
         return data || [];
     }
 
+    /** Weeks covered by `bucket_types.monthly_price` — from monthly plan entitlement. */
+    async getPackWeeks(): Promise<number> {
+        const { data, error } = await supabase
+            .from('subscription_plans')
+            .select('entitled_deliveries')
+            .eq('code', 'monthly')
+            .eq('is_active', true)
+            .maybeSingle();
+        if (error) {
+            console.warn('[getPackWeeks]', error.message);
+        }
+        return Math.max(Number(data?.entitled_deliveries) || DEFAULT_PACK_WEEKS, 1);
+    }
+
     /**
-     * Create a new subscription for a user
+     * Create a new subscription: bucket + billing plan + payment method.
      */
     async createSubscription(
         userId: string,
         bucketTypeId: string,
-        planType: 'monthly' | 'weekly' | 'one_time' = 'monthly'
+        planType: BillingPlanCode = 'monthly',
+        paymentMethodId?: string | null
     ): Promise<Subscription> {
-        // 1. Get bucket details
         const { data: bucketType, error: btError } = await supabase
             .from('bucket_types')
             .select('*')
@@ -128,17 +161,37 @@ class SubscriptionService {
 
         if (btError) throw btError;
 
-        // 1b. Get plan details (entitlement)
         const { data: planRow, error: planErr } = await supabase
             .from('subscription_plans')
-            .select('id, code, entitled_deliveries')
+            .select('id, code, entitled_deliveries, prepaid_discount_pct, prepaid_discount_fixed')
             .eq('code', planType)
             .eq('is_active', true)
             .maybeSingle();
         if (planErr) throw planErr;
         if (!planRow) throw new Error(`Subscription plan not found: ${planType}`);
 
-        // 2. Pre-cleanup: Mark any existing active subscriptions as cancelled
+        let paymentRow: PaymentMethod | null = null;
+        if (paymentMethodId) {
+            const allowed = await this.getPaymentMethodsForPlan(planRow.id);
+            paymentRow = allowed.find((p) => p.id === paymentMethodId) ?? null;
+            if (!paymentRow) {
+                throw new Error('Selected payment method is not available for this plan');
+            }
+        }
+
+        const packWeeks = await this.getPackWeeks();
+        const listPrice = getPlanBillingListPrice({
+            packPrice: bucketType.monthly_price,
+            planCode: planRow.code,
+            packWeeks,
+        });
+        const charge = computeSubscriptionCharge({
+            listPrice,
+            handlingFee: bucketType.handling_fee,
+            plan: planRow,
+            payment: paymentRow,
+        });
+
         const { data: priorActive } = await supabase
             .from('subscriptions')
             .select('id, bucket_type_id, subscription_plan_id, status')
@@ -162,18 +215,19 @@ class SubscriptionService {
             }, 'Replaced by a new subscription');
         }
 
-        // 3. Create New Subscription
-        const entitlement = typeof planRow.entitled_deliveries === 'number' && planRow.entitled_deliveries > 0
-            ? planRow.entitled_deliveries
-            : 1;
         const { data: sub, error: subError } = await supabase
             .from('subscriptions')
             .insert({
                 user_id: userId,
                 bucket_type_id: bucketTypeId,
                 subscription_plan_id: planRow.id,
+                payment_method_id: paymentRow?.id ?? null,
                 status: 'active',
-                started_at: new Date().toISOString()
+                started_at: new Date().toISOString(),
+                list_price: charge.list_price,
+                discount_total: charge.discount_total,
+                charge_amount: charge.charge_amount,
+                discount_breakdown: charge,
             })
             .select()
             .single();
@@ -188,17 +242,21 @@ class SubscriptionService {
                 bucket_type_name: bucketType.name,
                 subscription_plan_id: planRow.id,
                 plan_code: planRow.code,
+                payment_method_id: paymentRow?.id ?? null,
+                charge,
             },
         });
 
-        // Weekly model: create only this week's Sunday delivery (not a 4-week batch).
-        // Later weeks are ensured when Admin creates/loads that market week (or customer ensure RPC).
         const { week_start_date, week_end_date } = getCurrentWeekDateRange();
-        const weeklyBudget = (bucketType.monthly_price - bucketType.handling_fee) / entitlement;
+        const weeklyBudget = getWeeklyVegetableBudget(
+            bucketType.monthly_price,
+            bucketType.handling_fee,
+            packWeeks
+        );
 
         const { error: delError } = await supabase.from('deliveries').insert({
             subscription_id: sub.id,
-            delivery_index: 1, // first entitlement slot; advances only when marked delivered
+            delivery_index: null,
             scheduled_date: week_end_date,
             status: 'open',
             weekly_budget: weeklyBudget,
@@ -207,7 +265,6 @@ class SubscriptionService {
 
         if (delError) {
             console.error('Error creating first delivery:', delError);
-            // Fallback: customer-side ensure RPC (same Sunday)
             const { error: ensureErr } = await supabase.rpc('ensure_my_open_delivery_for_week', {
                 p_week_start: week_start_date,
                 p_week_end: week_end_date,
@@ -221,6 +278,37 @@ class SubscriptionService {
         }
 
         return sub;
+    }
+
+    async getSubscriptionPlans(): Promise<SubscriptionPlan[]> {
+        const { data, error } = await supabase
+            .from('subscription_plans')
+            .select(
+                'id, code, name, description, entitled_deliveries, prepaid_discount_pct, prepaid_discount_fixed, sort_order, is_active'
+            )
+            .eq('is_active', true)
+            .order('sort_order', { ascending: true });
+
+        if (error) {
+            console.error('Error fetching subscription plans:', error);
+            return [];
+        }
+        return (data || []) as SubscriptionPlan[];
+    }
+
+    async getPaymentMethodsForPlan(subscriptionPlanId: string): Promise<PaymentMethod[]> {
+        const { data, error } = await supabase.rpc('get_payment_methods_for_plan', {
+            p_subscription_plan_id: subscriptionPlanId,
+        });
+        if (!error && Array.isArray(data) && data.length > 0) {
+            return data as PaymentMethod[];
+        }
+
+        // Fallback if RPC missing: global enabled methods
+        if (error) {
+            console.warn('[getPaymentMethodsForPlan]', error.message);
+        }
+        return this.getPaymentMethods();
     }
 
     /**
@@ -340,7 +428,7 @@ class SubscriptionService {
         // Same shape as AuthContext (no payment_method embed — a bad/missing FK embed fails the whole query and leaves activeSubscription null).
         const { data: sub, error } = await supabase
             .from('subscriptions')
-            .select('*, bucket_type:bucket_types(*), subscription_plan:subscription_plans(id, code, name, entitled_deliveries)')
+            .select('*, bucket_type:bucket_types(*), subscription_plan:subscription_plans(id, code, name, entitled_deliveries, prepaid_discount_pct, prepaid_discount_fixed)')
             .eq('user_id', userId)
             .in('status', ['active', 'paused'])
             .order('created_at', { ascending: false })
@@ -470,11 +558,12 @@ class SubscriptionService {
     async updateSubscriptionPlan(subscriptionId: string, bucketTypeId: string): Promise<void> {
         const { data: prevSub } = await supabase
             .from('subscriptions')
-            .select('id, bucket_type_id, bucket_type:bucket_types(id, name)')
+            .select(
+                'id, bucket_type_id, subscription_plan_id, payment_method_id, bucket_type:bucket_types(id, name), subscription_plan:subscription_plans(id, code, entitled_deliveries, prepaid_discount_pct, prepaid_discount_fixed)'
+            )
             .eq('id', subscriptionId)
             .maybeSingle();
 
-        // 1. Get bucket details for new budget
         const { data: bucketType, error: btError } = await supabase
             .from('bucket_types')
             .select('*')
@@ -483,16 +572,52 @@ class SubscriptionService {
 
         if (btError) throw btError;
 
-        // 2. Update Subscription
+        const planJoin = (prevSub as { subscription_plan?: SubscriptionPlan | SubscriptionPlan[] | null } | null)
+            ?.subscription_plan;
+        const plan = Array.isArray(planJoin) ? planJoin[0] : planJoin;
+
+        let payment: PaymentMethod | null = null;
+        const pmId = (prevSub as { payment_method_id?: string | null } | null)?.payment_method_id;
+        if (pmId) {
+            const { data: pm } = await supabase
+                .from('payment_methods')
+                .select('id, code, name, description, sort_order, is_enabled, discount_pct, discount_fixed')
+                .eq('id', pmId)
+                .maybeSingle();
+            payment = pm as PaymentMethod | null;
+        }
+
+        const packWeeks = await this.getPackWeeks();
+        const listPrice = getPlanBillingListPrice({
+            packPrice: bucketType.monthly_price,
+            planCode: plan?.code,
+            packWeeks,
+        });
+        const charge = computeSubscriptionCharge({
+            listPrice,
+            handlingFee: bucketType.handling_fee,
+            plan: plan ?? null,
+            payment,
+        });
+
         const { error: subError } = await supabase
             .from('subscriptions')
-            .update({ bucket_type_id: bucketTypeId })
+            .update({
+                bucket_type_id: bucketTypeId,
+                list_price: charge.list_price,
+                discount_total: charge.discount_total,
+                charge_amount: charge.charge_amount,
+                discount_breakdown: charge,
+            })
             .eq('id', subscriptionId);
 
         if (subError) throw subError;
 
-        // 3. Update future open deliveries budget
-        const weeklyBudget = (bucketType.monthly_price - bucketType.handling_fee) / 4;
+        const weeklyBudget = getWeeklyVegetableBudget(
+            bucketType.monthly_price,
+            bucketType.handling_fee,
+            packWeeks
+        );
         const { error: delError } = await supabase
             .from('deliveries')
             .update({ weekly_budget: weeklyBudget })
@@ -500,7 +625,7 @@ class SubscriptionService {
             .eq('status', 'open');
 
         if (delError) {
-            console.error("Error updating future delivery budgets:", delError);
+            console.error('Error updating future delivery budgets:', delError);
         }
 
         const prevBt = prevSub as {
@@ -517,8 +642,104 @@ class SubscriptionService {
             new_data: {
                 bucket_type_id: bucketTypeId,
                 plan: bucketType.name,
+                charge,
             },
         });
+    }
+
+    /**
+     * Change billing plan (weekly / monthly / one_time). Recomputes charge; clears payment if no longer allowed.
+     */
+    async updateSubscriptionBillingPlan(
+        subscriptionId: string,
+        userId: string,
+        planCode: BillingPlanCode,
+        paymentMethodId?: string | null
+    ): Promise<void> {
+        const { data: planRow, error: planErr } = await supabase
+            .from('subscription_plans')
+            .select('id, code, name, entitled_deliveries, prepaid_discount_pct, prepaid_discount_fixed')
+            .eq('code', planCode)
+            .eq('is_active', true)
+            .maybeSingle();
+        if (planErr) throw planErr;
+        if (!planRow) throw new Error(`Plan not found: ${planCode}`);
+
+        const { data: prev } = await supabase
+            .from('subscriptions')
+            .select(
+                'id, subscription_plan_id, payment_method_id, bucket_type_id, bucket_type:bucket_types(monthly_price, handling_fee)'
+            )
+            .eq('id', subscriptionId)
+            .eq('user_id', userId)
+            .maybeSingle();
+        if (!prev) throw new Error('Subscription not found');
+
+        const allowed = await this.getPaymentMethodsForPlan(planRow.id);
+        let nextPaymentId = paymentMethodId ?? prev.payment_method_id ?? null;
+        if (nextPaymentId && !allowed.some((p) => p.id === nextPaymentId)) {
+            nextPaymentId = allowed[0]?.id ?? null;
+        }
+        if (!nextPaymentId) {
+            throw new Error('Choose a payment method allowed for this plan');
+        }
+
+        const payment = allowed.find((p) => p.id === nextPaymentId) ?? null;
+        const btJoin = (prev as { bucket_type?: { monthly_price: number; handling_fee: number } | { monthly_price: number; handling_fee: number }[] | null }).bucket_type;
+        const bt = Array.isArray(btJoin) ? btJoin[0] : btJoin;
+
+        const packWeeks = await this.getPackWeeks();
+        const listPrice = getPlanBillingListPrice({
+            packPrice: bt?.monthly_price ?? 0,
+            planCode: planRow.code,
+            packWeeks,
+        });
+        const charge = computeSubscriptionCharge({
+            listPrice,
+            handlingFee: bt?.handling_fee ?? 0,
+            plan: planRow,
+            payment,
+        });
+
+        const { error } = await supabase
+            .from('subscriptions')
+            .update({
+                subscription_plan_id: planRow.id,
+                payment_method_id: nextPaymentId,
+                list_price: charge.list_price,
+                discount_total: charge.discount_total,
+                charge_amount: charge.charge_amount,
+                discount_breakdown: charge,
+            })
+            .eq('id', subscriptionId)
+            .eq('user_id', userId);
+        if (error) throw error;
+
+        if (bt) {
+            const weeklyBudget = getWeeklyVegetableBudget(
+                bt.monthly_price,
+                bt.handling_fee,
+                packWeeks
+            );
+            await supabase
+                .from('deliveries')
+                .update({ weekly_budget: weeklyBudget })
+                .eq('subscription_id', subscriptionId)
+                .in('status', ['open', 'paused']);
+        }
+
+        await this.logSubscriptionEvent(subscriptionId, 'plan_changed', {
+            previous_data: {
+                subscription_plan_id: prev.subscription_plan_id,
+                payment_method_id: prev.payment_method_id,
+            },
+            new_data: {
+                subscription_plan_id: planRow.id,
+                plan_code: planRow.code,
+                payment_method_id: nextPaymentId,
+                charge,
+            },
+        }, 'Billing plan changed');
     }
 
     /**
@@ -571,7 +792,8 @@ class SubscriptionService {
             | 'unskipped'
             | 'cancelled'
             | 'payment_method_changed'
-            | 'admin_override',
+            | 'admin_override'
+            | 'cycle_completed',
         eventData?: { previous_data?: unknown; new_data?: unknown } | null,
         reason?: string | null,
         deliveryId?: string | null
@@ -594,7 +816,7 @@ class SubscriptionService {
     async getPaymentMethods(): Promise<PaymentMethod[]> {
         const { data, error } = await supabase
             .from('payment_methods')
-            .select('id, code, name, description, sort_order, is_enabled')
+            .select('id, code, name, description, sort_order, is_enabled, discount_pct, discount_fixed')
             .eq('is_enabled', true)
             .order('sort_order', { ascending: true });
 
@@ -606,7 +828,8 @@ class SubscriptionService {
     }
 
     /**
-     * Set payment method for a subscription (scoped by user_id so RLS mismatches return an error, not a silent no-op).
+     * Set payment method for a subscription (must be allowed for the sub's plan).
+     * Recomputes charge snapshot.
      */
     async updateSubscriptionPaymentMethod(
         subscriptionId: string,
@@ -615,14 +838,58 @@ class SubscriptionService {
     ): Promise<{ id: string; payment_method_id: string | null }> {
         const { data: prev } = await supabase
             .from('subscriptions')
-            .select('payment_method_id')
+            .select(
+                'payment_method_id, bucket_type_id, subscription_plan_id, bucket_type:bucket_types(monthly_price, handling_fee), subscription_plan:subscription_plans(id, code, prepaid_discount_pct, prepaid_discount_fixed, entitled_deliveries)'
+            )
             .eq('id', subscriptionId)
             .eq('user_id', userId)
             .maybeSingle();
 
+        if (!prev) {
+            throw new Error('Could not save payment method. Check your subscription or try signing in again.');
+        }
+
+        const planId = (prev as { subscription_plan_id?: string | null }).subscription_plan_id;
+        if (planId) {
+            const allowed = await this.getPaymentMethodsForPlan(planId);
+            if (!allowed.some((p) => p.id === paymentMethodId)) {
+                throw new Error('This payment method is not available for your plan');
+            }
+        }
+
+        const { data: pm } = await supabase
+            .from('payment_methods')
+            .select('id, code, name, description, sort_order, is_enabled, discount_pct, discount_fixed')
+            .eq('id', paymentMethodId)
+            .maybeSingle();
+
+        const btJoin = (prev as { bucket_type?: { monthly_price: number; handling_fee: number } | { monthly_price: number; handling_fee: number }[] | null }).bucket_type;
+        const bt = Array.isArray(btJoin) ? btJoin[0] : btJoin;
+        const planJoin = (prev as { subscription_plan?: SubscriptionPlan | SubscriptionPlan[] | null }).subscription_plan;
+        const plan = Array.isArray(planJoin) ? planJoin[0] : planJoin;
+
+        const packWeeks = await this.getPackWeeks();
+        const listPrice = getPlanBillingListPrice({
+            packPrice: bt?.monthly_price ?? 0,
+            planCode: plan?.code,
+            packWeeks,
+        });
+        const charge = computeSubscriptionCharge({
+            listPrice,
+            handlingFee: bt?.handling_fee ?? 0,
+            plan: plan ?? null,
+            payment: pm as PaymentMethod | null,
+        });
+
         const { data, error } = await supabase
             .from('subscriptions')
-            .update({ payment_method_id: paymentMethodId })
+            .update({
+                payment_method_id: paymentMethodId,
+                list_price: charge.list_price,
+                discount_total: charge.discount_total,
+                charge_amount: charge.charge_amount,
+                discount_breakdown: charge,
+            })
             .eq('id', subscriptionId)
             .eq('user_id', userId)
             .select('id, payment_method_id')
@@ -635,7 +902,7 @@ class SubscriptionService {
 
         await this.logSubscriptionEvent(subscriptionId, 'payment_method_changed', {
             previous_data: { payment_method_id: prev?.payment_method_id ?? null },
-            new_data: { payment_method_id: data.payment_method_id },
+            new_data: { payment_method_id: data.payment_method_id, charge },
         });
 
         return data;

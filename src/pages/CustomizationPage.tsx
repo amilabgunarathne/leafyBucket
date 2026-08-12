@@ -335,6 +335,12 @@ const CustomizationPage = () => {
         removedVegetables: customizations.removedVegetables,
         addedVegetables: customizations.addedVegetables,
         deliveryDay: customizations.deliveryDay,
+        // Saving with no veg deltas = confirming admin picks; deltas = custom week.
+        acceptedAdminPicks: !(
+          customizations.removedVegetables.length > 0 ||
+          customizations.addedVegetables.length > 0 ||
+          customizations.excludedVegetables.length > 0
+        ),
       });
 
       // Audit log is best-effort (does not fail the save)

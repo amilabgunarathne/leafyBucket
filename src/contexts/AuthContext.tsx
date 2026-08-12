@@ -34,7 +34,7 @@ interface User {
   subscription?: {
     id: string; // New field
     plan: 'small' | 'medium' | 'large';
-    status: 'active' | 'paused' | 'cancelled';
+    status: 'active' | 'paused' | 'completed' | 'cancelled';
     /** Mirrors `subscriptions.payment_method_id` for profile load / optimistic UI */
     payment_method_id?: string | null;
     nextDelivery: string;
@@ -47,6 +47,7 @@ interface User {
       removedVegetables: string[];
       addedVegetables: string[];
       deliveryDay: string;
+      acceptedAdminPicks?: boolean;
     };
   };
 }
@@ -461,12 +462,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser({ ...user, ...userData });
 
       // Update Profile Table
-      if (userData.name || userData.phone || userData.address) {
-        await supabase.from('profiles').update({
-          full_name: userData.name,
-          phone: userData.phone,
-          address: userData.address
-        }).eq('id', user.id);
+      if (
+        userData.name !== undefined ||
+        userData.phone !== undefined ||
+        userData.address !== undefined ||
+        userData.city !== undefined
+      ) {
+        const patch: Record<string, string | undefined> = {};
+        if (userData.name !== undefined) patch.full_name = userData.name;
+        if (userData.phone !== undefined) patch.phone = userData.phone;
+        if (userData.address !== undefined) patch.address = userData.address;
+        if (userData.city !== undefined) patch.city = userData.city;
+        await supabase.from('profiles').update(patch).eq('id', user.id);
       }
 
       // Update Subscription Table

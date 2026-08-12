@@ -386,9 +386,9 @@ export function resolveScheduleDisplayForStatus(
   const mw = getCustomizationWindowInMarketWeek(ws, we, s);
   if (now.getTime() > mw.windowEnd.getTime()) {
     return {
-      openLabel: '',
-      closeLabel: '',
-      windowParts: null,
+      openLabel: formatCustomizationInstant(mw.windowStart),
+      closeLabel: formatCustomizationInstant(mw.windowEnd),
+      windowParts: getScheduleWindowPartsFromInstants(mw.windowStart, mw.windowEnd),
       closedWeekMessage: 'Customization ended for this week.',
     };
   }
@@ -519,11 +519,29 @@ export function isAfterCustomizationClosedForLocalWeek(
 }
 
 /**
- * Uses schedule from `setScheduleContext` (same as Customize). For My Bucket progress: tick “Automated payment”
- * only after **this week’s** window has closed, not whenever `!isCustomizationAllowed`.
+ * True only after **this market week’s** customization close.
+ * Do not use the rolling “previous Wed–Fri” window alone — before this week’s open
+ * (e.g. Mon–Tue), that rolling window is last week and would wrongly look “closed”.
  */
 export function isAfterCustomizationClosedForCurrentWeek(now: Date = new Date()): boolean {
   const ctx = getScheduleContext();
   const schedule = ctx?.schedule ?? null;
-  return isAfterCustomizationClosedForLocalWeek(now, schedule);
+
+  if (ctx?.marketWeekStart && ctx?.marketWeekEnd) {
+    const mw = getCustomizationWindowInMarketWeek(
+      ctx.marketWeekStart,
+      ctx.marketWeekEnd,
+      schedule
+    );
+    return now.getTime() > mw.windowEnd.getTime();
+  }
+
+  const { windowStart, windowEnd } = getCustomizationWindowBoundsForLocalWeek(now, schedule);
+  const monday = getMondayOfWeek(now);
+  monday.setHours(0, 0, 0, 0);
+  // Last week’s window still “current” in rolling bounds → this week has not auto-saved yet
+  if (windowStart.getTime() < monday.getTime()) {
+    return false;
+  }
+  return now.getTime() > windowEnd.getTime();
 }

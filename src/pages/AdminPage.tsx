@@ -67,6 +67,23 @@ const AdminPage = () => {
   const [bucketTypes, setBucketTypes] = useState<BucketType[]>([]);
   const [profiles, setProfiles] = useState<{ id: string; email: string; full_name: string | null; role: string }[]>([]);
   const [marketWeeks, setMarketWeeks] = useState<MarketWeek[]>([]);
+  const [adminPlans, setAdminPlans] = useState<
+    {
+      id: string;
+      code: string;
+      name: string;
+      entitled_deliveries: number;
+      prepaid_discount_pct: number;
+      prepaid_discount_fixed: number;
+    }[]
+  >([]);
+  const [adminPaymentMethods, setAdminPaymentMethods] = useState<
+    { id: string; code: string; name: string; discount_pct: number; discount_fixed: number; is_enabled: boolean }[]
+  >([]);
+  const [planPaymentRows, setPlanPaymentRows] = useState<
+    { subscription_plan_id: string; payment_method_id: string; is_enabled: boolean }[]
+  >([]);
+  const [plansPayLoading, setPlansPayLoading] = useState(false);
   const [marketPricesByWeek, setMarketPricesByWeek] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -98,7 +115,7 @@ const AdminPage = () => {
       deliveryId: string;
       scheduledDate: string;
       status: string;
-      deliveryIndex: number;
+      deliveryIndex: number | null;
       weeklyBudget: number;
       subscriptionId: string;
       subscriptionStatus: string;
@@ -387,7 +404,7 @@ const AdminPage = () => {
         deliveryId: string;
         scheduledDate: string;
         status: string;
-        deliveryIndex: number;
+        deliveryIndex: number | null;
         weeklyBudget: number;
         subscriptionId: string;
         subscriptionStatus: string;
@@ -425,7 +442,10 @@ const AdminPage = () => {
           deliveryId: String(d.id),
           scheduledDate: String(d.scheduled_date),
           status: String(d.status),
-          deliveryIndex: Number(d.delivery_index),
+          deliveryIndex:
+            d.delivery_index == null || d.delivery_index === ''
+              ? null
+              : Number(d.delivery_index),
           weeklyBudget: Number(d.weekly_budget),
           subscriptionId: s.id,
           subscriptionStatus: s.status,
@@ -477,6 +497,42 @@ const AdminPage = () => {
       void loadWeeklyOrders();
     }
   }, [activeTab, loadWeeklyOrders]);
+
+  const loadPlansPay = useCallback(async () => {
+    setPlansPayLoading(true);
+    try {
+      const [plansRes, pmRes, sppRes] = await Promise.all([
+        supabase
+          .from('subscription_plans')
+          .select('id, code, name, entitled_deliveries, prepaid_discount_pct, prepaid_discount_fixed')
+          .order('sort_order', { ascending: true }),
+        supabase
+          .from('payment_methods')
+          .select('id, code, name, discount_pct, discount_fixed, is_enabled')
+          .in('code', ['cash', 'card'])
+          .order('sort_order', { ascending: true }),
+        supabase
+          .from('subscription_plan_payment_methods')
+          .select('subscription_plan_id, payment_method_id, is_enabled'),
+      ]);
+      if (plansRes.error) throw plansRes.error;
+      if (pmRes.error) throw pmRes.error;
+      if (sppRes.error) throw sppRes.error;
+      setAdminPlans((plansRes.data || []) as typeof adminPlans);
+      setAdminPaymentMethods((pmRes.data || []) as typeof adminPaymentMethods);
+      setPlanPaymentRows((sppRes.data || []) as typeof planPaymentRows);
+    } catch (e) {
+      setMessage({ type: 'error', text: `Could not load plans: ${formatUnknownError(e)}` });
+    } finally {
+      setPlansPayLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === 'plans') {
+      void loadPlansPay();
+    }
+  }, [activeTab, loadPlansPay]);
 
   const handleExportData = () => {
     const dataStr = JSON.stringify({ vegetables }, null, 2);
@@ -660,6 +716,7 @@ const AdminPage = () => {
                 { id: 'prices', label: 'Market prices', icon: DollarSign },
                 { id: 'weeks', label: 'Market weeks', icon: Calendar },
                 { id: 'weekly-orders', label: "This week's orders", icon: Truck },
+                { id: 'plans', label: 'Plans & pay', icon: Percent },
                 { id: 'users', label: 'Users', icon: Users },
                 { id: 'system', label: 'System', icon: Settings }
               ].map(tab => (
@@ -1229,7 +1286,11 @@ const AdminPage = () => {
                             <td className="px-3 py-2 text-right tabular-nums text-gray-900">
                               {Number.isFinite(row.weeklyBudget) ? row.weeklyBudget.toFixed(2) : '—'}
                             </td>
-                            <td className="px-3 py-2 text-center text-gray-600">{row.deliveryIndex}</td>
+                            <td className="px-3 py-2 text-center text-gray-600">
+                              {row.deliveryIndex != null && Number.isFinite(row.deliveryIndex)
+                                ? row.deliveryIndex
+                                : '—'}
+                            </td>
                             <td className="px-3 py-2">
                               <span
                                 className={`inline-block px-2 py-0.5 rounded text-xs ${
@@ -1273,6 +1334,169 @@ const AdminPage = () => {
                       <code className="text-xs">delivery_items</code> when populated.
                     </p>
                   </div>
+                )}
+              </div>
+            )}
+
+            {activeTab === 'plans' && (
+              <div className="space-y-8">
+                <div>
+                  <h2 className="text-lg font-semibold text-gray-900">Plans, payments & discounts</h2>
+                  <p className="text-sm text-gray-600 mt-1">
+                    Plan owns delivery count. Enable/disable Cash or Card per plan. Discounts stack: plan first, then payment.
+                  </p>
+                </div>
+                {plansPayLoading ? (
+                  <p className="text-sm text-gray-500">Loading…</p>
+                ) : (
+                  <>
+                    <div className="space-y-4">
+                      {adminPlans.map((plan) => (
+                        <div key={plan.id} className="border border-gray-200 rounded-xl p-4">
+                          <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
+                            <div>
+                              <div className="font-semibold text-gray-900">
+                                {plan.name}{' '}
+                                <span className="text-xs font-normal text-gray-500">({plan.code})</span>
+                              </div>
+                              <div className="text-sm text-gray-600">
+                                {plan.entitled_deliveries} deliveries / cycle
+                              </div>
+                            </div>
+                            <div className="flex flex-wrap gap-3 text-sm">
+                              <label className="flex items-center gap-1">
+                                Plan % off
+                                <input
+                                  type="number"
+                                  min={0}
+                                  max={100}
+                                  step={0.01}
+                                  className="w-20 border rounded px-2 py-1"
+                                  defaultValue={Number(plan.prepaid_discount_pct) || 0}
+                                  onBlur={async (e) => {
+                                    const v = Number(e.target.value) || 0;
+                                    const { error } = await supabase
+                                      .from('subscription_plans')
+                                      .update({ prepaid_discount_pct: v })
+                                      .eq('id', plan.id);
+                                    if (error) setMessage({ type: 'error', text: error.message });
+                                    else {
+                                      setMessage({ type: 'success', text: `Updated ${plan.name} discount %` });
+                                      void loadPlansPay();
+                                    }
+                                  }}
+                                />
+                              </label>
+                              <label className="flex items-center gap-1">
+                                Plan fixed off
+                                <input
+                                  type="number"
+                                  min={0}
+                                  step={1}
+                                  className="w-24 border rounded px-2 py-1"
+                                  defaultValue={Number(plan.prepaid_discount_fixed) || 0}
+                                  onBlur={async (e) => {
+                                    const v = Number(e.target.value) || 0;
+                                    const { error } = await supabase
+                                      .from('subscription_plans')
+                                      .update({ prepaid_discount_fixed: v })
+                                      .eq('id', plan.id);
+                                    if (error) setMessage({ type: 'error', text: error.message });
+                                    else {
+                                      setMessage({ type: 'success', text: `Updated ${plan.name} fixed discount` });
+                                      void loadPlansPay();
+                                    }
+                                  }}
+                                />
+                              </label>
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap gap-4">
+                            {adminPaymentMethods.map((pm) => {
+                              const row = planPaymentRows.find(
+                                (r) =>
+                                  r.subscription_plan_id === plan.id && r.payment_method_id === pm.id
+                              );
+                              const enabled = row?.is_enabled ?? false;
+                              return (
+                                <label key={pm.id} className="flex items-center gap-2 text-sm text-gray-800">
+                                  <input
+                                    type="checkbox"
+                                    checked={enabled}
+                                    onChange={async (e) => {
+                                      const next = e.target.checked;
+                                      const { error } = await supabase
+                                        .from('subscription_plan_payment_methods')
+                                        .upsert({
+                                          subscription_plan_id: plan.id,
+                                          payment_method_id: pm.id,
+                                          is_enabled: next,
+                                          sort_order: pm.code === 'cash' ? 1 : 2,
+                                        });
+                                      if (error) setMessage({ type: 'error', text: error.message });
+                                      else void loadPlansPay();
+                                    }}
+                                  />
+                                  {formatPaymentMethodLabel(pm)} allowed
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div>
+                      <h3 className="font-semibold text-gray-900 mb-2">Payment method discounts</h3>
+                      <div className="space-y-3">
+                        {adminPaymentMethods.map((pm) => (
+                          <div
+                            key={pm.id}
+                            className="flex flex-wrap items-center gap-3 border border-gray-200 rounded-lg p-3 text-sm"
+                          >
+                            <span className="font-medium w-20">{formatPaymentMethodLabel(pm)}</span>
+                            <label className="flex items-center gap-1">
+                              % off
+                              <input
+                                type="number"
+                                min={0}
+                                max={100}
+                                className="w-20 border rounded px-2 py-1"
+                                defaultValue={Number(pm.discount_pct) || 0}
+                                onBlur={async (e) => {
+                                  const v = Number(e.target.value) || 0;
+                                  const { error } = await supabase
+                                    .from('payment_methods')
+                                    .update({ discount_pct: v })
+                                    .eq('id', pm.id);
+                                  if (error) setMessage({ type: 'error', text: error.message });
+                                  else void loadPlansPay();
+                                }}
+                              />
+                            </label>
+                            <label className="flex items-center gap-1">
+                              Fixed off
+                              <input
+                                type="number"
+                                min={0}
+                                className="w-24 border rounded px-2 py-1"
+                                defaultValue={Number(pm.discount_fixed) || 0}
+                                onBlur={async (e) => {
+                                  const v = Number(e.target.value) || 0;
+                                  const { error } = await supabase
+                                    .from('payment_methods')
+                                    .update({ discount_fixed: v })
+                                    .eq('id', pm.id);
+                                  if (error) setMessage({ type: 'error', text: error.message });
+                                  else void loadPlansPay();
+                                }}
+                              />
+                            </label>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </>
                 )}
               </div>
             )}

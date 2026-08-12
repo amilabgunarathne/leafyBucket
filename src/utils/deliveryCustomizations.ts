@@ -5,6 +5,8 @@ export type DeliveryCustomizationsState = {
   removedVegetables: string[];
   addedVegetables: string[];
   deliveryDay: string;
+  /** Customer confirmed admin week picks without changing them. */
+  acceptedAdminPicks?: boolean;
 };
 
 const EMPTY: DeliveryCustomizationsState = {
@@ -12,6 +14,7 @@ const EMPTY: DeliveryCustomizationsState = {
   removedVegetables: [],
   addedVegetables: [],
   deliveryDay: 'sunday',
+  acceptedAdminPicks: false,
 };
 
 function asStringArray(v: unknown): string[] {
@@ -27,6 +30,7 @@ export function normalizeDeliveryCustomizations(raw: unknown): DeliveryCustomiza
     removedVegetables: asStringArray(o.removedVegetables),
     addedVegetables: asStringArray(o.addedVegetables),
     deliveryDay: typeof o.deliveryDay === 'string' && o.deliveryDay ? o.deliveryDay : EMPTY.deliveryDay,
+    acceptedAdminPicks: o.acceptedAdminPicks === true,
   };
 }
 
@@ -37,6 +41,7 @@ export function deliveryCustomizationsToJson(state: DeliveryCustomizationsState)
     removedVegetables: state.removedVegetables,
     addedVegetables: state.addedVegetables,
     deliveryDay: state.deliveryDay,
+    acceptedAdminPicks: state.acceptedAdminPicks === true,
   };
 }
 
@@ -47,4 +52,12 @@ export function hasSavedVegCustomization(c: DeliveryCustomizationsState): boolea
     c.addedVegetables.length > 0 ||
     c.excludedVegetables.length > 0
   );
+}
+
+/**
+ * Customer finished the optional customize step for this week:
+ * either changed vegetables, or explicitly kept the admin picks.
+ */
+export function hasConfirmedThisWeekPicks(c: DeliveryCustomizationsState): boolean {
+  return hasSavedVegCustomization(c) || c.acceptedAdminPicks === true;
 }

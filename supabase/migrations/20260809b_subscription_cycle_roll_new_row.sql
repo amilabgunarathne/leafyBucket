@@ -1,26 +1,8 @@
 -- Cycle end → complete current subscription and start a new one (fresh price snapshot).
 -- Replaces "reset deliveries_used on same row" from 20260808c.
---
--- Run this after 20260808c. If enum add fails in the same batch as usage,
--- run section 1 alone first, then the rest.
+-- Prerequisite: run 20260809a_subscription_status_completed.sql first (separate statement/commit).
 
--- 1) Enum: completed (safe if already present)
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1
-    FROM pg_enum e
-    JOIN pg_type t ON t.oid = e.enumtypid
-    JOIN pg_namespace n ON n.oid = t.typnamespace
-    WHERE n.nspname = 'public'
-      AND t.typname = 'subscription_status_enum'
-      AND e.enumlabel = 'completed'
-  ) THEN
-    ALTER TYPE public.subscription_status_enum ADD VALUE 'completed';
-  END IF;
-END $$;
-
--- 2) Allow multiple subscription rows per user (history + new cycle)
+-- 1) Allow multiple subscription rows per user (history + new cycle)
 DO $$
 DECLARE
   cname text;
@@ -41,7 +23,7 @@ END $$;
 DROP INDEX IF EXISTS public.subscriptions_user_id_key;
 DROP INDEX IF EXISTS public.subscriptions_user_id_unique;
 
--- 3) Chain + completed_at
+-- 2) Chain + completed_at
 ALTER TABLE public.subscriptions
   ADD COLUMN IF NOT EXISTS previous_subscription_id UUID REFERENCES public.subscriptions(id) ON DELETE SET NULL;
 
@@ -53,31 +35,11 @@ COMMENT ON COLUMN public.subscriptions.previous_subscription_id IS
 COMMENT ON COLUMN public.subscriptions.completed_at IS
   'When status became completed (entitlement cycle finished).';
 
--- If multiple active/paused already exist, keep newest and complete the rest
-WITH ranked AS (
-  SELECT
-    id,
-    ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY created_at DESC NULLS LAST) AS rn
-  FROM public.subscriptions
-  WHERE status IN ('active', 'paused')
-)
-UPDATE public.subscriptions s
-SET status = 'completed'::public.subscription_status_enum,
-    completed_at = COALESCE(s.completed_at, timezone('utc'::text, now())),
-    updated_at = timezone('utc'::text, now())
-FROM ranked r
-WHERE s.id = r.id
-  AND r.rn > 1;
+-- Users may hold multiple active/paused subscriptions (e.g. two homes).
+-- Do NOT add a unique (user_id) filter for active/paused.
+DROP INDEX IF EXISTS public.subscriptions_one_open_per_user;
 
--- At most one active/paused subscription per user
-CREATE UNIQUE INDEX IF NOT EXISTS subscriptions_one_open_per_user
-  ON public.subscriptions (user_id)
-  WHERE status IN ('active', 'paused');
-
-COMMENT ON INDEX public.subscriptions_one_open_per_user IS
-  'Only one active or paused subscription per user; completed/cancelled history allowed.';
-
--- 4) Events: cycle_completed
+-- 3) Events: cycle_completed
 ALTER TABLE public.subscription_events DROP CONSTRAINT IF EXISTS subscription_events_event_type_check;
 ALTER TABLE public.subscription_events
   ADD CONSTRAINT subscription_events_event_type_check
@@ -94,7 +56,7 @@ ALTER TABLE public.subscription_events
     'cycle_completed'
   ));
 
--- 5) Roll helper: complete old + create new + move remaining open/paused deliveries
+-- 4) Roll helper: complete old + create new + move remaining open/paused deliveries
 CREATE OR REPLACE FUNCTION public.roll_subscription_to_next_cycle(
   p_old_subscription_id uuid,
   p_completed_delivery_id uuid DEFAULT NULL
@@ -170,7 +132,6 @@ BEGIN
   FROM public.bucket_types
   WHERE id = v_old.bucket_type_id;
 
-  -- Entitlement for budget uses payment/plan still on the (now completed) row
   v_entitled := public.effective_entitled_deliveries(v_old.id);
   IF v_entitled IS NULL OR v_entitled < 1 THEN
     v_entitled := 4;
@@ -255,7 +216,7 @@ $$;
 
 REVOKE ALL ON FUNCTION public.roll_subscription_to_next_cycle(uuid, uuid) FROM PUBLIC;
 
--- 6) Deliver trigger: complete cycle → roll (no reset of deliveries_used on same row)
+-- 5) Deliver trigger: complete cycle → roll (no reset of deliveries_used on same row)
 CREATE OR REPLACE FUNCTION public.on_delivery_status_change_update_subscription()
 RETURNS TRIGGER
 LANGUAGE plpgsql
