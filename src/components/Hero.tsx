@@ -1,6 +1,6 @@
-import { ArrowRight, Truck, Clock, Leaf, Settings, ShoppingCart } from 'lucide-react';
+import { ArrowRight, Truck, Clock, Leaf, Settings } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 
 const Hero = () => {
   const { user } = useAuth();
@@ -26,7 +26,9 @@ const Hero = () => {
               </h1>
               <p className="text-xl text-gray-600 leading-relaxed">
                 Get the freshest, up country vegetables delivered to your door every week.
-                <span className="font-semibold text-green-700"> Customize your Leafy Bucket</span> with our easy monthly subscription, or simply shop individual items and add them to your cart.
+                <span className="font-semibold text-green-700"> Customize your Leafy Bucket</span> with
+                our easy monthly subscription.
+                {/* TEMP: shop deferred — , or simply shop individual items and add them to your cart. */}
               </p>
             </div>
 
@@ -38,13 +40,14 @@ const Hero = () => {
                 <span>{user ? 'Manage Your Bucket' : 'Select Bucket Size'}</span>
                 <ArrowRight className="h-5 w-5" />
               </button>
-              <Link
+              {/* TEMP: hide shop CTA while focusing on subscription */}
+              {/* <Link
                 to="/shop"
                 className="border-2 border-green-600 text-green-600 px-8 py-4 rounded-full text-lg font-semibold hover:bg-green-50 transition-colors text-center flex items-center justify-center space-x-2"
               >
                 <span>Shop Individually</span>
                 <ShoppingCart className="h-5 w-5" />
-              </Link>
+              </Link> */}
             </div>
 
             <div className="flex items-center space-x-8 pt-4">

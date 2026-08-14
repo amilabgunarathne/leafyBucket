@@ -378,8 +378,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (typeof localStorage !== 'undefined') {
       localStorage.setItem(REMEMBER_ME_KEY, rememberMe ? 'true' : 'false');
     }
+
+    const normalizedEmail = email.trim().toLowerCase();
+    const alreadyMsg =
+      'An account with this email already exists. Please sign in, or use Forgot password if you need access.';
+
+    // Prefer DB check (profiles + auth.users) when migration is applied
+    try {
+      const { data: taken, error: takenErr } = await supabase.rpc('email_already_registered', {
+        p_email: normalizedEmail,
+      });
+      if (!takenErr && taken === true) {
+        setIsLoading(false);
+        return { success: false, error: alreadyMsg };
+      }
+    } catch {
+      // RPC missing — fall through to signUp + identities check
+    }
+
     const { data, error } = await supabase.auth.signUp({
-      email,
+      email: normalizedEmail,
       password,
       options: {
         data: {
@@ -391,11 +409,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         emailRedirectTo: `${window.location.origin}/auth`
       }
     });
+
     if (error) {
       console.error('Signup error:', error.message);
       setIsLoading(false);
-      return { success: false, error: error.message };
+      const msg = error.message || '';
+      if (/already\s*registered|already\s*exists|email.*exist/i.test(msg)) {
+        return { success: false, error: alreadyMsg };
+      }
+      return { success: false, error: msg };
     }
+
+    // With “Confirm email” enabled, duplicate signups return a fake user with empty identities
+    const identities = data?.user?.identities;
+    if (data?.user && Array.isArray(identities) && identities.length === 0) {
+      setIsLoading(false);
+      return { success: false, error: alreadyMsg };
+    }
+
     setIsLoading(false);
     return { success: true, data };
   };

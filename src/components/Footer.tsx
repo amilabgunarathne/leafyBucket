@@ -81,7 +81,8 @@ const Footer = () => {
                   How It Works
                 </a>
               </li>
-              <li>
+              {/* TEMP: hide Shop Now while focusing on subscription */}
+              {/* <li>
                 <Link
                   to="/shop"
                   onClick={(e) => {
@@ -91,7 +92,7 @@ const Footer = () => {
                 >
                   Shop Now
                 </Link>
-              </li>
+              </li> */}
               <li>
                 <Link
                   to="/products"

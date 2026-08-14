@@ -17,6 +17,8 @@ import SubscriptionPage from './pages/SubscriptionPage';
 import ProfilePage from './pages/ProfilePage';
 import AdminPage from './pages/AdminPage';
 import AdminLoginPage from './pages/AdminLoginPage';
+import PaymentReturnPage from './pages/PaymentReturnPage';
+import PaymentCancelPage from './pages/PaymentCancelPage';
 
 function ScrollToTop() {
   const location = useLocation();
@@ -110,6 +112,8 @@ function App() {
             />
             <Route path="/shop" element={<ShopPage />} />
             <Route path="/auth" element={<AuthPage />} />
+            <Route path="/payment/return" element={<PaymentReturnPage />} />
+            <Route path="/payment/cancel" element={<PaymentCancelPage />} />
             <Route
               path="/my-bucket"
               element={

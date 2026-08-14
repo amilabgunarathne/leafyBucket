@@ -229,7 +229,13 @@ const AuthPage = () => {
             });
           }
         } else {
-          setError(error || 'Sign up failed');
+          const msg = error || 'Sign up failed';
+          if (/already exists|already registered|sign in/i.test(msg)) {
+            setFieldErrors({ email: msg });
+            setError(null);
+          } else {
+            setError(msg);
+          }
         }
       } finally {
         setIsSignupSubmitting(false);

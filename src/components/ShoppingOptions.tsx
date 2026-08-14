@@ -1,7 +1,13 @@
-import { Package, ShoppingCart, ArrowRight, Check, Star } from 'lucide-react';
-import { Link } from 'react-router-dom';
+// TEMP: imports kept for when section is re-enabled
+// import { Package, ShoppingCart, ArrowRight, Check, Star } from 'lucide-react';
+// import { Link } from 'react-router-dom';
 
 const ShoppingOptions = () => {
+  // TEMP: hide “Choose Your Shopping Style” + “Quick Comparison” while focusing on subscription.
+  // Uncomment the return below when shop is ready again.
+  return null;
+
+  /*
   return (
     <section id="shopping-options" className="py-20 bg-gradient-to-br from-green-50 to-orange-50">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -13,7 +19,6 @@ const ShoppingOptions = () => {
         </div>
 
         <div className="grid lg:grid-cols-2 gap-8 mb-12 pt-8">
-          {/* Individual Shopping Option */}
           <div className="bg-white rounded-3xl p-8 shadow-lg relative group hover:shadow-xl transition-all duration-300">
             <div className="mb-6">
               <div className="bg-green-100 rounded-full p-4 inline-flex items-center justify-center mb-4">
@@ -67,7 +72,6 @@ const ShoppingOptions = () => {
             </div>
           </div>
 
-          {/* Subscription Leafy Bucket Option */}
           <div className="bg-white rounded-3xl p-8 shadow-lg relative group hover:shadow-xl transition-all duration-300">
             <div className="absolute -top-4 left-1/2 transform -translate-x-1/2">
               <div className="bg-orange-500 text-white px-4 py-2 rounded-full text-sm font-semibold flex items-center space-x-1 whitespace-nowrap">
@@ -129,9 +133,6 @@ const ShoppingOptions = () => {
           </div>
         </div>
 
-
-
-        {/* Comparison Section */}
         <div className="bg-white rounded-3xl p-8 shadow-lg">
           <h3 className="text-2xl font-bold text-gray-900 text-center mb-8">Quick Comparison</h3>
 
@@ -194,7 +195,6 @@ const ShoppingOptions = () => {
           </div>
         </div>
 
-        {/* Call to Action */}
         <div className="text-center mt-12">
           <p className="text-lg text-gray-600 mb-6">
             Still not sure which option is right for you?
@@ -217,6 +217,7 @@ const ShoppingOptions = () => {
       </div>
     </section>
   );
+  */
 };
 
 export default ShoppingOptions;

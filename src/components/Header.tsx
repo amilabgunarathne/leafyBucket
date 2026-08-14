@@ -105,7 +105,8 @@ const Header = () => {
             >
               Discover
             </Link>
-            <Link
+            {/* TEMP: hide Shop Now while focusing on subscription */}
+            {/* <Link
               to="/shop"
               onClick={(e) => {
                 if (interceptLeave('/shop')) e.preventDefault();
@@ -113,7 +114,7 @@ const Header = () => {
               className="text-gray-700 hover:text-green-600 transition-colors"
             >
               Shop Now
-            </Link>
+            </Link> */}
             {user ? (
               <Link
                 to="/my-bucket"
@@ -228,7 +229,8 @@ const Header = () => {
               >
                 Discover
               </Link>
-              <Link
+              {/* TEMP: hide Shop Now while focusing on subscription */}
+              {/* <Link
                 to="/shop"
                 className="block px-3 py-2 text-gray-700 hover:text-green-600 transition-colors"
                 onClick={(e) => {
@@ -240,7 +242,7 @@ const Header = () => {
                 }}
               >
                 Shop Now
-              </Link>
+              </Link> */}
 
               {user ? (
                 <>
