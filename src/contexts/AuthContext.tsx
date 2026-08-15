@@ -235,11 +235,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   useEffect(() => {
+    const suppressSession = { current: false };
+
     const isEmailChangeCallback = () => {
       if (typeof window === 'undefined') return false;
       const search = window.location.search || '';
       const hash = window.location.hash || '';
       return search.includes('email_changed=1') || hash.includes('type=email_change');
+    };
+
+    /** Signup email confirm link — verify email, then require manual login. */
+    const isSignupConfirmCallback = () => {
+      if (typeof window === 'undefined') return false;
+      const search = window.location.search || '';
+      const hash = window.location.hash || '';
+      return hash.includes('type=signup') || search.includes('type=signup');
     };
 
     const isAuthCallback = () => {
@@ -250,7 +260,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         hash.includes('access_token=') ||
         hash.includes('type=email_change') ||
         search.includes('token_hash=') ||
-        hash.includes('type=recovery')
+        hash.includes('type=recovery') ||
+        search.includes('code=')
       );
     };
 
@@ -258,32 +269,53 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Email change confirmation: let client exchange token so Supabase commits the new email,
       // then sign out so user must sign in with the new email.
       if (isEmailChangeCallback()) {
-        // Process the URL so the client exchanges the token with Supabase (this finalizes the email update on the server)
+        suppressSession.current = true;
         await supabase.auth.getSession();
         if (typeof window !== 'undefined' && window.location.hash) {
           await supabase.auth.refreshSession();
         }
-        await supabase.auth.signOut();
+        await supabase.auth.signOut({ scope: 'local' });
         if (typeof window !== 'undefined' && window.history.replaceState) {
           window.history.replaceState(null, '', window.location.pathname + '?email_changed=1');
         }
         setUser(null);
         setIsLoading(false);
+        suppressSession.current = false;
+        return;
+      }
+
+      // Signup confirm: exchange token so auth.users.email_confirmed_at (and profiles.email_verified) update,
+      // then sign out — customer must enter email/password to continue.
+      if (isSignupConfirmCallback()) {
+        suppressSession.current = true;
+        try {
+          await supabase.auth.getSession();
+          if (typeof window !== 'undefined' && (window.location.hash || window.location.search.includes('code='))) {
+            await supabase.auth.refreshSession();
+          }
+          await supabase.auth.signOut({ scope: 'local' });
+          if (typeof window !== 'undefined') {
+            try {
+              sessionStorage.removeItem('leafy_just_confirmed_signup');
+            } catch {
+              // ignore
+            }
+            if (window.history.replaceState) {
+              window.history.replaceState(null, '', '/auth?email_confirmed=1');
+            }
+          }
+        } finally {
+          setUser(null);
+          setIsLoading(false);
+          suppressSession.current = false;
+        }
         return;
       }
 
       let { data: { session } } = await supabase.auth.getSession();
 
-      // Other auth callbacks (e.g. signup, password reset): process URL and refresh session
+      // Other auth callbacks (e.g. password reset): process URL and keep session when needed
       if (isAuthCallback()) {
-        const hash = typeof window !== 'undefined' ? window.location.hash || '' : '';
-        const search = typeof window !== 'undefined' ? window.location.search || '' : '';
-        if (
-          typeof sessionStorage !== 'undefined' &&
-          (hash.includes('type=signup') || search.includes('type=signup'))
-        ) {
-          sessionStorage.setItem('leafy_just_confirmed_signup', '1');
-        }
         await supabase.auth.refreshSession();
         const next = await supabase.auth.getSession();
         session = next.data.session;
@@ -315,6 +347,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (suppressSession.current) return;
       if (session?.user) {
         fetchUserProfile(session.user.id, session.user.email!);
       } else {

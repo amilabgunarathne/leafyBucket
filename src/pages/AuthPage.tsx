@@ -60,6 +60,13 @@ const AuthPage = () => {
       setIsForgotPassword(false);
       setIsResetStep(false);
     }
+    if (params.get('email_confirmed') === '1') {
+      setIsLogin(true);
+      setIsForgotPassword(false);
+      setIsResetStep(false);
+      setSuccessMessage('Email confirmed! Please sign in with your email and password.');
+      setError('');
+    }
     if (typeof sessionStorage !== 'undefined' && sessionStorage.getItem('leafy_email_change_requested') === '1') {
       sessionStorage.removeItem('leafy_email_change_requested');
       setShowEmailChangeRequestedMessage(true);
@@ -68,8 +75,6 @@ const AuthPage = () => {
       setIsResetStep(false);
     }
   }, [location.search]);
-
-  // (signup confirm redirect handled in the “already signed in” effect below)
 
   const isEmailChanged = React.useMemo(
     () =>
@@ -81,43 +86,14 @@ const AuthPage = () => {
   const from = location.state?.from?.pathname || '/my-bucket';
   const adminRequired = location.state?.adminRequired || false;
 
-  /**
-   * Email confirm / magic-link creates a session immediately. AuthContext often clears the
-   * `#type=signup` hash before this page can read it — so if we already have a user on /auth,
-   * leave the Sign In form (keeps header + form from disagreeing).
-   */
+  // If already signed in on /auth (e.g. opened auth while logged in), leave the Sign In form.
+  // Signup confirm no longer leaves a session — see AuthContext.
   React.useEffect(() => {
     if (!user) return;
-    // After email-change confirm we force sign-out and show “sign in with new email”
     if (isEmailChanged) return;
-    // Recovery link: stay to set a new password
     if (isResetStep) return;
-
-    const hash = location.hash || '';
-    const params = new URLSearchParams(location.search);
-    const flaggedSignup =
-      typeof sessionStorage !== 'undefined' &&
-      sessionStorage.getItem('leafy_just_confirmed_signup') === '1';
-    const isSignupConfirm =
-      flaggedSignup ||
-      hash.includes('type=signup') ||
-      params.get('type') === 'signup';
-
-    if (isSignupConfirm) {
-      try {
-        sessionStorage.removeItem('leafy_just_confirmed_signup');
-      } catch {
-        // ignore
-      }
-      if (typeof window !== 'undefined' && window.history.replaceState) {
-        window.history.replaceState(null, '', window.location.pathname);
-      }
-      navigate('/', { state: { scrollToSection: 'pricing' }, replace: true });
-      return;
-    }
-
     navigate(from, { replace: true });
-  }, [user, isEmailChanged, isResetStep, location.hash, location.search, navigate, from]);
+  }, [user, isEmailChanged, isResetStep, navigate, from]);
 
 
   // Load delivery cities when city modal might be shown
