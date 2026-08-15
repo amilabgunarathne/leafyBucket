@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Mail, Lock, User, Phone, MapPin, Eye, EyeOff, Loader2, Shield } from 'lucide-react';
+import { Mail, Lock, User, Phone, MapPin, Eye, EyeOff, Loader2, Shield, X } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
@@ -119,7 +119,26 @@ const AuthPage = () => {
     }
   }, [isLogin]);
 
-  const showCityModal = !isLogin && (selectedCity === null || cityStep === 'notify');
+  const showCityModal =
+    !isLogin &&
+    !isForgotPassword &&
+    !isResetStep &&
+    (cityStep === 'notify' || selectedCity === null || cityModalOpen);
+
+  const closeCityModal = () => {
+    setCityModalOpen(false);
+    setCityStep('pick');
+    setUnavailableCity(null);
+    setNotifyEmail('');
+    setNotifyError('');
+    setNotifySuccess(false);
+    setCitySearch('');
+    setCityDropdownOpen(false);
+    // Accidental Sign Up with no city yet → back to Sign In
+    if (!selectedCity) {
+      setIsLogin(true);
+    }
+  };
 
   const handleCitySelect = (city: DeliveryCity) => {
     setCitySearch('');
@@ -127,6 +146,8 @@ const AuthPage = () => {
     if (city.available) {
       setSelectedCity(city.name);
       setCityModalOpen(false);
+      setCityStep('pick');
+      setUnavailableCity(null);
     } else {
       setUnavailableCity(city.name);
       setCityStep('notify');
@@ -266,13 +287,21 @@ const AuthPage = () => {
 
   return (
     <div className="pt-20 min-h-screen bg-gradient-to-br from-green-50 via-white to-orange-50">
-      {/* City selection modal (required for signup – cannot close without picking) */}
+      {/* City selection modal */}
       {showCityModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
-          <div className={`bg-white rounded-3xl shadow-xl max-w-lg w-full flex flex-col ${cityStep === 'pick' ? 'overflow-visible' : 'max-h-[90vh] overflow-hidden'}`}>
+          <div className={`bg-white rounded-3xl shadow-xl max-w-lg w-full flex flex-col relative ${cityStep === 'pick' ? 'overflow-visible' : 'max-h-[90vh] overflow-hidden'}`}>
+            <button
+              type="button"
+              onClick={closeCityModal}
+              className="absolute top-4 right-4 z-10 p-2 rounded-full text-gray-500 hover:bg-gray-100 hover:text-gray-800"
+              aria-label={selectedCity ? 'Close' : 'Close and go to Sign In'}
+            >
+              <X className="h-5 w-5" />
+            </button>
             {cityStep === 'pick' ? (
               <>
-                <div className="p-6 border-b border-gray-200 shrink-0">
+                <div className="p-6 border-b border-gray-200 shrink-0 pr-14">
                   <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
                     <MapPin className="h-5 w-5 text-green-600" />
                     Check delivery availability
@@ -321,10 +350,19 @@ const AuthPage = () => {
                     </ul>
                   )}
                 </div>
+                <div className="px-6 pb-5">
+                  <button
+                    type="button"
+                    onClick={closeCityModal}
+                    className="w-full py-2.5 text-sm font-medium text-gray-600 hover:text-gray-900 border border-gray-200 rounded-xl hover:bg-gray-50"
+                  >
+                    {selectedCity ? 'Cancel' : 'Close — back to Sign In'}
+                  </button>
+                </div>
               </>
             ) : (
               <>
-                <div className="p-6 border-b border-gray-200">
+                <div className="p-6 border-b border-gray-200 pr-14">
                   <h3 className="text-lg font-bold text-gray-900">Delivery not available yet</h3>
                   <p className="text-sm text-gray-600 mt-1">We don’t deliver to <strong>{unavailableCity}</strong> yet. Leave your email and we’ll notify you when we start.</p>
                 </div>
@@ -386,9 +424,6 @@ const AuthPage = () => {
                 )
               )}
             </h2>
-            {!isLogin && selectedCity && (
-              <p className="text-sm text-green-700 mb-1">Delivering to <strong>{selectedCity}</strong></p>
-            )}
             <p className="text-sm text-gray-600">
               {adminRequired
                 ? 'Please sign in with admin credentials to access the admin panel'
@@ -604,20 +639,34 @@ const AuthPage = () => {
                     </div>
 
                     <div>
-                      <label htmlFor="address" className="block text-sm font-medium text-gray-700 mb-1">
-                        Delivery Address (Optional)
+                      <label htmlFor="city" className="block text-sm font-medium text-gray-700 mb-1">
+                        City <span className="text-red-500">*</span>
                       </label>
-                      <div className="relative">
-                        <MapPin className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
-                        <input
-                          type="text"
-                          id="address"
-                          name="address"
-                          value={formData.address}
-                          onChange={handleInputChange}
-                          className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                          placeholder="Enter your delivery address"
-                        />
+                      <div className="flex gap-2">
+                        <div className="relative flex-1">
+                          <MapPin className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+                          <input
+                            type="text"
+                            id="city"
+                            name="city"
+                            value={selectedCity ?? ''}
+                            readOnly
+                            className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-xl bg-gray-50 text-gray-900 cursor-default focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                            placeholder="Select your city"
+                            required
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCityStep('pick');
+                            setCitySearch('');
+                            setCityModalOpen(true);
+                          }}
+                          className="shrink-0 px-4 py-2.5 border border-gray-300 rounded-xl font-medium text-gray-700 hover:bg-gray-50"
+                        >
+                          {selectedCity ? 'Change' : 'Select'}
+                        </button>
                       </div>
                     </div>
                   </>
