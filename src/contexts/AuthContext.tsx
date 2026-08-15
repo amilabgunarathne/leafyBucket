@@ -276,6 +276,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       // Other auth callbacks (e.g. signup, password reset): process URL and refresh session
       if (isAuthCallback()) {
+        const hash = typeof window !== 'undefined' ? window.location.hash || '' : '';
+        const search = typeof window !== 'undefined' ? window.location.search || '' : '';
+        if (
+          typeof sessionStorage !== 'undefined' &&
+          (hash.includes('type=signup') || search.includes('type=signup'))
+        ) {
+          sessionStorage.setItem('leafy_just_confirmed_signup', '1');
+        }
         await supabase.auth.refreshSession();
         const next = await supabase.auth.getSession();
         session = next.data.session;
