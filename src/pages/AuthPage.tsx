@@ -3,7 +3,7 @@ import { Mail, Lock, User, Phone, MapPin, Eye, EyeOff, Loader2, Shield, X } from
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth, PASSWORD_RECOVERY_KEY } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
-import { validatePhone, validatePassword, restrictToDigits, PHONE_DIGITS } from '../utils/validation';
+import { validatePhone, validatePassword, validatePasswordConfirm, restrictToDigits, PHONE_DIGITS } from '../utils/validation';
 
 type DeliveryCity = { name: string; available: boolean };
 
@@ -25,15 +25,18 @@ const AuthPage = () => {
   const [formData, setFormData] = useState({
     email: '',
     password: '',
+    confirmPassword: '',
     name: '',
     phone: '',
     address: '',
-    newPassword: ''
+    newPassword: '',
+    confirmNewPassword: ''
   });
 
   const [isForgotPassword, setIsForgotPassword] = useState(false);
   const [isResetStep, setIsResetStep] = useState(initialReset);
   const [rememberMe, setRememberMe] = useState(true);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
@@ -230,9 +233,13 @@ const AuthPage = () => {
     }
 
     if (isResetStep) {
+      const errs: Record<string, string> = {};
       const pwdErr = validatePassword(formData.newPassword);
-      if (pwdErr) {
-        setFieldErrors({ newPassword: pwdErr });
+      if (pwdErr) errs.newPassword = pwdErr;
+      const confirmErr = validatePasswordConfirm(formData.newPassword, formData.confirmNewPassword);
+      if (confirmErr) errs.confirmNewPassword = confirmErr;
+      if (Object.keys(errs).length) {
+        setFieldErrors(errs);
         return;
       }
       const { error } = await supabase.auth.updateUser({ password: formData.newPassword });
@@ -253,7 +260,13 @@ const AuthPage = () => {
         setSuccessMessage('Password updated successfully! Please sign in with your new password.');
         setIsResetStep(false);
         setIsLogin(true);
-        setFormData((prev) => ({ ...prev, newPassword: '', password: '' }));
+        setFormData((prev) => ({
+          ...prev,
+          newPassword: '',
+          confirmNewPassword: '',
+          password: '',
+          confirmPassword: ''
+        }));
       }
       return;
     }
@@ -277,6 +290,8 @@ const AuthPage = () => {
       if (phoneErr) errs.phone = phoneErr;
       const pwdErr = validatePassword(formData.password);
       if (pwdErr) errs.password = pwdErr;
+      const confirmErr = validatePasswordConfirm(formData.password, formData.confirmPassword);
+      if (confirmErr) errs.confirmPassword = confirmErr;
       if (Object.keys(errs).length) {
         setFieldErrors(errs);
         return;
@@ -294,17 +309,19 @@ const AuthPage = () => {
             setFormData({
               email: '',
               password: '',
+              confirmPassword: '',
               name: '',
               phone: '',
               address: '',
-              newPassword: ''
+              newPassword: '',
+              confirmNewPassword: ''
             });
           }
         } else {
           const msg = error || 'Sign up failed';
           if (/already exists|already registered|sign in/i.test(msg)) {
             setFieldErrors({ email: msg });
-            setError(null);
+            setError('');
           } else {
             setError(msg);
           }
@@ -526,34 +543,73 @@ const AuthPage = () => {
           {/* Form */}
           <form onSubmit={handleSubmit} className="space-y-3">
             {isResetStep ? (
-<div>
+              <>
+                <div>
                   <label htmlFor="newPassword" className="block text-sm font-medium text-gray-700 mb-1">
-                  New Password
-                </label>
-                <div className="relative">
-                  <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    id="newPassword"
-                    name="newPassword"
-                    value={formData.newPassword}
-                    onChange={(e) => { setFieldErrors(prev => ({ ...prev, newPassword: '' })); setFormData(prev => ({ ...prev, newPassword: e.target.value })); }}
-                    className={`w-full pl-10 pr-12 py-2.5 border rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent ${fieldErrors.newPassword ? 'border-red-500' : 'border-gray-300'}`}
-                    placeholder="Min. 6 characters"
-                    required
-                    minLength={6}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                  >
-                    {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
-                  </button>
+                    New Password
+                  </label>
+                  <div className="relative">
+                    <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      id="newPassword"
+                      name="newPassword"
+                      value={formData.newPassword}
+                      onChange={(e) => {
+                        setFieldErrors((prev) => ({ ...prev, newPassword: '', confirmNewPassword: '' }));
+                        setFormData((prev) => ({ ...prev, newPassword: e.target.value }));
+                      }}
+                      className={`w-full pl-10 pr-12 py-2.5 border rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent ${fieldErrors.newPassword ? 'border-red-500' : 'border-gray-300'}`}
+                      placeholder="Min. 6 characters"
+                      required
+                      minLength={6}
+                      autoComplete="new-password"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                    >
+                      {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                    </button>
+                  </div>
+                  {fieldErrors.newPassword && <p className="mt-1 text-sm text-red-600">{fieldErrors.newPassword}</p>}
+                  {!fieldErrors.newPassword && <p className="mt-1 text-xs text-gray-500">Min. 6 characters.</p>}
                 </div>
-                {fieldErrors.newPassword && <p className="mt-1 text-sm text-red-600">{fieldErrors.newPassword}</p>}
-                {!fieldErrors.newPassword && <p className="mt-1 text-xs text-gray-500">Min. 6 characters.</p>}
-              </div>
+                <div>
+                  <label htmlFor="confirmNewPassword" className="block text-sm font-medium text-gray-700 mb-1">
+                    Confirm New Password
+                  </label>
+                  <div className="relative">
+                    <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+                    <input
+                      type={showConfirmPassword ? 'text' : 'password'}
+                      id="confirmNewPassword"
+                      name="confirmNewPassword"
+                      value={formData.confirmNewPassword}
+                      onChange={(e) => {
+                        setFieldErrors((prev) => ({ ...prev, confirmNewPassword: '' }));
+                        setFormData((prev) => ({ ...prev, confirmNewPassword: e.target.value }));
+                      }}
+                      className={`w-full pl-10 pr-12 py-2.5 border rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent ${fieldErrors.confirmNewPassword ? 'border-red-500' : 'border-gray-300'}`}
+                      placeholder="Re-enter your new password"
+                      required
+                      minLength={6}
+                      autoComplete="new-password"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                      className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                    >
+                      {showConfirmPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                    </button>
+                  </div>
+                  {fieldErrors.confirmNewPassword && (
+                    <p className="mt-1 text-sm text-red-600">{fieldErrors.confirmNewPassword}</p>
+                  )}
+                </div>
+              </>
             ) : (
               <>
                 {!isForgotPassword && !isLogin && (
@@ -639,6 +695,39 @@ const AuthPage = () => {
                   </div>
                 )}
 
+                {!isForgotPassword && !isLogin && (
+                  <div>
+                    <label htmlFor="confirmPassword" className="block text-sm font-medium text-gray-700 mb-1">
+                      Confirm Password <span className="text-red-500">*</span>
+                    </label>
+                    <div className="relative">
+                      <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+                      <input
+                        type={showConfirmPassword ? 'text' : 'password'}
+                        id="confirmPassword"
+                        name="confirmPassword"
+                        value={formData.confirmPassword}
+                        onChange={handleInputChange}
+                        className={`w-full pl-10 pr-12 py-2.5 border rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent ${fieldErrors.confirmPassword ? 'border-red-500' : 'border-gray-300'}`}
+                        placeholder="Re-enter your password"
+                        required
+                        minLength={6}
+                        autoComplete="new-password"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                        className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                      >
+                        {showConfirmPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                      </button>
+                    </div>
+                    {fieldErrors.confirmPassword && (
+                      <p className="mt-1 text-sm text-red-600">{fieldErrors.confirmPassword}</p>
+                    )}
+                  </div>
+                )}
+
                 {isLogin && !isForgotPassword && !isResetStep && (
                   <div className="flex items-center">
                     <input
@@ -718,7 +807,11 @@ const AuthPage = () => {
 
             <button
               type="submit"
-              disabled={isLoading || isSignupSubmitting || (!isLogin && !selectedCity)}
+              disabled={
+                isSignupSubmitting ||
+                (isLoading && !isResetStep) ||
+                (!isLogin && !isForgotPassword && !isResetStep && !selectedCity)
+              }
               className="w-full bg-green-600 text-white py-3 px-6 rounded-xl font-semibold hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2"
             >
               {(isLoading || isSignupSubmitting) ? (
@@ -767,10 +860,12 @@ const AuthPage = () => {
                       setFormData({
                         email: '',
                         password: '',
+                        confirmPassword: '',
                         name: '',
                         phone: '',
                         address: '',
-                        newPassword: ''
+                        newPassword: '',
+                        confirmNewPassword: ''
                       });
                     }}
                     className="ml-2 text-green-600 hover:text-green-700 font-semibold"

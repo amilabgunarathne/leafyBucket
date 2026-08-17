@@ -28,6 +28,15 @@ export function validatePassword(password: string): string | null {
   return null;
 }
 
+/**
+ * Validates that confirm matches password. Returns an error message or null if valid.
+ */
+export function validatePasswordConfirm(password: string, confirm: string): string | null {
+  if (!confirm) return 'Please confirm your password';
+  if (password !== confirm) return 'Passwords do not match';
+  return null;
+}
+
 /** Restrict string to digits only, max length (for phone input). */
 export function restrictToDigits(value: string, maxLength: number): string {
   return value.replace(/\D/g, '').slice(0, maxLength);
