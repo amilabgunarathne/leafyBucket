@@ -7,10 +7,44 @@ const SESSION_IDLE_TIMEOUT_MS = 30 * 60 * 1000;   // 30 minutes
 const SESSION_ABSOLUTE_TIMEOUT_MS = 24 * 60 * 60 * 1000; // 24 hours
 const SESSION_CHECK_INTERVAL_MS = 60 * 1000;      // check every 1 minute
 const SESSION_START_KEY = 'leafy_session_started_at';
+/** Set while user is on the recovery link / set-new-password flow (not a normal login). */
+export const PASSWORD_RECOVERY_KEY = 'leafy_password_recovery';
 
 // Prevent app from hanging if Supabase is slow/unreachable
 const AUTH_INIT_TIMEOUT_MS = 12 * 1000;   // 12 seconds
 const FETCH_PROFILE_TIMEOUT_MS = 10 * 1000; // 10 seconds
+
+function isPasswordRecoveryPending(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    return sessionStorage.getItem(PASSWORD_RECOVERY_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function markPasswordRecoveryPending(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    sessionStorage.setItem(PASSWORD_RECOVERY_KEY, '1');
+  } catch {
+    // ignore
+  }
+  try {
+    window.dispatchEvent(new Event('leafy-password-recovery'));
+  } catch {
+    // ignore
+  }
+}
+
+function clearPasswordRecoveryPending(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    sessionStorage.removeItem(PASSWORD_RECOVERY_KEY);
+  } catch {
+    // ignore
+  }
+}
 
 function getAuthStorage(): Storage {
   if (typeof window === 'undefined') return localStorage;
@@ -252,6 +286,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return hash.includes('type=signup') || search.includes('type=signup');
     };
 
+    /** Password recovery link from email (hash or PKCE). */
+    const isPasswordRecoveryCallback = () => {
+      if (typeof window === 'undefined') return false;
+      const search = window.location.search || '';
+      const hash = window.location.hash || '';
+      return (
+        hash.includes('type=recovery') ||
+        search.includes('type=recovery') ||
+        (search.includes('reset=true') &&
+          (hash.includes('access_token') || search.includes('code=') || hash.includes('refresh_token')))
+      );
+    };
+
     const isAuthCallback = () => {
       if (typeof window === 'undefined') return false;
       const hash = window.location.hash || '';
@@ -263,6 +310,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         hash.includes('type=recovery') ||
         search.includes('code=')
       );
+    };
+
+    const exchangeAuthCallbackSession = async () => {
+      if (typeof window === 'undefined') return;
+      const search = window.location.search || '';
+      const hash = window.location.hash || '';
+      const code = new URLSearchParams(search).get('code');
+      if (code) {
+        await supabase.auth.exchangeCodeForSession(code);
+        return;
+      }
+      await supabase.auth.getSession();
+      if (hash.includes('access_token') || hash.includes('refresh_token')) {
+        await supabase.auth.refreshSession();
+      }
+    };
+
+    const finishPasswordRecoverySetup = () => {
+      markPasswordRecoveryPending();
+      if (typeof window !== 'undefined' && window.history.replaceState) {
+        window.history.replaceState(null, '', '/auth?reset=true');
+      }
+      setUser(null);
+      setIsLoading(false);
     };
 
     const initAuth = async () => {
@@ -312,16 +383,68 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
 
+      // Password reset link: keep auth session only so updateUser(password) works; do not treat as logged-in.
+      if (isPasswordRecoveryCallback()) {
+        suppressSession.current = true;
+        try {
+          await exchangeAuthCallbackSession();
+          finishPasswordRecoverySetup();
+        } finally {
+          suppressSession.current = false;
+        }
+        return;
+      }
+
+      // Refresh mid set-password flow (flag already set, URL may be /auth?reset=true)
+      if (isPasswordRecoveryPending()) {
+        suppressSession.current = true;
+        try {
+          const { data: { session: recoverySession } } = await supabase.auth.getSession();
+          if (!recoverySession) {
+            clearPasswordRecoveryPending();
+            setUser(null);
+            setIsLoading(false);
+          } else {
+            finishPasswordRecoverySetup();
+          }
+        } finally {
+          suppressSession.current = false;
+        }
+        return;
+      }
+
       let { data: { session } } = await supabase.auth.getSession();
 
-      // Other auth callbacks (e.g. password reset): process URL and keep session when needed
+      // Other auth callbacks (e.g. PKCE code on /auth): process URL
       if (isAuthCallback()) {
-        await supabase.auth.refreshSession();
-        const next = await supabase.auth.getSession();
-        session = next.data.session;
-        if (typeof window !== 'undefined' && window.history.replaceState) {
-          window.history.replaceState(null, '', window.location.pathname + window.location.search);
+        suppressSession.current = true;
+        try {
+          const keepReset =
+            typeof window !== 'undefined' &&
+            new URLSearchParams(window.location.search).get('reset') === 'true';
+          await exchangeAuthCallbackSession();
+          // Recovery links may arrive as ?code=… without type=recovery in the URL
+          if (isPasswordRecoveryPending()) {
+            finishPasswordRecoverySetup();
+            return;
+          }
+          const next = await supabase.auth.getSession();
+          session = next.data.session;
+          if (typeof window !== 'undefined' && window.history.replaceState) {
+            window.history.replaceState(
+              null,
+              '',
+              keepReset ? '/auth?reset=true' : window.location.pathname
+            );
+          }
+        } finally {
+          suppressSession.current = false;
         }
+      }
+
+      if (isPasswordRecoveryPending()) {
+        finishPasswordRecoverySetup();
+        return;
       }
 
       if (session?.user) {
@@ -346,8 +469,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         clearTimeout(timeoutId);
       });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      // Supabase fires this when the recovery link session is established (incl. PKCE).
+      // Must run even while suppressSession is true during init exchange.
+      if (event === 'PASSWORD_RECOVERY') {
+        finishPasswordRecoverySetup();
+        return;
+      }
+
       if (suppressSession.current) return;
+
+      // Stay on set-password UI — do not promote recovery session to a normal app login.
+      if (isPasswordRecoveryPending()) {
+        setUser(null);
+        setIsLoading(false);
+        return;
+      }
+
       if (session?.user) {
         fetchUserProfile(session.user.id, session.user.email!);
       } else {
@@ -474,14 +612,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const resetPassword = async (email: string): Promise<{ success: boolean; error?: string }> => {
     setIsLoading(true);
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+    const normalized = email.trim().toLowerCase();
+    const { error } = await supabase.auth.resetPasswordForEmail(normalized, {
       redirectTo: `${window.location.origin}/auth?reset=true`,
     });
 
-    setIsLoading(false);
     if (error) {
+      setIsLoading(false);
       return { success: false, error: error.message };
     }
+
+    // Abort all active sessions for this account (other devices / browsers).
+    await supabase.rpc('abort_sessions_for_password_reset', { p_email: normalized });
+
+    // Clear this device if it still has a session.
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session) {
+      await supabase.auth.signOut({ scope: 'local' });
+      setUser(null);
+    }
+
+    clearPasswordRecoveryPending();
+    setIsLoading(false);
     return { success: true };
   };
 

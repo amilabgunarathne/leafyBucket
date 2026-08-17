@@ -1,14 +1,26 @@
 import React, { useState, useEffect } from 'react';
 import { Mail, Lock, User, Phone, MapPin, Eye, EyeOff, Loader2, Shield, X } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth, PASSWORD_RECOVERY_KEY } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { validatePhone, validatePassword, restrictToDigits, PHONE_DIGITS } from '../utils/validation';
 
 type DeliveryCity = { name: string; available: boolean };
 
+function readIsPasswordResetFlow(): boolean {
+  if (typeof window === 'undefined') return false;
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('reset') === 'true') return true;
+  try {
+    return sessionStorage.getItem(PASSWORD_RECOVERY_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
 const AuthPage = () => {
-  const [isLogin, setIsLogin] = useState(true);
+  const initialReset = readIsPasswordResetFlow();
+  const [isLogin, setIsLogin] = useState(!initialReset);
   const [showPassword, setShowPassword] = useState(false);
   const [formData, setFormData] = useState({
     email: '',
@@ -20,7 +32,7 @@ const AuthPage = () => {
   });
 
   const [isForgotPassword, setIsForgotPassword] = useState(false);
-  const [isResetStep, setIsResetStep] = useState(false);
+  const [isResetStep, setIsResetStep] = useState(initialReset);
   const [rememberMe, setRememberMe] = useState(true);
 
   const [error, setError] = useState('');
@@ -50,10 +62,11 @@ const AuthPage = () => {
 
   React.useEffect(() => {
     const params = new URLSearchParams(location.search);
-    if (params.get('reset') === 'true') {
+    if (params.get('reset') === 'true' || readIsPasswordResetFlow()) {
       setIsResetStep(true);
       setIsLogin(false);
       setIsForgotPassword(false);
+      setCityModalOpen(false);
     }
     if (params.get('email_changed') === '1') {
       setIsLogin(true);
@@ -75,6 +88,19 @@ const AuthPage = () => {
       setIsResetStep(false);
     }
   }, [location.search]);
+
+  // If AuthContext sets recovery flag after mount (PASSWORD_RECOVERY event), flip to set-password UI.
+  React.useEffect(() => {
+    const enterReset = () => {
+      setIsResetStep(true);
+      setIsLogin(false);
+      setIsForgotPassword(false);
+      setCityModalOpen(false);
+    };
+    if (readIsPasswordResetFlow()) enterReset();
+    window.addEventListener('leafy-password-recovery', enterReset);
+    return () => window.removeEventListener('leafy-password-recovery', enterReset);
+  }, []);
 
   const isEmailChanged = React.useMemo(
     () =>
@@ -107,6 +133,10 @@ const AuthPage = () => {
 
   // When switching to signup, show city modal if no city selected; when switching to login, clear city
   useEffect(() => {
+    if (isResetStep || isForgotPassword) {
+      setCityModalOpen(false);
+      return;
+    }
     if (isLogin) {
       setSelectedCity(null);
       setCityStep('pick');
@@ -117,7 +147,7 @@ const AuthPage = () => {
     } else {
       setCityModalOpen(selectedCity === null);
     }
-  }, [isLogin]);
+  }, [isLogin, isResetStep, isForgotPassword]);
 
   const showCityModal =
     !isLogin &&
@@ -209,9 +239,21 @@ const AuthPage = () => {
       if (error) {
         setFieldErrors({ newPassword: error.message });
       } else {
-        setSuccessMessage('Password updated successfully! You can now sign in.');
+        // End recovery session — require a normal sign-in with the new password.
+        try {
+          await supabase.auth.signOut({ scope: 'global' });
+        } catch {
+          await supabase.auth.signOut({ scope: 'local' });
+        }
+        try {
+          sessionStorage.removeItem(PASSWORD_RECOVERY_KEY);
+        } catch {
+          // ignore
+        }
+        setSuccessMessage('Password updated successfully! Please sign in with your new password.');
         setIsResetStep(false);
         setIsLogin(true);
+        setFormData((prev) => ({ ...prev, newPassword: '', password: '' }));
       }
       return;
     }
