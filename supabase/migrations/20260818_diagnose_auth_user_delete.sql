@@ -2,7 +2,9 @@
 -- Fixes / diagnoses: Dashboard "Failed to delete selected users: Database error deleting user"
 --
 -- Cause: another table still references this auth.users id (or a trigger fails on delete).
--- Deleting only public.profiles first often leaves subscriptions/events pointing at the uid.
+-- Do not DELETE public.profiles first — a trigger blocks that while auth.users still exists
+-- (see 20260820_prevent_profile_delete_while_auth_exists.sql). Remove dependents, then
+-- DELETE auth.users; profiles.id ON DELETE CASCADE removes the profile.
 
 -- =============================================================================
 -- A) Find the auth user
@@ -59,7 +61,7 @@ BEGIN
   WHERE user_id = v_uid OR previous_subscription_id = ANY (v_sub_ids);
 
   DELETE FROM public.subscriptions WHERE user_id = v_uid;
-  DELETE FROM public.profiles WHERE id = v_uid;
+  -- Profile is removed by auth.users → profiles ON DELETE CASCADE (direct profile DELETE is blocked).
   DELETE FROM auth.users WHERE id = v_uid;
 
   RAISE NOTICE 'Deleted auth user %', v_uid;

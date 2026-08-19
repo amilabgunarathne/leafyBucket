@@ -744,63 +744,29 @@ const AuthPage = () => {
                 )}
 
                 {!isLogin && !isForgotPassword && (
-                  <>
-                    <div>
-                      <label htmlFor="phone" className="block text-sm font-medium text-gray-700 mb-1">
-                        Phone Number <span className="text-red-500">*</span>
-                      </label>
-                      <div className="relative">
-                        <Phone className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
-                        <input
-                          type="tel"
-                          id="phone"
-                          name="phone"
-                          value={formData.phone}
-                          onChange={handleInputChange}
-                          className={`w-full pl-10 pr-4 py-2.5 border rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent ${fieldErrors.phone ? 'border-red-500' : 'border-gray-300'}`}
-                          placeholder="e.g. 0771234567"
-                          required
-                          maxLength={PHONE_DIGITS}
-                          inputMode="numeric"
-                          autoComplete="tel"
-                        />
-                      </div>
-                      {fieldErrors.phone && <p className="mt-1 text-sm text-red-600">{fieldErrors.phone}</p>}
-                      {!fieldErrors.phone && <p className="mt-1 text-xs text-gray-500">Exactly 10 digits (numbers only).</p>}
+                  <div>
+                    <label htmlFor="phone" className="block text-sm font-medium text-gray-700 mb-1">
+                      Phone Number <span className="text-red-500">*</span>
+                    </label>
+                    <div className="relative">
+                      <Phone className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+                      <input
+                        type="tel"
+                        id="phone"
+                        name="phone"
+                        value={formData.phone}
+                        onChange={handleInputChange}
+                        className={`w-full pl-10 pr-4 py-2.5 border rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent ${fieldErrors.phone ? 'border-red-500' : 'border-gray-300'}`}
+                        placeholder="e.g. 0771234567"
+                        required
+                        maxLength={PHONE_DIGITS}
+                        inputMode="numeric"
+                        autoComplete="tel"
+                      />
                     </div>
-
-                    <div>
-                      <label htmlFor="city" className="block text-sm font-medium text-gray-700 mb-1">
-                        City <span className="text-red-500">*</span>
-                      </label>
-                      <div className="flex gap-2">
-                        <div className="relative flex-1">
-                          <MapPin className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
-                          <input
-                            type="text"
-                            id="city"
-                            name="city"
-                            value={selectedCity ?? ''}
-                            readOnly
-                            className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-xl bg-gray-50 text-gray-900 cursor-default focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                            placeholder="Select your city"
-                            required
-                          />
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setCityStep('pick');
-                            setCitySearch('');
-                            setCityModalOpen(true);
-                          }}
-                          className="shrink-0 px-4 py-2.5 border border-gray-300 rounded-xl font-medium text-gray-700 hover:bg-gray-50"
-                        >
-                          {selectedCity ? 'Change' : 'Select'}
-                        </button>
-                      </div>
-                    </div>
-                  </>
+                    {fieldErrors.phone && <p className="mt-1 text-sm text-red-600">{fieldErrors.phone}</p>}
+                    {!fieldErrors.phone && <p className="mt-1 text-xs text-gray-500">Exactly 10 digits (numbers only).</p>}
+                  </div>
                 )}
               </>
             )}

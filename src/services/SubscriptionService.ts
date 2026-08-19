@@ -84,13 +84,9 @@ export interface DeliveryItem {
     id: string;
     delivery_id: string;
     vegetable_id: string;
-    category_id: string;
-    allocated_budget: number;
-    planned_quantity: number;
-    actual_quantity?: number;
+    weight: string;
     is_substituted: boolean;
-    // Join fields
-    vegetable?: any;
+    vegetable?: { id: string; name: string };
 }
 
 export interface CustomisationAction {

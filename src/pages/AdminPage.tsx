@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { ArrowLeft, RefreshCw, Upload, Download, Settings, AlertCircle, CheckCircle, ExternalLink, Copy, Eye, EyeOff, Shield, User, Plus, Edit, Trash2, ToggleLeft, ToggleRight, Package, DollarSign, Users, LayoutGrid, Calendar, Percent, Truck } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Upload, Download, Settings, AlertCircle, CheckCircle, ExternalLink, Copy, Eye, EyeOff, Shield, User, Plus, Edit, Trash2, ToggleLeft, ToggleRight, Package, DollarSign, Users, LayoutGrid, Calendar, Percent, Truck, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import VegetableService, { Vegetable } from '../services/vegetableService';
@@ -60,6 +60,64 @@ function statusOptionsForRow(current: string): string[] {
   return [current, ...WEEKLY_DELIVERY_STATUSES];
 }
 
+type WeeklyOrderRow = {
+  deliveryId: string;
+  scheduledDate: string;
+  status: string;
+  deliveryIndex: number | null;
+  subscriptionId: string;
+  customerName: string;
+  email: string;
+  addressLine: string;
+  city: string;
+  bucketName: string;
+  paymentLabel: string;
+};
+
+type DeliveryPackItem = {
+  id: string;
+  vegetableId: string;
+  vegetableName: string;
+  weight: string;
+  weightGrams: number;
+  isSubstituted: boolean;
+};
+
+/** Delivery statuses excluded from the weekly packing summary. */
+const PACKING_EXCLUDED_DELIVERY_STATUSES = new Set(['paused', 'skipped', 'cancelled']);
+const PACKING_EXCLUDED_SUBSCRIPTION_STATUSES = new Set(['paused', 'cancelled']);
+
+function parseWeightGrams(weight: string): number {
+  const n = parseFloat(String(weight).replace(/[^0-9.]/g, ''));
+  return Number.isFinite(n) ? n : 0;
+}
+
+function mapDeliveryItemRows(
+  rows: unknown[],
+  catalogById: Map<string, string>
+): DeliveryPackItem[] {
+  return (rows || []).map((row) => {
+    const r = row as {
+      id: string;
+      vegetable_id: string;
+      weight: string;
+      is_substituted?: boolean;
+      vegetables?: { id: string; name: string } | { id: string; name: string }[] | null;
+    };
+    const vegRaw = r.vegetables;
+    const veg = Array.isArray(vegRaw) ? vegRaw[0] : vegRaw;
+    const weight = r.weight || '0g';
+    return {
+      id: r.id,
+      vegetableId: r.vegetable_id,
+      vegetableName: veg?.name || catalogById.get(r.vegetable_id) || r.vegetable_id,
+      weight,
+      weightGrams: parseWeightGrams(weight),
+      isSubstituted: Boolean(r.is_substituted),
+    };
+  });
+}
+
 const AdminPage = () => {
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState('vegetables');
@@ -110,26 +168,13 @@ const AdminPage = () => {
   const [currentWeekScheduleForm, setCurrentWeekScheduleForm] = useState({ open_dow: 3, open_time: '12:00', close_dow: 5, close_time: '23:59' });
 
   /** This week’s ship list (Mon–Sun local, same range as Market weeks) */
-  const [weeklyOrders, setWeeklyOrders] = useState<
-    {
-      deliveryId: string;
-      scheduledDate: string;
-      status: string;
-      deliveryIndex: number | null;
-      weeklyBudget: number;
-      subscriptionId: string;
-      subscriptionStatus: string;
-      customerName: string;
-      email: string;
-      addressLine: string;
-      city: string;
-      bucketName: string;
-      paymentLabel: string;
-    }[]
-  >([]);
+  const [weeklyOrders, setWeeklyOrders] = useState<WeeklyOrderRow[]>([]);
   const [weeklyOrdersLoading, setWeeklyOrdersLoading] = useState(false);
+  const [weeklyOrdersMaterializing, setWeeklyOrdersMaterializing] = useState(false);
   const [weeklyOrdersRange, setWeeklyOrdersRange] = useState<{ start: string; end: string } | null>(null);
   const [weeklyOrderSavingId, setWeeklyOrderSavingId] = useState<string | null>(null);
+  const [packItemsByDelivery, setPackItemsByDelivery] = useState<Record<string, DeliveryPackItem[]>>({});
+  const [customerDetailOrder, setCustomerDetailOrder] = useState<WeeklyOrderRow | null>(null);
 
   /** Only bulk-available veggies: used for bucket type "week vegetables" list so admin can't assign retail-only items to buckets */
   const vegetablesForBucket = useMemo(
@@ -372,6 +417,7 @@ const AdminPage = () => {
         )
         .gte('scheduled_date', range.week_start_date)
         .lte('scheduled_date', range.week_end_date)
+        .not('status', 'in', '("paused","skipped","cancelled")')
         .order('scheduled_date', { ascending: true });
 
       if (error) throw error;
@@ -400,21 +446,7 @@ const AdminPage = () => {
         profileById = new Map((profRows || []).map((p) => [p.id as string, p as { id: string; email?: string; full_name?: string | null; address?: string | null; city?: string | null }]));
       }
 
-      const rows: {
-        deliveryId: string;
-        scheduledDate: string;
-        status: string;
-        deliveryIndex: number | null;
-        weeklyBudget: number;
-        subscriptionId: string;
-        subscriptionStatus: string;
-        customerName: string;
-        email: string;
-        addressLine: string;
-        city: string;
-        bucketName: string;
-        paymentLabel: string;
-      }[] = [];
+      const rows: WeeklyOrderRow[] = [];
       for (const item of rawList) {
         const d = item as Record<string, unknown>;
         const subRaw = d.subscriptions;
@@ -427,6 +459,9 @@ const AdminPage = () => {
           payment_method_id: string | null;
           bucket_type?: unknown;
         };
+        if (PACKING_EXCLUDED_SUBSCRIPTION_STATUSES.has(s.status)) continue;
+        const deliveryStatus = String(d.status);
+        if (PACKING_EXCLUDED_DELIVERY_STATUSES.has(deliveryStatus)) continue;
         const p = profileById.get(s.user_id) ?? {
           email: undefined,
           full_name: undefined,
@@ -441,14 +476,12 @@ const AdminPage = () => {
         rows.push({
           deliveryId: String(d.id),
           scheduledDate: String(d.scheduled_date),
-          status: String(d.status),
+          status: deliveryStatus,
           deliveryIndex:
             d.delivery_index == null || d.delivery_index === ''
               ? null
               : Number(d.delivery_index),
-          weeklyBudget: Number(d.weekly_budget),
           subscriptionId: s.id,
-          subscriptionStatus: s.status,
           customerName: (p.full_name || '').trim() || '—',
           email: p.email || '—',
           addressLine: (p.address || '').trim() || '—',
@@ -463,15 +496,67 @@ const AdminPage = () => {
         if (da !== 0) return da;
         return a.customerName.localeCompare(b.customerName);
       });
+
+      const itemsByDelivery: Record<string, DeliveryPackItem[]> = {};
+      if (rows.length > 0) {
+        await VegetableService.getInstance().initialize();
+        const catalogById = new Map(
+          VegetableService.getInstance().getAllVegetables().map((v) => [v.id, v.name])
+        );
+        const deliveryIds = rows.map((r) => r.deliveryId);
+        const { data: itemRows, error: itemsErr } = await supabase
+          .from('delivery_items')
+          .select('id, delivery_id, vegetable_id, weight, is_substituted, vegetables ( id, name )')
+          .in('delivery_id', deliveryIds)
+          .order('vegetable_id');
+        if (itemsErr) throw itemsErr;
+        for (const raw of itemRows || []) {
+          const deliveryId = String((raw as { delivery_id: string }).delivery_id);
+          if (!itemsByDelivery[deliveryId]) itemsByDelivery[deliveryId] = [];
+          itemsByDelivery[deliveryId].push(...mapDeliveryItemRows([raw], catalogById));
+        }
+        for (const id of Object.keys(itemsByDelivery)) {
+          itemsByDelivery[id].sort((a, b) => a.vegetableName.localeCompare(b.vegetableName));
+        }
+      }
+
       setWeeklyOrders(rows);
+      setPackItemsByDelivery(itemsByDelivery);
     } catch (e: unknown) {
       console.error('loadWeeklyOrders', e);
       setMessage({ type: 'error', text: `Could not load weekly orders: ${formatUnknownError(e)}` });
       setWeeklyOrders([]);
+      setPackItemsByDelivery({});
     } finally {
       setWeeklyOrdersLoading(false);
     }
   }, []);
+
+  const materializeWeeklyDeliveryItems = useCallback(async () => {
+    const range = weeklyOrdersRange
+      ? { week_start_date: weeklyOrdersRange.start, week_end_date: weeklyOrdersRange.end }
+      : getCurrentWeekDateRange();
+    setWeeklyOrdersMaterializing(true);
+    try {
+      const { data, error } = await supabase.rpc('materialize_delivery_items_for_week', {
+        p_week_start: range.week_start_date,
+        p_week_end: range.week_end_date,
+      });
+      if (error) throw error;
+      const deliveriesProcessed = (data as { deliveries_processed?: number })?.deliveries_processed ?? 0;
+      const itemsUpserted = (data as { items_upserted?: number })?.items_upserted ?? 0;
+      setMessage({
+        type: 'success',
+        text: `Line items refreshed for ${deliveriesProcessed} delivery(ies), ${itemsUpserted} vegetable row(s) upserted. Re-run anytime after customization changes.`,
+      });
+      await loadWeeklyOrders();
+    } catch (e: unknown) {
+      console.error('materializeWeeklyDeliveryItems', e);
+      setMessage({ type: 'error', text: `Could not refresh line items: ${formatUnknownError(e)}` });
+    } finally {
+      setWeeklyOrdersMaterializing(false);
+    }
+  }, [weeklyOrdersRange, loadWeeklyOrders]);
 
   const updateWeeklyDeliveryStatus = useCallback(async (deliveryId: string, newStatus: string) => {
     setWeeklyOrderSavingId(deliveryId);
@@ -480,9 +565,22 @@ const AdminPage = () => {
       // delivered_at + subscription counters are handled by DB trigger (deliveries.status transition)
       const { error } = await supabase.from('deliveries').update(payload).eq('id', deliveryId);
       if (error) throw error;
-      setWeeklyOrders((prev) =>
-        prev.map((r) => (r.deliveryId === deliveryId ? { ...r, status: newStatus } : r))
-      );
+      setWeeklyOrders((prev) => {
+        if (PACKING_EXCLUDED_DELIVERY_STATUSES.has(newStatus)) {
+          return prev.filter((r) => r.deliveryId !== deliveryId);
+        }
+        return prev.map((r) => (r.deliveryId === deliveryId ? { ...r, status: newStatus } : r));
+      });
+      if (PACKING_EXCLUDED_DELIVERY_STATUSES.has(newStatus)) {
+        setPackItemsByDelivery((prev) => {
+          const next = { ...prev };
+          delete next[deliveryId];
+          return next;
+        });
+        if (customerDetailOrder?.deliveryId === deliveryId) {
+          setCustomerDetailOrder(null);
+        }
+      }
       setMessage({ type: 'success', text: 'Delivery status updated' });
     } catch (e: unknown) {
       console.error('updateWeeklyDeliveryStatus', e);
@@ -715,7 +813,7 @@ const AdminPage = () => {
                 { id: 'buckets', label: 'Bucket types', icon: LayoutGrid },
                 { id: 'prices', label: 'Market prices', icon: DollarSign },
                 { id: 'weeks', label: 'Market weeks', icon: Calendar },
-                { id: 'weekly-orders', label: "This week's orders", icon: Truck },
+                { id: 'weekly-orders', label: "This week's packing", icon: Truck },
                 { id: 'plans', label: 'Plans & pay', icon: Percent },
                 { id: 'users', label: 'Users', icon: Users },
                 { id: 'system', label: 'System', icon: Settings }
@@ -1219,90 +1317,105 @@ const AdminPage = () => {
               <div className="space-y-4">
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <div>
-                    <h2 className="text-lg font-semibold text-gray-900">This week&apos;s orders</h2>
+                    <h2 className="text-lg font-semibold text-gray-900">This week&apos;s packing list</h2>
                     <p className="text-sm text-gray-600">
-                      Deliveries with a <strong>scheduled date</strong> in the current market week (
+                      Active deliveries for this week (
                       {weeklyOrdersRange ? (
                         <>
                           Mon <span className="font-mono">{weeklyOrdersRange.start}</span> – Sun{' '}
-                          <span className="font-mono">{weeklyOrdersRange.end}</span>, local calendar
+                          <span className="font-mono">{weeklyOrdersRange.end}</span>
                         </>
                       ) : (
-                        'same range as Market weeks'
+                        'current week'
                       )}
-                      ). Use this as your pack-and-ship checklist.
+                      ). Paused, skipped, and cancelled are hidden. Click a customer for address and payment details.
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => void loadWeeklyOrders()}
-                    disabled={weeklyOrdersLoading}
-                    className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-300 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-                  >
-                    <RefreshCw className={`w-4 h-4 ${weeklyOrdersLoading ? 'animate-spin' : ''}`} />
-                    Refresh
-                  </button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void materializeWeeklyDeliveryItems()}
+                      disabled={weeklyOrdersMaterializing || weeklyOrdersLoading}
+                      className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-green-600 bg-green-50 text-sm font-medium text-green-800 hover:bg-green-100 disabled:opacity-50"
+                    >
+                      <RefreshCw className={`w-4 h-4 ${weeklyOrdersMaterializing ? 'animate-spin' : ''}`} />
+                      Refresh line items
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void loadWeeklyOrders()}
+                      disabled={weeklyOrdersLoading}
+                      className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-300 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                    >
+                      <RefreshCw className={`w-4 h-4 ${weeklyOrdersLoading ? 'animate-spin' : ''}`} />
+                      Refresh
+                    </button>
+                  </div>
                 </div>
 
                 {weeklyOrdersLoading ? (
                   <p className="text-sm text-gray-500">Loading deliveries…</p>
                 ) : weeklyOrders.length === 0 ? (
                   <p className="text-sm text-gray-500">
-                    No delivery rows scheduled for this week. Subscriptions must have a delivery with{' '}
-                    <code className="text-xs bg-gray-100 px-1 rounded">scheduled_date</code> between the week range above.
+                    No active deliveries to pack this week. Run <strong>Refresh line items</strong> after customization closes if you expect orders here.
                   </p>
                 ) : (
                   <div className="overflow-x-auto border border-gray-200 rounded-lg">
                     <table className="min-w-full divide-y divide-gray-200 text-sm">
                       <thead className="bg-gray-50">
                         <tr>
-                          <th className="px-3 py-2 text-left font-medium text-gray-700">Delivery date</th>
-                          <th className="px-3 py-2 text-left font-medium text-gray-700">Customer</th>
-                          <th className="px-3 py-2 text-left font-medium text-gray-700">Email</th>
-                          <th className="px-3 py-2 text-left font-medium text-gray-700">Address</th>
-                          <th className="px-3 py-2 text-left font-medium text-gray-700">City</th>
-                          <th className="px-3 py-2 text-left font-medium text-gray-700">Bucket</th>
-                          <th className="px-3 py-2 text-left font-medium text-gray-700">Payment</th>
-                          <th className="px-3 py-2 text-right font-medium text-gray-700">Week budget</th>
+                          <th className="px-3 py-2 text-left font-medium text-gray-700 whitespace-nowrap">Delivery date</th>
+                          <th className="px-3 py-2 text-left font-medium text-gray-700 whitespace-nowrap">Customer</th>
+                          <th className="px-3 py-2 text-left font-medium text-gray-700 whitespace-nowrap">Email</th>
+                          <th className="px-3 py-2 text-left font-medium text-gray-700 min-w-[18rem]">Vegetables to pack</th>
                           <th className="px-3 py-2 text-center font-medium text-gray-700">#</th>
-                          <th className="px-3 py-2 text-left font-medium text-gray-700">Sub</th>
-                          <th className="px-3 py-2 text-left font-medium text-gray-700">Status</th>
+                          <th className="px-3 py-2 text-left font-medium text-gray-700 whitespace-nowrap">Status</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100 bg-white">
-                        {weeklyOrders.map((row) => (
-                          <tr key={row.deliveryId} className="hover:bg-gray-50/80">
+                        {weeklyOrders.map((row) => {
+                          const items = packItemsByDelivery[row.deliveryId] ?? [];
+                          const totalG = items.reduce((sum, i) => sum + i.weightGrams, 0);
+                          return (
+                          <tr key={row.deliveryId} className="hover:bg-gray-50/80 align-top">
                             <td className="px-3 py-2 whitespace-nowrap font-mono text-gray-900">{row.scheduledDate}</td>
-                            <td className="px-3 py-2 text-gray-900">{row.customerName}</td>
+                            <td className="px-3 py-2 text-gray-900 whitespace-nowrap">
+                              <button
+                                type="button"
+                                onClick={() => setCustomerDetailOrder(row)}
+                                className="text-left font-medium text-green-700 hover:text-green-800 hover:underline"
+                                title="Customer & delivery details"
+                              >
+                                {row.customerName}
+                              </button>
+                            </td>
                             <td className="px-3 py-2 text-gray-600 max-w-[12rem] truncate" title={row.email}>
                               {row.email}
                             </td>
-                            <td className="px-3 py-2 text-gray-600 max-w-[14rem] truncate" title={row.addressLine}>
-                              {row.addressLine}
+                            <td className="px-3 py-2 text-gray-800">
+                              {items.length === 0 ? (
+                                <span className="text-amber-700 text-xs">No line items — run Refresh line items</span>
+                              ) : (
+                                <ul className="space-y-0.5">
+                                  {items.map((item) => (
+                                    <li key={item.id} className="flex flex-wrap items-baseline gap-x-2 gap-y-0">
+                                      <span className="font-medium text-gray-900">{item.vegetableName}</span>
+                                      <span className="tabular-nums text-gray-600">{item.weight}</span>
+                                      {item.isSubstituted && (
+                                        <span className="text-[10px] uppercase tracking-wide text-amber-700">custom</span>
+                                      )}
+                                    </li>
+                                  ))}
+                                  <li className="pt-1 text-xs font-semibold text-gray-600 tabular-nums">
+                                    Total ~{totalG}g ({items.length} item{items.length === 1 ? '' : 's'})
+                                  </li>
+                                </ul>
+                              )}
                             </td>
-                            <td className="px-3 py-2 text-gray-600">{row.city}</td>
-                            <td className="px-3 py-2 text-gray-900">{row.bucketName}</td>
-                            <td className="px-3 py-2 text-gray-800">{row.paymentLabel}</td>
-                            <td className="px-3 py-2 text-right tabular-nums text-gray-900">
-                              {Number.isFinite(row.weeklyBudget) ? row.weeklyBudget.toFixed(2) : '—'}
-                            </td>
-                            <td className="px-3 py-2 text-center text-gray-600">
+                            <td className="px-3 py-2 text-center text-gray-600 whitespace-nowrap">
                               {row.deliveryIndex != null && Number.isFinite(row.deliveryIndex)
                                 ? row.deliveryIndex
                                 : '—'}
-                            </td>
-                            <td className="px-3 py-2">
-                              <span
-                                className={`inline-block px-2 py-0.5 rounded text-xs ${
-                                  row.subscriptionStatus === 'active'
-                                    ? 'bg-green-100 text-green-800'
-                                    : row.subscriptionStatus === 'paused'
-                                      ? 'bg-amber-100 text-amber-800'
-                                      : 'bg-gray-100 text-gray-700'
-                                }`}
-                              >
-                                {row.subscriptionStatus}
-                              </span>
                             </td>
                             <td className="px-3 py-2 whitespace-nowrap">
                               <select
@@ -1325,14 +1438,66 @@ const AdminPage = () => {
                               </select>
                             </td>
                           </tr>
-                        ))}
+                          );
+                        })}
                       </tbody>
                     </table>
                     <p className="text-xs text-gray-500 px-3 py-2 border-t border-gray-100 bg-gray-50">
-                      {weeklyOrders.length} row{weeklyOrders.length === 1 ? '' : 's'} · Change <strong>Status</strong> to update the delivery row.{' '}
-                      <strong>Delivered</strong> sets <code className="text-xs">delivered_at</code>; other statuses clear it. Payment method comes from the subscription. Line items:{' '}
-                      <code className="text-xs">delivery_items</code> when populated.
+                      {weeklyOrders.length} pack{weeklyOrders.length === 1 ? '' : 's'} · Vegetables shown inline for packing · Click customer for address &amp; payment · Mark <strong>Delivered</strong> when done
                     </p>
+                  </div>
+                )}
+
+                {customerDetailOrder && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => setCustomerDetailOrder(null)}>
+                    <div
+                      className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 relative"
+                      onClick={(e) => e.stopPropagation()}
+                      role="dialog"
+                      aria-labelledby="customer-detail-title"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setCustomerDetailOrder(null)}
+                        className="absolute top-4 right-4 p-2 rounded-full text-gray-500 hover:bg-gray-100"
+                        aria-label="Close"
+                      >
+                        <X className="w-5 h-5" />
+                      </button>
+                      <h3 id="customer-detail-title" className="text-lg font-semibold text-gray-900 pr-8">
+                        {customerDetailOrder.customerName}
+                      </h3>
+                      <dl className="mt-4 space-y-3 text-sm">
+                        <div>
+                          <dt className="text-gray-500">Address</dt>
+                          <dd className="text-gray-900 mt-0.5">
+                            {customerDetailOrder.addressLine !== '—' ? customerDetailOrder.addressLine : 'Not set'}
+                            {customerDetailOrder.city !== '—' && (
+                              <span className="block text-gray-600">{customerDetailOrder.city}</span>
+                            )}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt className="text-gray-500">Bucket</dt>
+                          <dd className="text-gray-900 mt-0.5">{customerDetailOrder.bucketName}</dd>
+                        </div>
+                        <div>
+                          <dt className="text-gray-500">Payment</dt>
+                          <dd className="text-gray-900 mt-0.5">{customerDetailOrder.paymentLabel}</dd>
+                        </div>
+                        <div>
+                          <dt className="text-gray-500">Delivery date</dt>
+                          <dd className="text-gray-900 mt-0.5 font-mono">{customerDetailOrder.scheduledDate}</dd>
+                        </div>
+                      </dl>
+                      <button
+                        type="button"
+                        onClick={() => setCustomerDetailOrder(null)}
+                        className="mt-6 w-full py-2.5 bg-green-600 text-white rounded-xl font-medium hover:bg-green-700"
+                      >
+                        Close
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
