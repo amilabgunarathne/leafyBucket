@@ -624,6 +624,27 @@ class SubscriptionService {
             console.error('Error updating future delivery budgets:', delError);
         }
 
+        // Rematerialize only this subscription's open deliveries for the current week
+        // (do not wipe other customers via a full-week rematerialize).
+        try {
+            const { week_start_date, week_end_date } = getCurrentWeekDateRange();
+            const { data: openDels } = await supabase
+                .from('deliveries')
+                .select('id')
+                .eq('subscription_id', subscriptionId)
+                .eq('status', 'open')
+                .gte('scheduled_date', week_start_date)
+                .lte('scheduled_date', week_end_date);
+            for (const d of openDels || []) {
+                const { error: matErr } = await supabase.rpc('materialize_delivery_items_for_delivery', {
+                    p_delivery_id: (d as { id: string }).id,
+                });
+                if (matErr) console.warn('[updateSubscriptionPlan] rematerialize', matErr.message);
+            }
+        } catch (matEx) {
+            console.warn('[updateSubscriptionPlan] rematerialize skipped', matEx);
+        }
+
         const prevBt = prevSub as {
             bucket_type_id?: string;
             bucket_type?: { id: string; name: string } | { id: string; name: string }[] | null;

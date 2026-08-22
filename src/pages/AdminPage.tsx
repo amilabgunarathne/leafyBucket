@@ -66,6 +66,8 @@ type WeeklyOrderRow = {
   status: string;
   deliveryIndex: number | null;
   subscriptionId: string;
+  subscriptionStatus: string;
+  userId: string;
   customerName: string;
   email: string;
   addressLine: string;
@@ -83,39 +85,12 @@ type DeliveryPackItem = {
   isSubstituted: boolean;
 };
 
-/** Delivery statuses excluded from the weekly packing summary. */
+/** Delivery statuses hidden on the *current* week packing view only. */
 const PACKING_EXCLUDED_DELIVERY_STATUSES = new Set(['paused', 'skipped', 'cancelled']);
-const PACKING_EXCLUDED_SUBSCRIPTION_STATUSES = new Set(['paused', 'cancelled']);
 
 function parseWeightGrams(weight: string): number {
   const n = parseFloat(String(weight).replace(/[^0-9.]/g, ''));
   return Number.isFinite(n) ? n : 0;
-}
-
-function mapDeliveryItemRows(
-  rows: unknown[],
-  catalogById: Map<string, string>
-): DeliveryPackItem[] {
-  return (rows || []).map((row) => {
-    const r = row as {
-      id: string;
-      vegetable_id: string;
-      weight: string;
-      is_substituted?: boolean;
-      vegetables?: { id: string; name: string } | { id: string; name: string }[] | null;
-    };
-    const vegRaw = r.vegetables;
-    const veg = Array.isArray(vegRaw) ? vegRaw[0] : vegRaw;
-    const weight = r.weight || '0g';
-    return {
-      id: r.id,
-      vegetableId: r.vegetable_id,
-      vegetableName: veg?.name || catalogById.get(r.vegetable_id) || r.vegetable_id,
-      weight,
-      weightGrams: parseWeightGrams(weight),
-      isSubstituted: Boolean(r.is_substituted),
-    };
-  });
 }
 
 const AdminPage = () => {
@@ -167,11 +142,12 @@ const AdminPage = () => {
   const [currentWeekScheduleEditOpen, setCurrentWeekScheduleEditOpen] = useState(false);
   const [currentWeekScheduleForm, setCurrentWeekScheduleForm] = useState({ open_dow: 3, open_time: '12:00', close_dow: 5, close_time: '23:59' });
 
-  /** This week’s ship list (Mon–Sun local, same range as Market weeks) */
+  /** Packing list (Mon–Sun). packingWeekStart null = current calendar week. */
   const [weeklyOrders, setWeeklyOrders] = useState<WeeklyOrderRow[]>([]);
   const [weeklyOrdersLoading, setWeeklyOrdersLoading] = useState(false);
   const [weeklyOrdersMaterializing, setWeeklyOrdersMaterializing] = useState(false);
   const [weeklyOrdersRange, setWeeklyOrdersRange] = useState<{ start: string; end: string } | null>(null);
+  const [packingWeekStart, setPackingWeekStart] = useState<string | null>(null);
   const [weeklyOrderSavingId, setWeeklyOrderSavingId] = useState<string | null>(null);
   const [packItemsByDelivery, setPackItemsByDelivery] = useState<Record<string, DeliveryPackItem[]>>({});
   const [customerDetailOrder, setCustomerDetailOrder] = useState<WeeklyOrderRow | null>(null);
@@ -388,140 +364,184 @@ const AdminPage = () => {
     }
   };
 
-  const loadWeeklyOrders = useCallback(async () => {
-    const range = getCurrentWeekDateRange();
+  const resolvePackingWeekRange = useCallback(
+    (weekStartOverride?: string | null) => {
+      const current = getCurrentWeekDateRange();
+      const selected = weekStartOverride === undefined ? packingWeekStart : weekStartOverride;
+      if (!selected) {
+        return { ...current, isCurrentWeek: true as const };
+      }
+      const mw = marketWeeks.find((w) => toWeekStart(w.week_start_date) === selected);
+      if (mw) {
+        const start = toWeekStart(mw.week_start_date);
+        const end = toWeekStart(mw.week_end_date) || current.week_end_date;
+        return {
+          week_start_date: start,
+          week_end_date: end,
+          isCurrentWeek: start === current.week_start_date,
+        };
+      }
+      const mon = new Date(`${selected}T12:00:00`);
+      const sun = new Date(mon);
+      sun.setDate(mon.getDate() + 6);
+      const end = `${sun.getFullYear()}-${String(sun.getMonth() + 1).padStart(2, '0')}-${String(sun.getDate()).padStart(2, '0')}`;
+      return {
+        week_start_date: selected,
+        week_end_date: end,
+        isCurrentWeek: selected === current.week_start_date,
+      };
+    },
+    [packingWeekStart, marketWeeks]
+  );
+
+  const loadWeeklyOrders = useCallback(async (weekStartOverride?: string | null) => {
+    const range = resolvePackingWeekRange(weekStartOverride);
     setWeeklyOrdersRange({ start: range.week_start_date, end: range.week_end_date });
     setWeeklyOrdersLoading(true);
     try {
-      const { data: pmRows, error: pmErr } = await supabase.from('payment_methods').select('id, code, name');
-      if (pmErr) throw pmErr;
-      const pmById = new Map((pmRows || []).map((r) => [r.id as string, r as { id: string; code: string; name: string }]));
+      if (range.isCurrentWeek) {
+        const { error: ensureErr } = await supabase.rpc('ensure_open_deliveries_for_market_week', {
+          p_week_start: range.week_start_date,
+          p_week_end: range.week_end_date,
+        });
+        if (ensureErr) console.warn('[loadWeeklyOrders] ensure deliveries', ensureErr.message);
+      }
 
-      const { data, error } = await supabase
-        .from('deliveries')
-        .select(
-          `
-          id,
-          scheduled_date,
-          status,
-          delivery_index,
-          weekly_budget,
-          subscriptions (
-            id,
-            status,
-            user_id,
-            payment_method_id,
-            bucket_type:bucket_types (name)
-          )
-        `
-        )
-        .gte('scheduled_date', range.week_start_date)
-        .lte('scheduled_date', range.week_end_date)
-        .not('status', 'in', '("paused","skipped","cancelled")')
-        .order('scheduled_date', { ascending: true });
+      // SECURITY DEFINER RPC — returns every customer for the week (bypasses RLS that
+      // otherwise only shows the logged-in admin's own delivery).
+      const { data: rpcData, error: rpcErr } = await supabase.rpc('admin_list_week_packing', {
+        p_week_start: range.week_start_date,
+        p_week_end: range.week_end_date,
+        p_include_hidden: !range.isCurrentWeek,
+      });
 
-      if (error) throw error;
-
-      const rawList = (data || []) as unknown[];
-      const userIds = new Set<string>();
-      for (const item of rawList) {
-        const d = item as Record<string, unknown>;
-        const subRaw = d.subscriptions;
-        const sub = Array.isArray(subRaw) ? subRaw[0] : subRaw;
-        if (sub && typeof sub === 'object' && 'user_id' in sub) {
-          const uid = (sub as { user_id?: string }).user_id;
-          if (uid) userIds.add(uid);
+      if (rpcErr) {
+        const msg = rpcErr.message || '';
+        if (
+          msg.includes('Could not find the function') ||
+          msg.includes('schema cache') ||
+          msg.includes('admin_list_week_packing')
+        ) {
+          throw new Error(
+            'Packing list RPC missing. Run SQL migration 20260826_admin_list_week_packing.sql on Supabase, then refresh.'
+          );
         }
-      }
-      let profileById = new Map<
-        string,
-        { id: string; email?: string; full_name?: string | null; address?: string | null; city?: string | null }
-      >();
-      if (userIds.size > 0) {
-        const { data: profRows, error: profErr } = await supabase
-          .from('profiles')
-          .select('id, email, full_name, address, city')
-          .in('id', Array.from(userIds));
-        if (profErr) throw profErr;
-        profileById = new Map((profRows || []).map((p) => [p.id as string, p as { id: string; email?: string; full_name?: string | null; address?: string | null; city?: string | null }]));
+        throw rpcErr;
       }
 
-      const rows: WeeklyOrderRow[] = [];
-      for (const item of rawList) {
-        const d = item as Record<string, unknown>;
-        const subRaw = d.subscriptions;
-        const sub = Array.isArray(subRaw) ? subRaw[0] : subRaw;
-        if (!sub || typeof sub !== 'object') continue;
-        const s = sub as {
-          id: string;
+      const payload = rpcData as {
+        ok?: boolean;
+        count?: number;
+        deliveries?: Array<{
+          delivery_id: string;
+          scheduled_date: string;
           status: string;
+          delivery_index: number | null;
+          subscription_id: string;
+          subscription_status: string;
           user_id: string;
-          payment_method_id: string | null;
-          bucket_type?: unknown;
-        };
-        if (PACKING_EXCLUDED_SUBSCRIPTION_STATUSES.has(s.status)) continue;
-        const deliveryStatus = String(d.status);
-        if (PACKING_EXCLUDED_DELIVERY_STATUSES.has(deliveryStatus)) continue;
-        const p = profileById.get(s.user_id) ?? {
-          email: undefined,
-          full_name: undefined,
-          address: undefined,
-          city: undefined,
-        };
-        const btRaw = s.bucket_type;
-        const bt = Array.isArray(btRaw) ? btRaw[0] : btRaw;
-        const b = (bt && typeof bt === 'object' ? bt : {}) as { name?: string };
-        const pm = s.payment_method_id ? pmById.get(s.payment_method_id) : null;
-        const paymentLabel = pm ? formatPaymentMethodLabel(pm) : 'Not set';
-        rows.push({
-          deliveryId: String(d.id),
-          scheduledDate: String(d.scheduled_date),
-          status: deliveryStatus,
-          deliveryIndex:
-            d.delivery_index == null || d.delivery_index === ''
-              ? null
-              : Number(d.delivery_index),
-          subscriptionId: s.id,
-          customerName: (p.full_name || '').trim() || '—',
-          email: p.email || '—',
-          addressLine: (p.address || '').trim() || '—',
-          city: (p.city || '').trim() || '—',
-          bucketName: b.name || '—',
-          paymentLabel,
+          customer_name: string;
+          email: string;
+          address_line: string;
+          city: string;
+          bucket_name: string;
+          payment_label: string;
+          items?: Array<{
+            id: string;
+            vegetable_id: string;
+            vegetable_name: string;
+            weight: string;
+            is_substituted?: boolean;
+          }>;
+        }>;
+      } | null;
+
+      const raw = Array.isArray(payload?.deliveries) ? payload!.deliveries! : [];
+
+      // One row per customer (prefer active subscription, then open delivery).
+      const rankSub = (st: string) =>
+        st === 'active' ? 0 : st === 'paused' ? 1 : st === 'completed' ? 2 : 3;
+      const rankDel = (st: string) =>
+        st === 'open' ? 0 : st === 'locked' ? 1 : st === 'delivered' ? 2 : 3;
+
+      const bestByUser = new Map<string, (typeof raw)[number]>();
+      for (const row of raw) {
+        const key = row.user_id || row.delivery_id;
+        const prev = bestByUser.get(key);
+        if (!prev) {
+          bestByUser.set(key, row);
+          continue;
+        }
+        const itemBias =
+          (Array.isArray(row.items) && row.items.length > 0 ? 1 : 0) -
+          (Array.isArray(prev.items) && prev.items.length > 0 ? 1 : 0);
+        if (itemBias > 0) {
+          bestByUser.set(key, row);
+          continue;
+        }
+        if (itemBias < 0) continue;
+        const sc = rankSub(row.subscription_status) - rankSub(prev.subscription_status);
+        if (sc < 0) {
+          bestByUser.set(key, row);
+          continue;
+        }
+        if (sc > 0) continue;
+        if (rankDel(row.status) < rankDel(prev.status)) bestByUser.set(key, row);
+      }
+
+      const chosen = Array.from(bestByUser.values()).sort((a, b) => {
+        const da = String(a.scheduled_date).localeCompare(String(b.scheduled_date));
+        if (da !== 0) return da;
+        return String(a.customer_name).localeCompare(String(b.customer_name));
+      });
+
+      const finalRows: WeeklyOrderRow[] = chosen.map((r) => ({
+        deliveryId: String(r.delivery_id),
+        scheduledDate: String(r.scheduled_date).slice(0, 10),
+        status: String(r.status),
+        deliveryIndex:
+          r.delivery_index == null || (r.delivery_index as unknown) === ''
+            ? null
+            : Number(r.delivery_index),
+        subscriptionId: String(r.subscription_id),
+        subscriptionStatus: String(r.subscription_status || ''),
+        userId: String(r.user_id || r.subscription_id),
+        customerName: r.customer_name || '—',
+        email: r.email || '—',
+        addressLine: r.address_line || '—',
+        city: r.city || '—',
+        bucketName: r.bucket_name || '—',
+        paymentLabel: r.payment_label || 'Not set',
+      }));
+
+      const itemsByDelivery: Record<string, DeliveryPackItem[]> = {};
+      for (const r of chosen) {
+        const list = Array.isArray(r.items) ? r.items : [];
+        itemsByDelivery[String(r.delivery_id)] = list.map((item) => {
+          const weight = item.weight || '0g';
+          return {
+            id: String(item.id),
+            vegetableId: String(item.vegetable_id),
+            vegetableName: item.vegetable_name || item.vegetable_id,
+            weight,
+            weightGrams: parseWeightGrams(weight),
+            isSubstituted: Boolean(item.is_substituted),
+          };
         });
       }
 
-      rows.sort((a, b) => {
-        const da = a.scheduledDate.localeCompare(b.scheduledDate);
-        if (da !== 0) return da;
-        return a.customerName.localeCompare(b.customerName);
-      });
-
-      const itemsByDelivery: Record<string, DeliveryPackItem[]> = {};
-      if (rows.length > 0) {
-        await VegetableService.getInstance().initialize();
-        const catalogById = new Map(
-          VegetableService.getInstance().getAllVegetables().map((v) => [v.id, v.name])
-        );
-        const deliveryIds = rows.map((r) => r.deliveryId);
-        const { data: itemRows, error: itemsErr } = await supabase
-          .from('delivery_items')
-          .select('id, delivery_id, vegetable_id, weight, is_substituted, vegetables ( id, name )')
-          .in('delivery_id', deliveryIds)
-          .order('vegetable_id');
-        if (itemsErr) throw itemsErr;
-        for (const raw of itemRows || []) {
-          const deliveryId = String((raw as { delivery_id: string }).delivery_id);
-          if (!itemsByDelivery[deliveryId]) itemsByDelivery[deliveryId] = [];
-          itemsByDelivery[deliveryId].push(...mapDeliveryItemRows([raw], catalogById));
-        }
-        for (const id of Object.keys(itemsByDelivery)) {
-          itemsByDelivery[id].sort((a, b) => a.vegetableName.localeCompare(b.vegetableName));
-        }
-      }
-
-      setWeeklyOrders(rows);
+      setWeeklyOrders(finalRows);
       setPackItemsByDelivery(itemsByDelivery);
+
+      if (typeof payload?.count === 'number' && payload.count > finalRows.length) {
+        console.info(
+          '[loadWeeklyOrders] RPC returned',
+          payload.count,
+          'deliveries; showing',
+          finalRows.length,
+          'after per-customer dedupe'
+        );
+      }
     } catch (e: unknown) {
       console.error('loadWeeklyOrders', e);
       setMessage({ type: 'error', text: `Could not load weekly orders: ${formatUnknownError(e)}` });
@@ -530,7 +550,7 @@ const AdminPage = () => {
     } finally {
       setWeeklyOrdersLoading(false);
     }
-  }, []);
+  }, [resolvePackingWeekRange]);
 
   const materializeWeeklyDeliveryItems = useCallback(async () => {
     const range = weeklyOrdersRange
@@ -547,31 +567,32 @@ const AdminPage = () => {
       const itemsUpserted = (data as { items_upserted?: number })?.items_upserted ?? 0;
       setMessage({
         type: 'success',
-        text: `Line items refreshed for ${deliveriesProcessed} delivery(ies), ${itemsUpserted} vegetable row(s) upserted. Re-run anytime after customization changes.`,
+        text: `Line items refreshed for ${deliveriesProcessed} delivery(ies), ${itemsUpserted} vegetable row(s) upserted.`,
       });
-      await loadWeeklyOrders();
+      await loadWeeklyOrders(packingWeekStart);
     } catch (e: unknown) {
       console.error('materializeWeeklyDeliveryItems', e);
       setMessage({ type: 'error', text: `Could not refresh line items: ${formatUnknownError(e)}` });
     } finally {
       setWeeklyOrdersMaterializing(false);
     }
-  }, [weeklyOrdersRange, loadWeeklyOrders]);
+  }, [weeklyOrdersRange, loadWeeklyOrders, packingWeekStart]);
 
   const updateWeeklyDeliveryStatus = useCallback(async (deliveryId: string, newStatus: string) => {
     setWeeklyOrderSavingId(deliveryId);
     try {
       const payload: Record<string, unknown> = { status: newStatus };
-      // delivered_at + subscription counters are handled by DB trigger (deliveries.status transition)
       const { error } = await supabase.from('deliveries').update(payload).eq('id', deliveryId);
       if (error) throw error;
+      const currentStart = getCurrentWeekDateRange().week_start_date;
+      const isCurrent = !packingWeekStart || packingWeekStart === currentStart;
       setWeeklyOrders((prev) => {
-        if (PACKING_EXCLUDED_DELIVERY_STATUSES.has(newStatus)) {
+        if (isCurrent && PACKING_EXCLUDED_DELIVERY_STATUSES.has(newStatus)) {
           return prev.filter((r) => r.deliveryId !== deliveryId);
         }
         return prev.map((r) => (r.deliveryId === deliveryId ? { ...r, status: newStatus } : r));
       });
-      if (PACKING_EXCLUDED_DELIVERY_STATUSES.has(newStatus)) {
+      if (isCurrent && PACKING_EXCLUDED_DELIVERY_STATUSES.has(newStatus)) {
         setPackItemsByDelivery((prev) => {
           const next = { ...prev };
           delete next[deliveryId];
@@ -588,13 +609,44 @@ const AdminPage = () => {
     } finally {
       setWeeklyOrderSavingId(null);
     }
-  }, []);
+  }, [packingWeekStart, customerDetailOrder?.deliveryId]);
 
   useEffect(() => {
     if (activeTab === 'weekly-orders') {
-      void loadWeeklyOrders();
+      void loadWeeklyOrders(packingWeekStart);
     }
-  }, [activeTab, loadWeeklyOrders]);
+  }, [activeTab, loadWeeklyOrders, packingWeekStart]);
+
+  const packingWeekOptions = useMemo(() => {
+    const current = getCurrentWeekDateRange();
+    const byStart = new Map<string, { start: string; end: string; label: string }>();
+    for (const w of marketWeeks) {
+      const start = toWeekStart(w.week_start_date);
+      const end = toWeekStart(w.week_end_date);
+      if (!start || !end) continue;
+      const isCurrent = start === current.week_start_date;
+      byStart.set(start, {
+        start,
+        end,
+        label: isCurrent
+          ? `This week (${start} – ${end})`
+          : start < current.week_start_date
+            ? `Previous · ${start} – ${end}`
+            : `Upcoming · ${start} – ${end}`,
+      });
+    }
+    if (!byStart.has(current.week_start_date)) {
+      byStart.set(current.week_start_date, {
+        start: current.week_start_date,
+        end: current.week_end_date,
+        label: `This week (${current.week_start_date} – ${current.week_end_date})`,
+      });
+    }
+    return Array.from(byStart.values()).sort((a, b) => b.start.localeCompare(a.start));
+  }, [marketWeeks]);
+
+  const packingIsCurrentWeek =
+    !packingWeekStart || packingWeekStart === getCurrentWeekDateRange().week_start_date;
 
   const loadPlansPay = useCallback(async () => {
     setPlansPayLoading(true);
@@ -813,7 +865,7 @@ const AdminPage = () => {
                 { id: 'buckets', label: 'Bucket types', icon: LayoutGrid },
                 { id: 'prices', label: 'Market prices', icon: DollarSign },
                 { id: 'weeks', label: 'Market weeks', icon: Calendar },
-                { id: 'weekly-orders', label: "This week's packing", icon: Truck },
+                { id: 'weekly-orders', label: 'Packing list', icon: Truck },
                 { id: 'plans', label: 'Plans & pay', icon: Percent },
                 { id: 'users', label: 'Users', icon: Users },
                 { id: 'system', label: 'System', icon: Settings }
@@ -1317,21 +1369,58 @@ const AdminPage = () => {
               <div className="space-y-4">
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <div>
-                    <h2 className="text-lg font-semibold text-gray-900">This week&apos;s packing list</h2>
+                    <h2 className="text-lg font-semibold text-gray-900">Packing list</h2>
                     <p className="text-sm text-gray-600">
-                      Active deliveries for this week (
-                      {weeklyOrdersRange ? (
+                      {packingIsCurrentWeek ? (
                         <>
-                          Mon <span className="font-mono">{weeklyOrdersRange.start}</span> – Sun{' '}
-                          <span className="font-mono">{weeklyOrdersRange.end}</span>
+                          All packable deliveries for this week (
+                          {weeklyOrdersRange ? (
+                            <>
+                              Mon <span className="font-mono">{weeklyOrdersRange.start}</span> – Sun{' '}
+                              <span className="font-mono">{weeklyOrdersRange.end}</span>
+                            </>
+                          ) : (
+                            'current week'
+                          )}
+                          ). Paused / skipped / cancelled deliveries are hidden. A customer changing bucket size (e.g. Mini → Family+) does not remove other customers.
                         </>
                       ) : (
-                        'current week'
+                        <>
+                          Deliveries for{' '}
+                          {weeklyOrdersRange ? (
+                            <>
+                              Mon <span className="font-mono">{weeklyOrdersRange.start}</span> – Sun{' '}
+                              <span className="font-mono">{weeklyOrdersRange.end}</span>
+                            </>
+                          ) : (
+                            'selected week'
+                          )}
+                          . All statuses shown for history.
+                        </>
                       )}
-                      ). Paused, skipped, and cancelled are hidden. Click a customer for address and payment details.
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
+                    <label className="flex items-center gap-2 text-sm text-gray-700">
+                      <span className="font-medium whitespace-nowrap">Week</span>
+                      <select
+                        value={packingWeekStart ?? getCurrentWeekDateRange().week_start_date}
+                        onChange={(e) => {
+                          const current = getCurrentWeekDateRange().week_start_date;
+                          const v = e.target.value;
+                          setPackingWeekStart(v === current ? null : v);
+                          setCustomerDetailOrder(null);
+                        }}
+                        className="text-sm border border-gray-300 rounded-lg px-2 py-2 bg-white text-gray-900 max-w-[18rem] focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                        aria-label="Filter packing list by week"
+                      >
+                        {packingWeekOptions.map((opt) => (
+                          <option key={opt.start} value={opt.start}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
                     <button
                       type="button"
                       onClick={() => void materializeWeeklyDeliveryItems()}
@@ -1343,7 +1432,7 @@ const AdminPage = () => {
                     </button>
                     <button
                       type="button"
-                      onClick={() => void loadWeeklyOrders()}
+                      onClick={() => void loadWeeklyOrders(packingWeekStart)}
                       disabled={weeklyOrdersLoading}
                       className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-300 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
                     >
@@ -1357,7 +1446,14 @@ const AdminPage = () => {
                   <p className="text-sm text-gray-500">Loading deliveries…</p>
                 ) : weeklyOrders.length === 0 ? (
                   <p className="text-sm text-gray-500">
-                    No active deliveries to pack this week. Run <strong>Refresh line items</strong> after customization closes if you expect orders here.
+                    {packingIsCurrentWeek ? (
+                      <>
+                        No packable deliveries this week. Run <strong>Refresh line items</strong> after customization
+                        closes if you expect orders here.
+                      </>
+                    ) : (
+                      <>No deliveries found for this week.</>
+                    )}
                   </p>
                 ) : (
                   <div className="overflow-x-auto border border-gray-200 rounded-lg">
@@ -1443,7 +1539,12 @@ const AdminPage = () => {
                       </tbody>
                     </table>
                     <p className="text-xs text-gray-500 px-3 py-2 border-t border-gray-100 bg-gray-50">
-                      {weeklyOrders.length} pack{weeklyOrders.length === 1 ? '' : 's'} · Vegetables shown inline for packing · Click customer for address &amp; payment · Mark <strong>Delivered</strong> when done
+                      {weeklyOrders.length} pack{weeklyOrders.length === 1 ? '' : 's'} · Vegetables shown inline · Click customer for address &amp; payment
+                      {packingIsCurrentWeek ? (
+                        <> · Mark <strong>Delivered</strong> when done</>
+                      ) : (
+                        <> · Previous week view</>
+                      )}
                     </p>
                   </div>
                 )}

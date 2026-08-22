@@ -208,15 +208,15 @@ const Pricing = () => {
             return (
               <div
                 key={bucket.planId}
-                className={`rounded-3xl p-8 ${
+                className={`rounded-3xl p-8 relative ${
                   bucket.popular
-                    ? 'bg-green-600 text-white ring-4 ring-green-200 scale-105'
-                    : 'bg-gray-50'
-                } relative`}
+                    ? 'bg-white border-2 border-green-600 shadow-xl ring-4 ring-green-100 scale-105'
+                    : 'bg-gray-50 border border-gray-100'
+                }`}
               >
                 {bucket.popular && (
                   <div className="absolute -top-4 left-1/2 transform -translate-x-1/2">
-                    <div className="bg-orange-500 text-white px-4 py-2 rounded-full text-sm font-semibold flex items-center space-x-1">
+                    <div className="bg-orange-500 text-white px-4 py-2 rounded-full text-sm font-semibold flex items-center space-x-1 shadow-md">
                       <Star className="h-4 w-4 fill-current" />
                       <span>Most Popular</span>
                     </div>
@@ -224,40 +224,20 @@ const Pricing = () => {
                 )}
 
                 <div className="text-center mb-6">
-                  <h3
-                    className={`text-2xl font-bold mb-2 ${
-                      bucket.popular ? 'text-white' : 'text-gray-900'
-                    }`}
-                  >
-                    {bucket.name}
-                  </h3>
+                  <h3 className="text-2xl font-bold mb-2 text-gray-900">{bucket.name}</h3>
                   {bucket.description && (
-                    <p
-                      className={`${
-                        bucket.popular ? 'text-green-100' : 'text-gray-600'
-                      } mb-4`}
-                    >
-                      {bucket.description}
-                    </p>
+                    <p className="text-gray-600 mb-4">{bucket.description}</p>
                   )}
 
                   <div className="space-y-2 mb-4">
-                    <div
-                      className={`inline-flex items-center space-x-2 px-4 py-2 rounded-full ${
-                        bucket.popular
-                          ? 'bg-green-500 text-white'
-                          : 'bg-green-100 text-green-700'
-                      }`}
-                    >
+                    <div className="inline-flex items-center space-x-2 px-4 py-2 rounded-full bg-green-100 text-green-700">
                       <Package className="h-5 w-5" />
                       <span className="font-semibold">{bucket.vegLabel}</span>
                     </div>
                   </div>
 
                   <div
-                    className={`flex flex-wrap items-center justify-center gap-x-4 gap-y-2 mb-5 py-3 px-3 rounded-2xl ${
-                      bucket.popular ? 'bg-green-700/40' : 'bg-white border border-gray-200'
-                    }`}
+                    className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 mb-5 py-3 px-3 rounded-2xl bg-white border border-gray-200 shadow-sm"
                     role="radiogroup"
                     aria-label={`${bucket.name} billing plan`}
                   >
@@ -268,9 +248,7 @@ const Pricing = () => {
                       return (
                         <label
                           key={opt.id}
-                          className={`flex items-center gap-2 cursor-pointer select-none text-sm font-medium ${
-                            bucket.popular ? 'text-white' : 'text-gray-800'
-                          }`}
+                          className="flex items-center gap-2 cursor-pointer select-none text-sm font-medium text-gray-800"
                         >
                           <input
                             type="radio"
@@ -287,13 +265,7 @@ const Pricing = () => {
                           />
                           <span>{opt.name}</span>
                           {showSave && (
-                            <span
-                              className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${
-                                bucket.popular
-                                  ? 'bg-orange-400 text-white'
-                                  : 'bg-orange-100 text-orange-800'
-                              }`}
-                            >
+                            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-800">
                               Save
                               {pct > 0 ? ` ${pct}%` : ''}
                             </span>
@@ -304,34 +276,14 @@ const Pricing = () => {
                   </div>
 
                   <div className="flex items-baseline justify-center">
-                    <span
-                      className={`text-lg mr-1 ${
-                        bucket.popular ? 'text-green-100' : 'text-gray-600'
-                      }`}
-                    >
-                      LKR
-                    </span>
-                    <span
-                      className={`text-5xl font-bold ${
-                        bucket.popular ? 'text-white' : 'text-gray-900'
-                      }`}
-                    >
+                    <span className="text-lg mr-1 text-gray-600">LKR</span>
+                    <span className="text-5xl font-bold text-gray-900">
                       {Math.round(heroAmount).toLocaleString()}
                     </span>
-                    <span
-                      className={`text-lg ml-2 ${
-                        bucket.popular ? 'text-green-100' : 'text-gray-600'
-                      }`}
-                    >
-                      {heroSuffix}
-                    </span>
+                    <span className="text-lg ml-2 text-gray-600">{heroSuffix}</span>
                   </div>
 
-                  <p
-                    className={`text-sm mt-2 ${
-                      bucket.popular ? 'text-green-100' : 'text-gray-500'
-                    }`}
-                  >
+                  <p className="text-sm mt-2 text-gray-500">
                     {selectedPlan ? billedCaption(selectedPlan.code) : ''}
                   </p>
                 </div>
@@ -339,16 +291,8 @@ const Pricing = () => {
                 <ul className="space-y-4 mb-8">
                   {features.map((feature, featureIndex) => (
                     <li key={featureIndex} className="flex items-start space-x-3">
-                      <Check
-                        className={`h-5 w-5 mt-0.5 ${
-                          bucket.popular ? 'text-green-200' : 'text-green-600'
-                        } flex-shrink-0`}
-                      />
-                      <span
-                        className={`${bucket.popular ? 'text-green-50' : 'text-gray-700'}`}
-                      >
-                        {feature}
-                      </span>
+                      <Check className="h-5 w-5 mt-0.5 text-green-600 flex-shrink-0" />
+                      <span className="text-gray-700">{feature}</span>
                     </li>
                   ))}
                 </ul>
@@ -358,11 +302,7 @@ const Pricing = () => {
                   onClick={() =>
                     handleStartSubscription(bucket.planId, selectedCode)
                   }
-                  className={`w-full py-4 px-6 rounded-full font-semibold transition-all duration-200 ${
-                    bucket.popular
-                      ? 'bg-white text-green-600 hover:bg-gray-100'
-                      : 'bg-green-600 text-white hover:bg-green-700'
-                  }`}
+                  className="w-full py-4 px-6 rounded-full font-semibold transition-all duration-200 bg-green-600 text-white hover:bg-green-700 shadow-md"
                 >
                   Select {selectedPlan?.name ?? 'Bucket'}
                 </button>
