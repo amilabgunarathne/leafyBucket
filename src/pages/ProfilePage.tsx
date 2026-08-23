@@ -76,14 +76,11 @@ const ProfilePage = () => {
   ]);
 
   const availableCities = deliveryCities.filter((c) => c.available);
-  const cityOptions = React.useMemo(() => {
+  const addressCityOptions = React.useMemo(() => {
     const names = availableCities.map((c) => c.name);
-    const current = addressForm.city.trim();
-    if (current && !names.some((n) => n.toLowerCase() === current.toLowerCase())) {
-      return [current, ...names];
-    }
+    // Do not include unavailable cities — changing to a non-delivery city is not allowed.
     return names;
-  }, [availableCities, addressForm.city]);
+  }, [availableCities]);
 
   const handleProfileUpdate = async () => {
     if (!user) return;
@@ -105,6 +102,14 @@ const ProfilePage = () => {
     }
     if (!addressForm.city.trim()) {
       setAddressError('City is required.');
+      setIsSavingProfile(false);
+      return;
+    }
+    const cityOk = availableCities.some(
+      (c) => c.name.toLowerCase() === addressForm.city.trim().toLowerCase()
+    );
+    if (!cityOk) {
+      setAddressError('We don’t deliver to that city yet. Please choose a city we deliver to.');
       setIsSavingProfile(false);
       return;
     }
@@ -311,7 +316,7 @@ const ProfilePage = () => {
                               className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent bg-white"
                             >
                               <option value="">Select city</option>
-                              {cityOptions.map((name) => (
+                              {addressCityOptions.map((name) => (
                                 <option key={name} value={name}>
                                   {name}
                                 </option>

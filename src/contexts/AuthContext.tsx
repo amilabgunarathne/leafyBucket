@@ -46,6 +46,29 @@ function clearPasswordRecoveryPending(): void {
   }
 }
 
+/** Cancel set-new-password flow: drop recovery flag, clear ?reset=, end recovery session. */
+export async function abortPasswordRecovery(): Promise<void> {
+  clearPasswordRecoveryPending();
+  if (typeof window !== 'undefined' && window.history.replaceState) {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('reset') === 'true' || window.location.pathname === '/auth') {
+      params.delete('reset');
+      const qs = params.toString();
+      const path = window.location.pathname === '/auth' ? '/auth' : window.location.pathname;
+      window.history.replaceState(null, '', qs ? `${path}?${qs}` : path);
+    }
+  }
+  try {
+    await supabase.auth.signOut({ scope: 'local' });
+  } catch {
+    try {
+      await supabase.auth.signOut();
+    } catch {
+      // ignore
+    }
+  }
+}
+
 function getAuthStorage(): Storage {
   if (typeof window === 'undefined') return localStorage;
   try {
@@ -537,10 +560,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const login = async (email: string, password: string, rememberMe: boolean = true): Promise<{ success: boolean; error?: string }> => {
     setIsLoading(true);
+    // Leaving set-password without finishing left a recovery flag that blocked normal login.
+    if (isPasswordRecoveryPending()) {
+      clearPasswordRecoveryPending();
+      try {
+        await supabase.auth.signOut({ scope: 'local' });
+      } catch {
+        // ignore — signInWithPassword will replace the session
+      }
+    }
     if (typeof localStorage !== 'undefined') {
       localStorage.setItem(REMEMBER_ME_KEY, rememberMe ? 'true' : 'false');
     }
-    const { error } = await supabase.auth.signInWithPassword({
+    const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
@@ -548,6 +580,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.error('Login error:', error.message);
       setIsLoading(false);
       return { success: false, error: error.message };
+    }
+    clearPasswordRecoveryPending();
+    if (data.session?.user) {
+      try {
+        await fetchUserProfile(data.session.user.id, data.session.user.email!);
+      } catch (e) {
+        console.error('Login profile load failed:', e);
+        setIsLoading(false);
+        return { success: false, error: 'Signed in but could not load profile. Please try again.' };
+      }
+    } else {
+      setIsLoading(false);
     }
     return { success: true };
   };

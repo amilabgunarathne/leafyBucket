@@ -149,6 +149,31 @@ class SubscriptionService {
         planType: BillingPlanCode = 'monthly',
         paymentMethodId?: string | null
     ): Promise<Subscription> {
+        const { data: profile, error: profileErr } = await supabase
+            .from('profiles')
+            .select('city, address')
+            .eq('id', userId)
+            .maybeSingle();
+        if (profileErr) throw profileErr;
+        if (!profile?.address?.trim()) {
+            throw new Error('Please add a delivery address before starting a subscription.');
+        }
+        const city = (profile.city || '').trim();
+        if (!city) {
+            throw new Error('Please set a delivery city before starting a subscription.');
+        }
+        const { data: cityRow, error: cityErr } = await supabase
+            .from('delivery_cities')
+            .select('name, available')
+            .ilike('name', city)
+            .maybeSingle();
+        if (cityErr) throw cityErr;
+        if (!cityRow?.available) {
+            throw new Error(
+                'We don’t deliver to that city yet. Choose a city we deliver to before starting a subscription.'
+            );
+        }
+
         const { data: bucketType, error: btError } = await supabase
             .from('bucket_types')
             .select('*')
@@ -614,20 +639,35 @@ class SubscriptionService {
             bucketType.handling_fee,
             packWeeks
         );
+
+        const prevBucketTypeId = (prevSub as { bucket_type_id?: string } | null)?.bucket_type_id ?? null;
+        const bucketChanged = prevBucketTypeId != null && prevBucketTypeId !== bucketTypeId;
+
         const { error: delError } = await supabase
             .from('deliveries')
-            .update({ weekly_budget: weeklyBudget })
+            .update({
+                weekly_budget: weeklyBudget,
+                // Bucket change: drop Mini customizations so UI does not show the old bucket list.
+                ...(bucketChanged ? { customizations: {} } : {}),
+            })
             .eq('subscription_id', subscriptionId)
             .eq('status', 'open');
 
         if (delError) {
-            console.error('Error updating future delivery budgets:', delError);
+            console.error('Error updating open deliveries after bucket change:', delError);
         }
 
-        // Rematerialize only this subscription's open deliveries for the current week
-        // (do not wipe other customers via a full-week rematerialize).
-        try {
+        if (bucketChanged) {
             const { week_start_date, week_end_date } = getCurrentWeekDateRange();
+            const { error: clearErr } = await supabase.rpc('clear_delivery_items_for_subscription_week', {
+                p_subscription_id: subscriptionId,
+                p_week_start: week_start_date,
+                p_week_end: week_end_date,
+            });
+            if (clearErr) {
+                console.warn('[updateSubscriptionPlan] clear delivery items', clearErr.message);
+            }
+
             const { data: openDels } = await supabase
                 .from('deliveries')
                 .select('id')
@@ -635,14 +675,14 @@ class SubscriptionService {
                 .eq('status', 'open')
                 .gte('scheduled_date', week_start_date)
                 .lte('scheduled_date', week_end_date);
+
             for (const d of openDels || []) {
                 const { error: matErr } = await supabase.rpc('materialize_delivery_items_for_delivery', {
                     p_delivery_id: (d as { id: string }).id,
+                    p_force_clear_when_empty: true,
                 });
                 if (matErr) console.warn('[updateSubscriptionPlan] rematerialize', matErr.message);
             }
-        } catch (matEx) {
-            console.warn('[updateSubscriptionPlan] rematerialize skipped', matEx);
         }
 
         const prevBt = prevSub as {
@@ -697,11 +737,11 @@ class SubscriptionService {
         if (nextPaymentId && !allowed.some((p) => p.id === nextPaymentId)) {
             nextPaymentId = allowed[0]?.id ?? null;
         }
-        if (!nextPaymentId) {
-            throw new Error('Choose a payment method allowed for this plan');
-        }
+        // Payment optional — can be set later from My Bucket; pricing can change billing without it.
 
-        const payment = allowed.find((p) => p.id === nextPaymentId) ?? null;
+        const payment = nextPaymentId
+            ? allowed.find((p) => p.id === nextPaymentId) ?? null
+            : null;
         const btJoin = (prev as { bucket_type?: { monthly_price: number; handling_fee: number } | { monthly_price: number; handling_fee: number }[] | null }).bucket_type;
         const bt = Array.isArray(btJoin) ? btJoin[0] : btJoin;
 

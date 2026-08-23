@@ -12,6 +12,7 @@ import {
 
 type BucketCard = {
   planId: string;
+  bucketTypeId: string;
   name: string;
   description: string;
   listPackPrice: number;
@@ -70,6 +71,8 @@ const Pricing = () => {
   const [buckets, setBuckets] = React.useState<BucketCard[]>([]);
   const [billingPlans, setBillingPlans] = React.useState<SubscriptionPlanRow[]>([]);
   const [loading, setLoading] = React.useState(true);
+  const [submittingPlanId, setSubmittingPlanId] = React.useState<string | null>(null);
+  const [actionMessage, setActionMessage] = React.useState<{ type: 'success' | 'error'; text: string } | null>(null);
   /** Selected subscription_plans.code per bucket size id */
   const [billingByBucket, setBillingByBucket] = React.useState<Record<string, string>>({});
 
@@ -95,6 +98,7 @@ const Pricing = () => {
           const range = bt.display_item_range || '';
           return {
             planId,
+            bucketTypeId: bt.id,
             name:
               bt.name +
               (bt.name === 'Mini' ? ' Family' : bt.name === 'Family' ? '' : ' Family'),
@@ -125,20 +129,86 @@ const Pricing = () => {
     fetchPlans();
   }, []);
 
-  const handleStartSubscription = (bucketSizeId: string, billingCode: string) => {
+  const handleStartSubscription = async (bucket: BucketCard, billingCode: string) => {
     const billingPlan = billingCode as BillingPlanCode;
+    if (!['weekly', 'monthly', 'one_time'].includes(billingPlan)) {
+      setActionMessage({ type: 'error', text: 'Please select a valid billing plan.' });
+      return;
+    }
+
     try {
       sessionStorage.setItem(
         'leafy_signup_pref',
-        JSON.stringify({ bucketSizeId, billingPlan })
+        JSON.stringify({ bucketSizeId: bucket.planId, billingPlan, bucketTypeId: bucket.bucketTypeId })
       );
     } catch {
       // ignore
     }
-    if (user) {
-      navigate('/my-bucket', { state: { bucketSizeId, billingPlan } });
-    } else {
-      navigate('/auth', { state: { afterAuth: '/my-bucket', bucketSizeId, billingPlan } });
+
+    if (!user) {
+      navigate('/auth', {
+        state: {
+          from: { pathname: '/my-bucket' },
+          bucketSizeId: bucket.planId,
+          billingPlan,
+        },
+      });
+      return;
+    }
+
+    setSubmittingPlanId(bucket.planId);
+    setActionMessage(null);
+    try {
+      const { default: SubscriptionService } = await import('../services/SubscriptionService');
+      const svc = SubscriptionService.getInstance();
+      const active = await svc.getActiveSubscription(user.id);
+
+      if (active?.subscription?.id) {
+        // Existing subscriber: persist bucket + billing change only.
+        await svc.updateSubscriptionPlan(active.subscription.id, bucket.bucketTypeId);
+        await svc.updateSubscriptionBillingPlan(
+          active.subscription.id,
+          user.id,
+          billingPlan,
+          active.subscription.payment_method_id ?? null
+        );
+        try {
+          sessionStorage.removeItem('leafy_signup_pref');
+        } catch {
+          // ignore
+        }
+        setActionMessage({
+          type: 'success',
+          text: 'Plan updated. Opening My Bucket…',
+        });
+        navigate('/my-bucket', { replace: true });
+        window.location.reload();
+        return;
+      }
+
+      // New customers: keep plan choice in session only. Subscription row is created
+      // on My Bucket after delivery address + payment method are confirmed.
+      setActionMessage({
+        type: 'success',
+        text: 'Plan selected. Opening My Bucket to finish setup…',
+      });
+      navigate('/my-bucket', {
+        replace: true,
+        state: {
+          bucketSizeId: bucket.planId,
+          billingPlan,
+          bucketTypeId: bucket.bucketTypeId,
+        },
+      });
+    } catch (e: unknown) {
+      console.error('[Pricing] apply plan', e);
+      const msg =
+        e && typeof e === 'object' && 'message' in e && typeof (e as { message: unknown }).message === 'string'
+          ? (e as { message: string }).message
+          : 'Could not save plan. Please try again.';
+      setActionMessage({ type: 'error', text: msg });
+    } finally {
+      setSubmittingPlanId(null);
     }
   };
 
@@ -168,6 +238,15 @@ const Pricing = () => {
             Each bucket has a weekly rate from our catalog. Choose{' '}
             {introBits || 'a billing plan'} — plans and discounts come from the latest catalog.
           </p>
+          {actionMessage && (
+            <p
+              className={`text-sm font-medium ${
+                actionMessage.type === 'success' ? 'text-green-700' : 'text-red-600'
+              }`}
+            >
+              {actionMessage.text}
+            </p>
+          )}
         </div>
 
         <div className="grid md:grid-cols-3 gap-8 mb-12">
@@ -299,12 +378,15 @@ const Pricing = () => {
 
                 <button
                   type="button"
-                  onClick={() =>
-                    handleStartSubscription(bucket.planId, selectedCode)
-                  }
-                  className="w-full py-4 px-6 rounded-full font-semibold transition-all duration-200 bg-green-600 text-white hover:bg-green-700 shadow-md"
+                  disabled={submittingPlanId != null}
+                  onClick={() => void handleStartSubscription(bucket, selectedCode)}
+                  className="w-full py-4 px-6 rounded-full font-semibold transition-all duration-200 bg-green-600 text-white hover:bg-green-700 shadow-md disabled:opacity-60 disabled:cursor-wait"
                 >
-                  Select {selectedPlan?.name ?? 'Bucket'}
+                  {submittingPlanId === bucket.planId
+                    ? 'Saving…'
+                    : user?.subscription && user.subscription.status !== 'cancelled'
+                      ? `Switch to ${selectedPlan?.name ?? 'this plan'}`
+                      : `Select ${selectedPlan?.name ?? 'Bucket'}`}
                 </button>
               </div>
             );

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Mail, Lock, User, Phone, MapPin, Eye, EyeOff, Loader2, Shield, X } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { useAuth, PASSWORD_RECOVERY_KEY } from '../contexts/AuthContext';
+import { useAuth, PASSWORD_RECOVERY_KEY, abortPasswordRecovery } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { validatePhone, validatePassword, validatePasswordConfirm, restrictToDigits, PHONE_DIGITS } from '../utils/validation';
 
@@ -257,6 +257,9 @@ const AuthPage = () => {
         } catch {
           // ignore
         }
+        if (window.history.replaceState) {
+          window.history.replaceState(null, '', '/auth');
+        }
         setSuccessMessage('Password updated successfully! Please sign in with your new password.');
         setIsResetStep(false);
         setIsLogin(true);
@@ -267,6 +270,7 @@ const AuthPage = () => {
           password: '',
           confirmPassword: ''
         }));
+        navigate('/auth', { replace: true });
       }
       return;
     }
@@ -796,10 +800,24 @@ const AuthPage = () => {
             <div className="mt-4 text-center text-sm">
               {isResetStep ? (
                 <button
+                  type="button"
                   onClick={() => {
-                    setIsResetStep(false);
-                    setIsLogin(true);
-                    setError('');
+                    void (async () => {
+                      await abortPasswordRecovery();
+                      setIsResetStep(false);
+                      setIsLogin(true);
+                      setIsForgotPassword(false);
+                      setError('');
+                      setFieldErrors({});
+                      setSuccessMessage('');
+                      setFormData((prev) => ({
+                        ...prev,
+                        newPassword: '',
+                        confirmNewPassword: '',
+                        password: '',
+                      }));
+                      navigate('/auth', { replace: true });
+                    })();
                   }}
                   className="text-green-600 hover:text-green-700 font-semibold"
                 >
