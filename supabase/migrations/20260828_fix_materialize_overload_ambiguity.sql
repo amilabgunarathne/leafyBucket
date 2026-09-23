@@ -1,56 +1,10 @@
--- When a subscriber changes bucket size mid-week, reset customizations and line items
--- so they do not keep seeing the previous bucket's vegetables (Mini → Family with empty admin list).
+-- Fix 42725: materialize_delivery_items_for_delivery(uuid) is not unique.
+-- Cause: (uuid, boolean DEFAULT false) and (uuid) wrapper both match one-arg calls.
+-- Solution: drop DEFAULT on the 2-arg function; keep explicit (uuid) wrapper.
 
-CREATE OR REPLACE FUNCTION public.clear_delivery_items_for_subscription_week(
-  p_subscription_id uuid,
-  p_week_start date,
-  p_week_end date
-)
-RETURNS integer
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
-AS $$
-DECLARE
-  v_uid uuid := auth.uid();
-  v_n integer := 0;
-BEGIN
-  IF v_uid IS NULL THEN
-    RAISE EXCEPTION 'Not authenticated';
-  END IF;
+DROP FUNCTION IF EXISTS public.materialize_delivery_items_for_delivery(uuid);
+DROP FUNCTION IF EXISTS public.materialize_delivery_items_for_delivery(uuid, boolean);
 
-  IF NOT EXISTS (
-    SELECT 1 FROM public.subscriptions s
-    WHERE s.id = p_subscription_id AND s.user_id = v_uid
-  ) THEN
-    RAISE EXCEPTION 'Subscription not found or not owned by the current user';
-  END IF;
-
-  IF p_week_start IS NULL OR p_week_end IS NULL OR p_week_end < p_week_start THEN
-    RAISE EXCEPTION 'Invalid week range';
-  END IF;
-
-  DELETE FROM public.delivery_items di
-  WHERE di.delivery_id IN (
-    SELECT d.id
-    FROM public.deliveries d
-    WHERE d.subscription_id = p_subscription_id
-      AND d.scheduled_date::date >= p_week_start
-      AND d.scheduled_date::date <= p_week_end
-  );
-
-  GET DIAGNOSTICS v_n = ROW_COUNT;
-  RETURN v_n;
-END;
-$$;
-
-COMMENT ON FUNCTION public.clear_delivery_items_for_subscription_week(uuid, date, date) IS
-  'Subscriber: delete materialized line items for this subscription in a calendar week (used on bucket change).';
-
-REVOKE ALL ON FUNCTION public.clear_delivery_items_for_subscription_week(uuid, date, date) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.clear_delivery_items_for_subscription_week(uuid, date, date) TO authenticated;
-
--- Materialize: optional force-clear when new bucket has no admin defaults (plan change path).
 CREATE OR REPLACE FUNCTION public.materialize_delivery_items_for_delivery(
   p_delivery_id uuid,
   p_force_clear_when_empty boolean
@@ -278,7 +232,6 @@ COMMENT ON FUNCTION public.materialize_delivery_items_for_delivery(uuid, boolean
 REVOKE ALL ON FUNCTION public.materialize_delivery_items_for_delivery(uuid, boolean) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.materialize_delivery_items_for_delivery(uuid, boolean) TO authenticated;
 
--- Keep one-arg overload for existing callers
 CREATE OR REPLACE FUNCTION public.materialize_delivery_items_for_delivery(p_delivery_id uuid)
 RETURNS integer
 LANGUAGE sql

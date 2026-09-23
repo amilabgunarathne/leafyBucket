@@ -7,6 +7,7 @@ const SESSION_IDLE_TIMEOUT_MS = 30 * 60 * 1000;   // 30 minutes
 const SESSION_ABSOLUTE_TIMEOUT_MS = 24 * 60 * 60 * 1000; // 24 hours
 const SESSION_CHECK_INTERVAL_MS = 60 * 1000;      // check every 1 minute
 const SESSION_START_KEY = 'leafy_session_started_at';
+const SESSION_LAST_ACTIVITY_KEY = 'leafy_session_last_activity_at';
 /** Set while user is on the recovery link / set-new-password flow (not a normal login). */
 export const PASSWORD_RECOVERY_KEY = 'leafy_password_recovery';
 
@@ -80,6 +81,90 @@ function getAuthStorage(): Storage {
   }
 }
 
+function readSessionTiming(storage: Storage): { startedAt: number; lastActivityAt: number } | null {
+  const startedRaw = storage.getItem(SESSION_START_KEY);
+  const activityRaw = storage.getItem(SESSION_LAST_ACTIVITY_KEY);
+  if (!startedRaw) return null;
+  const startedAt = parseInt(startedRaw, 10);
+  if (!Number.isFinite(startedAt)) return null;
+  const lastActivityAt = activityRaw ? parseInt(activityRaw, 10) : startedAt;
+  if (!Number.isFinite(lastActivityAt)) return null;
+  return { startedAt, lastActivityAt };
+}
+
+/** App-level session window (idle + absolute). Independent of Supabase refresh token. */
+function isAppSessionExpired(now = Date.now()): boolean {
+  if (typeof window === 'undefined') return false;
+  const storage = getAuthStorage();
+  const timing = readSessionTiming(storage);
+  // No markers yet → not expired (fresh login may race ahead of markAppSessionStarted).
+  if (!timing) return false;
+  if (now - timing.startedAt >= SESSION_ABSOLUTE_TIMEOUT_MS) return true;
+  if (now - timing.lastActivityAt >= SESSION_IDLE_TIMEOUT_MS) return true;
+  return false;
+}
+
+function markAppSessionStarted(now = Date.now()): void {
+  if (typeof window === 'undefined') return;
+  const storage = getAuthStorage();
+  const ts = String(now);
+  storage.setItem(SESSION_START_KEY, ts);
+  storage.setItem(SESSION_LAST_ACTIVITY_KEY, ts);
+}
+
+function touchAppSessionActivity(now = Date.now()): void {
+  if (typeof window === 'undefined') return;
+  const storage = getAuthStorage();
+  if (!storage.getItem(SESSION_START_KEY)) return;
+  storage.setItem(SESSION_LAST_ACTIVITY_KEY, String(now));
+}
+
+function clearAppSessionTiming(): void {
+  if (typeof window === 'undefined') return;
+  for (const storage of [localStorage, sessionStorage]) {
+    try {
+      storage.removeItem(SESSION_START_KEY);
+      storage.removeItem(SESSION_LAST_ACTIVITY_KEY);
+    } catch {
+      // ignore
+    }
+  }
+}
+
+type SessionEnforceMode = 'restore' | 'signed_in';
+
+/**
+ * End Supabase session when app idle/absolute window expired.
+ * - restore: page load / session recovery / token refresh — missing or expired timing → sign out
+ * - signed_in: only for an intentional password login/signup (see expectingFreshLoginRef)
+ * Skips entirely during password recovery.
+ */
+async function enforceAppSessionOrSignOut(mode: SessionEnforceMode = 'restore'): Promise<boolean> {
+  if (isPasswordRecoveryPending()) return true;
+
+  if (mode === 'signed_in') {
+    markAppSessionStarted();
+    return true;
+  }
+
+  const timing = readSessionTiming(getAuthStorage());
+  // Restored Supabase session with no app window (e.g. overnight / post-deploy) → require re-login.
+  if (!timing || isAppSessionExpired()) {
+    clearAppSessionTiming();
+    try {
+      await supabase.auth.signOut({ scope: 'local' });
+    } catch {
+      try {
+        await supabase.auth.signOut();
+      } catch {
+        // ignore
+      }
+    }
+    return false;
+  }
+  return true;
+}
+
 interface User {
   id: string;
   email: string;
@@ -149,6 +234,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const lastActivityAt = useRef(Date.now());
   const logoutRef = useRef<() => void>(() => {});
+  /**
+   * True only while login()/signup() intentionally creates a session.
+   * Supabase also fires SIGNED_IN when recovering a session from storage — that must
+   * use restore mode so overnight idle/absolute expiry is not reset.
+   */
+  const expectingFreshLoginRef = useRef(false);
 
   // Helper to fetch full user profile and subscription (with timeout so app never hangs)
   const fetchUserProfile = async (userId: string, email: string) => {
@@ -240,12 +331,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         } : undefined
       };
 
-      if (typeof window !== 'undefined') {
-        const storage = getAuthStorage();
-        if (!storage.getItem(SESSION_START_KEY)) {
-          storage.setItem(SESSION_START_KEY, String(Date.now()));
-        }
-      }
       setUser(userData);
     };
 
@@ -271,12 +356,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             fallbackName = data.user.user_metadata.name;
           } else if (email) {
             fallbackName = email.split('@')[0];
-          }
-          if (typeof window !== 'undefined') {
-            const storage = getAuthStorage();
-            if (!storage.getItem(SESSION_START_KEY)) {
-              storage.setItem(SESSION_START_KEY, String(Date.now()));
-            }
           }
           setUser({
             id: userId,
@@ -471,6 +550,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       if (session?.user) {
+        const sessionOk = await enforceAppSessionOrSignOut('restore');
+        if (!sessionOk) {
+          setUser(null);
+          setIsLoading(false);
+          return;
+        }
         await fetchUserProfile(session.user.id, session.user.email!);
       } else {
         setIsLoading(false);
@@ -510,11 +595,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       if (session?.user) {
-        fetchUserProfile(session.user.id, session.user.email!);
+        void (async () => {
+          // Only password login/signup sets expectingFreshLoginRef. Storage recovery
+          // also emits SIGNED_IN — treat that as restore so idle clocks are not reset.
+          const mode: SessionEnforceMode = expectingFreshLoginRef.current
+            ? 'signed_in'
+            : 'restore';
+          if (expectingFreshLoginRef.current) {
+            expectingFreshLoginRef.current = false;
+          }
+          const sessionOk = await enforceAppSessionOrSignOut(mode);
+          if (!sessionOk) {
+            setUser(null);
+            setIsLoading(false);
+            return;
+          }
+          await fetchUserProfile(session.user.id, session.user.email!);
+        })();
       } else {
-        if (typeof window !== 'undefined') {
-          localStorage.removeItem(SESSION_START_KEY);
-          sessionStorage.removeItem(SESSION_START_KEY);
+        // Do not clear app timing on transient null sessions during recovery abort.
+        if (event === 'SIGNED_OUT') {
+          clearAppSessionTiming();
         }
         setUser(null);
         setIsLoading(false);
@@ -527,33 +628,37 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Session timeout: idle (no activity) and absolute (max session length)
   useEffect(() => {
     if (!user || typeof window === 'undefined') return;
+    if (isPasswordRecoveryPending()) return;
 
-    lastActivityAt.current = Date.now();
+    const timing = readSessionTiming(getAuthStorage());
+    lastActivityAt.current = timing?.lastActivityAt ?? Date.now();
 
     const onActivity = () => {
-      lastActivityAt.current = Date.now();
+      const now = Date.now();
+      lastActivityAt.current = now;
+      touchAppSessionActivity(now);
     };
     const events = ['mousedown', 'keydown', 'scroll', 'touchstart'] as const;
     events.forEach((e) => window.addEventListener(e, onActivity));
 
-    const intervalId = setInterval(() => {
-      const storage = getAuthStorage();
-      const started = storage.getItem(SESSION_START_KEY);
-      if (!started) return;
-      const sessionStart = parseInt(started, 10);
-      const now = Date.now();
-      if (now - sessionStart >= SESSION_ABSOLUTE_TIMEOUT_MS) {
-        logoutRef.current();
-        return;
-      }
-      if (now - lastActivityAt.current >= SESSION_IDLE_TIMEOUT_MS) {
-        logoutRef.current();
-        return;
-      }
-    }, SESSION_CHECK_INTERVAL_MS);
+    const checkExpiry = () => {
+      if (isPasswordRecoveryPending()) return;
+      if (!isAppSessionExpired()) return;
+      void logoutRef.current();
+    };
+
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') checkExpiry();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+
+    checkExpiry();
+
+    const intervalId = setInterval(checkExpiry, SESSION_CHECK_INTERVAL_MS);
 
     return () => {
       events.forEach((e) => window.removeEventListener(e, onActivity));
+      document.removeEventListener('visibilitychange', onVisibility);
       clearInterval(intervalId);
     };
   }, [user]);
@@ -572,16 +677,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (typeof localStorage !== 'undefined') {
       localStorage.setItem(REMEMBER_ME_KEY, rememberMe ? 'true' : 'false');
     }
+    // Mark before sign-in so concurrent SIGNED_IN uses signed_in (not restore).
+    expectingFreshLoginRef.current = true;
+    // Drop any expired idle/absolute markers before login so restore cannot
+    // sign the new session out using yesterday's timestamps.
+    clearAppSessionTiming();
     const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
     if (error) {
       console.error('Login error:', error.message);
+      expectingFreshLoginRef.current = false;
       setIsLoading(false);
-      return { success: false, error: error.message };
+      // Don't reveal unconfirmed email — same message as bad credentials.
+      const msg = error.message || '';
+      if (/email\s*not\s*confirmed|confirm.*email|email.*confirm/i.test(msg)) {
+        return { success: false, error: 'Invalid login credentials' };
+      }
+      return { success: false, error: msg };
     }
     clearPasswordRecoveryPending();
+    markAppSessionStarted();
+    expectingFreshLoginRef.current = false;
     if (data.session?.user) {
       try {
         await fetchUserProfile(data.session.user.id, data.session.user.email!);
@@ -651,6 +769,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     setIsLoading(false);
+    if (data?.session) {
+      expectingFreshLoginRef.current = true;
+      markAppSessionStarted();
+      expectingFreshLoginRef.current = false;
+    }
     return { success: true, data };
   };
 
@@ -714,6 +837,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           clearStorage(localStorage);
           clearStorage(sessionStorage);
           sessionStorage.clear();
+          clearAppSessionTiming();
         } catch (_) {}
       }
       setUser(null);

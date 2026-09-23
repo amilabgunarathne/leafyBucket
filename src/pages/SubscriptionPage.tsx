@@ -122,6 +122,7 @@ const SubscriptionPage = () => {
     readPendingSignupPref(location.state)
   );
   const [confirmingSubscription, setConfirmingSubscription] = useState(false);
+  const [paymentSetupError, setPaymentSetupError] = useState<string | null>(null);
 
   // First-time payment completion flag (local); also synced from DB when payment_method_id is set
   React.useEffect(() => {
@@ -231,9 +232,35 @@ const SubscriptionPage = () => {
   }, []);
 
   React.useEffect(() => {
-    if (!user) return;
+    if (!user?.id) return;
     setAddressForm(parseAddressToStructured(user.address, user.city));
   }, [user?.id, user?.address, user?.city]);
+
+  // Keep AuthContext address in sync with profiles (avoids stale user.address after save elsewhere).
+  React.useEffect(() => {
+    if (!user?.id) return;
+    let cancelled = false;
+    supabase
+      .from('profiles')
+      .select('address, city, full_name')
+      .eq('id', user.id)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (cancelled || !data) return;
+        const dbAddress = (data.address || '').trim();
+        const dbCity = (data.city || '').trim();
+        if (dbAddress !== (user.address || '').trim() || dbCity !== (user.city || '').trim()) {
+          updateUser({
+            address: data.address || '',
+            city: dbCity || undefined,
+            ...(data.full_name ? { name: data.full_name } : {}),
+          });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id, user?.address, user?.city, updateUser]);
 
   // Fetch real subscription details (align query with AuthContext; no payment embed)
   React.useEffect(() => {
@@ -322,7 +349,7 @@ const SubscriptionPage = () => {
   const hasPendingPlan = Boolean(pendingPref?.billingPlan);
 
   const needsDeliveryAddress = Boolean(
-    (hasActiveSubscription || hasPendingPlan) &&
+    hasActiveSubscription &&
       (!user.address?.trim() ||
         (deliveryCities.length > 0 && !isCityDeliverable(user.city, deliveryCities)))
   );
@@ -400,15 +427,7 @@ const SubscriptionPage = () => {
 
   const handleConfirmNewSubscription = async (paymentMethodId: string) => {
     if (!user?.id || !pendingPref?.billingPlan) return;
-    if (!user.address?.trim()) {
-      alert('Please add your delivery address first.');
-      return;
-    }
-    if (!isCityDeliverable(user.city, deliveryCities) && deliveryCities.length > 0) {
-      alert('We don’t deliver to your city yet. Please choose a city we deliver to before continuing.');
-      return;
-    }
-
+    setPaymentSetupError(null);
     setConfirmingSubscription(true);
     try {
       const bucketTypeId = await resolvePendingBucketTypeId(pendingPref);
@@ -427,6 +446,7 @@ const SubscriptionPage = () => {
         // ignore
       }
       setPendingPref(null);
+      setShowPaymentSetup(false);
       try {
         localStorage.setItem(`${SETUP_COMPLETE_KEY}_${user.id}`, '1');
       } catch {
@@ -441,7 +461,7 @@ const SubscriptionPage = () => {
         e && typeof e === 'object' && 'message' in e && typeof (e as { message: unknown }).message === 'string'
           ? (e as { message: string }).message
           : 'Could not start subscription. Please try again.';
-      alert(msg);
+      setPaymentSetupError(msg);
     } finally {
       setConfirmingSubscription(false);
     }
@@ -695,7 +715,10 @@ const SubscriptionPage = () => {
 
   return (
     <>
-      <div className="pt-24 min-h-screen bg-gray-50">
+      <div
+        className={`pt-24 min-h-screen bg-gray-50 ${needsDeliveryAddress ? 'pointer-events-none select-none blur-sm' : ''}`}
+        aria-hidden={needsDeliveryAddress}
+      >
       {/* Header: title row + customization status inline (no extra vertical block) */}
       <div className="bg-white border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 sm:py-4">
@@ -1045,8 +1068,8 @@ const SubscriptionPage = () => {
                           Finish setting up your bucket
                         </h2>
                         <p className="text-gray-600 max-w-xl mx-auto mb-2">
-                          Your plan is saved. Add your street address (city from signup is used), then
-                          confirm how you’ll pay — your subscription starts only after that.
+                          Your plan is saved. Choose how you&apos;ll pay — your subscription starts after
+                          you confirm payment. We&apos;ll ask for your delivery address on the next step.
                         </p>
                         <p className="text-sm font-medium text-green-800 mb-8">
                           {(() => {
@@ -1064,16 +1087,14 @@ const SubscriptionPage = () => {
                           <button
                             type="button"
                             onClick={() => {
-                              if (needsDeliveryAddress) return;
+                              setPaymentSetupError(null);
                               setShowPaymentSetup(true);
                             }}
-                            disabled={needsDeliveryAddress || confirmingSubscription}
+                            disabled={confirmingSubscription}
                             className="inline-flex items-center gap-2 px-8 py-3.5 rounded-2xl font-semibold bg-green-600 text-white hover:bg-green-700 shadow-md shadow-green-600/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                           >
                             <CreditCard className="h-5 w-5" />
-                            {needsDeliveryAddress
-                              ? 'Add delivery address first'
-                              : 'Confirm payment & start'}
+                            Confirm payment & start
                           </button>
                           <button
                             type="button"
@@ -1097,7 +1118,7 @@ const SubscriptionPage = () => {
                       </h2>
                       <p className="text-gray-600 max-w-xl mx-auto mb-8">
                         Choose your bucket size and Monthly / Weekly / One-time billing on the pricing
-                        page. Your subscription is created after you confirm address and payment.
+                        page. Confirm payment first; delivery address is collected on My Bucket.
                       </p>
                       <button
                         type="button"
@@ -1654,6 +1675,11 @@ const SubscriptionPage = () => {
                   ))}
                 </div>
               )}
+              {paymentSetupError && (
+                <p className="mt-4 text-sm text-red-600 rounded-lg bg-red-50 border border-red-100 px-3 py-2">
+                  {paymentSetupError}
+                </p>
+              )}
               <button
                 type="button"
                 disabled={
@@ -1673,9 +1699,10 @@ const SubscriptionPage = () => {
                   }
 
                   if (!subId) {
-                    alert('No subscription found. Please refresh the page.');
+                    setPaymentSetupError('No subscription found. Please refresh the page.');
                     return;
                   }
+                  setPaymentSetupError(null);
                   try {
                     const row =
                       await SubscriptionService.getInstance().updateSubscriptionPaymentMethod(
@@ -1696,7 +1723,7 @@ const SubscriptionPage = () => {
                     }
                   } catch (e) {
                     console.error('Failed to save payment method:', e);
-                    alert('Failed to save payment method. Please try again.');
+                    setPaymentSetupError('Failed to save payment method. Please try again.');
                     return;
                   }
                   setShowPaymentSetup(false);
@@ -1713,10 +1740,10 @@ const SubscriptionPage = () => {
               >
                 {confirmingSubscription
                   ? 'Starting subscription…'
-                  : activeSubscription?.payment_method_id || setupComplete
-                    ? 'Save payment method'
-                    : pendingPref
-                      ? 'Confirm & start subscription'
+                  : pendingPref && !hasActiveSubscription
+                    ? 'Confirm & start subscription'
+                    : activeSubscription?.payment_method_id || setupComplete
+                      ? 'Save payment method'
                       : 'Done'}
               </button>
             </div>
@@ -1742,8 +1769,8 @@ const SubscriptionPage = () => {
                     Add your delivery address
                   </h2>
                   <p className="mt-1 text-sm text-gray-600">
-                    City is taken from signup. Add your street address, or change city only to another
-                    city we deliver to.
+                    One last step before we show your bucket. City is prefilled from signup — add your
+                    street address, or pick another city we deliver to.
                   </p>
                 </div>
               </div>

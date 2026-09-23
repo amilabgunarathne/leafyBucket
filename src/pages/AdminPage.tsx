@@ -54,6 +54,8 @@ function formatUnknownError(e: unknown): string {
 /** Delivery statuses admins can set (must match DB / RLS). Unknown legacy values still show in the list. */
 const WEEKLY_DELIVERY_STATUSES = ['open', 'paused', 'locked', 'delivered', 'skipped', 'cancelled'] as const;
 
+type PackingStatusFilter = 'all' | (typeof WEEKLY_DELIVERY_STATUSES)[number];
+
 function statusOptionsForRow(current: string): string[] {
   const allowed = WEEKLY_DELIVERY_STATUSES as readonly string[];
   if (allowed.includes(current)) return [...WEEKLY_DELIVERY_STATUSES];
@@ -84,9 +86,6 @@ type DeliveryPackItem = {
   weightGrams: number;
   isSubstituted: boolean;
 };
-
-/** Delivery statuses hidden on the *current* week packing view only. */
-const PACKING_EXCLUDED_DELIVERY_STATUSES = new Set(['paused', 'skipped', 'cancelled']);
 
 function parseWeightGrams(weight: string): number {
   const n = parseFloat(String(weight).replace(/[^0-9.]/g, ''));
@@ -148,6 +147,8 @@ const AdminPage = () => {
   const [weeklyOrdersMaterializing, setWeeklyOrdersMaterializing] = useState(false);
   const [weeklyOrdersRange, setWeeklyOrdersRange] = useState<{ start: string; end: string } | null>(null);
   const [packingWeekStart, setPackingWeekStart] = useState<string | null>(null);
+  /** Packing list status filter: 'all' shows every delivery for the week. */
+  const [packingStatusFilter, setPackingStatusFilter] = useState<PackingStatusFilter>('all');
   const [weeklyOrderSavingId, setWeeklyOrderSavingId] = useState<string | null>(null);
   const [packItemsByDelivery, setPackItemsByDelivery] = useState<Record<string, DeliveryPackItem[]>>({});
   const [customerDetailOrder, setCustomerDetailOrder] = useState<WeeklyOrderRow | null>(null);
@@ -412,7 +413,8 @@ const AdminPage = () => {
       const { data: rpcData, error: rpcErr } = await supabase.rpc('admin_list_week_packing', {
         p_week_start: range.week_start_date,
         p_week_end: range.week_end_date,
-        p_include_hidden: !range.isCurrentWeek,
+        // Always fetch every delivery status; UI status filter decides what to show.
+        p_include_hidden: true,
       });
 
       if (rpcErr) {
@@ -458,41 +460,13 @@ const AdminPage = () => {
 
       const raw = Array.isArray(payload?.deliveries) ? payload!.deliveries! : [];
 
-      // One row per customer (prefer active subscription, then open delivery).
-      const rankSub = (st: string) =>
-        st === 'active' ? 0 : st === 'paused' ? 1 : st === 'completed' ? 2 : 3;
-      const rankDel = (st: string) =>
-        st === 'open' ? 0 : st === 'locked' ? 1 : st === 'delivered' ? 2 : 3;
-
-      const bestByUser = new Map<string, (typeof raw)[number]>();
-      for (const row of raw) {
-        const key = row.user_id || row.delivery_id;
-        const prev = bestByUser.get(key);
-        if (!prev) {
-          bestByUser.set(key, row);
-          continue;
-        }
-        const itemBias =
-          (Array.isArray(row.items) && row.items.length > 0 ? 1 : 0) -
-          (Array.isArray(prev.items) && prev.items.length > 0 ? 1 : 0);
-        if (itemBias > 0) {
-          bestByUser.set(key, row);
-          continue;
-        }
-        if (itemBias < 0) continue;
-        const sc = rankSub(row.subscription_status) - rankSub(prev.subscription_status);
-        if (sc < 0) {
-          bestByUser.set(key, row);
-          continue;
-        }
-        if (sc > 0) continue;
-        if (rankDel(row.status) < rankDel(prev.status)) bestByUser.set(key, row);
-      }
-
-      const chosen = Array.from(bestByUser.values()).sort((a, b) => {
+      // Show every delivery row for the week (same user may have multiple packs).
+      const chosen = [...raw].sort((a, b) => {
         const da = String(a.scheduled_date).localeCompare(String(b.scheduled_date));
         if (da !== 0) return da;
-        return String(a.customer_name).localeCompare(String(b.customer_name));
+        const na = String(a.customer_name).localeCompare(String(b.customer_name));
+        if (na !== 0) return na;
+        return String(a.delivery_id).localeCompare(String(b.delivery_id));
       });
 
       const finalRows: WeeklyOrderRow[] = chosen.map((r) => ({
@@ -532,16 +506,6 @@ const AdminPage = () => {
 
       setWeeklyOrders(finalRows);
       setPackItemsByDelivery(itemsByDelivery);
-
-      if (typeof payload?.count === 'number' && payload.count > finalRows.length) {
-        console.info(
-          '[loadWeeklyOrders] RPC returned',
-          payload.count,
-          'deliveries; showing',
-          finalRows.length,
-          'after per-customer dedupe'
-        );
-      }
     } catch (e: unknown) {
       console.error('loadWeeklyOrders', e);
       setMessage({ type: 'error', text: `Could not load weekly orders: ${formatUnknownError(e)}` });
@@ -584,24 +548,9 @@ const AdminPage = () => {
       const payload: Record<string, unknown> = { status: newStatus };
       const { error } = await supabase.from('deliveries').update(payload).eq('id', deliveryId);
       if (error) throw error;
-      const currentStart = getCurrentWeekDateRange().week_start_date;
-      const isCurrent = !packingWeekStart || packingWeekStart === currentStart;
-      setWeeklyOrders((prev) => {
-        if (isCurrent && PACKING_EXCLUDED_DELIVERY_STATUSES.has(newStatus)) {
-          return prev.filter((r) => r.deliveryId !== deliveryId);
-        }
-        return prev.map((r) => (r.deliveryId === deliveryId ? { ...r, status: newStatus } : r));
-      });
-      if (isCurrent && PACKING_EXCLUDED_DELIVERY_STATUSES.has(newStatus)) {
-        setPackItemsByDelivery((prev) => {
-          const next = { ...prev };
-          delete next[deliveryId];
-          return next;
-        });
-        if (customerDetailOrder?.deliveryId === deliveryId) {
-          setCustomerDetailOrder(null);
-        }
-      }
+      setWeeklyOrders((prev) =>
+        prev.map((r) => (r.deliveryId === deliveryId ? { ...r, status: newStatus } : r))
+      );
       setMessage({ type: 'success', text: 'Delivery status updated' });
     } catch (e: unknown) {
       console.error('updateWeeklyDeliveryStatus', e);
@@ -609,7 +558,7 @@ const AdminPage = () => {
     } finally {
       setWeeklyOrderSavingId(null);
     }
-  }, [packingWeekStart, customerDetailOrder?.deliveryId]);
+  }, []);
 
   useEffect(() => {
     if (activeTab === 'weekly-orders') {
@@ -647,6 +596,20 @@ const AdminPage = () => {
 
   const packingIsCurrentWeek =
     !packingWeekStart || packingWeekStart === getCurrentWeekDateRange().week_start_date;
+
+  const filteredWeeklyOrders = useMemo(() => {
+    if (packingStatusFilter === 'all') return weeklyOrders;
+    return weeklyOrders.filter((r) => r.status === packingStatusFilter);
+  }, [weeklyOrders, packingStatusFilter]);
+
+  const packingStatusCounts = useMemo(() => {
+    const counts: Record<string, number> = { all: weeklyOrders.length };
+    for (const s of WEEKLY_DELIVERY_STATUSES) counts[s] = 0;
+    for (const r of weeklyOrders) {
+      counts[r.status] = (counts[r.status] || 0) + 1;
+    }
+    return counts;
+  }, [weeklyOrders]);
 
   const loadPlansPay = useCallback(async () => {
     setPlansPayLoading(true);
@@ -1371,33 +1334,17 @@ const AdminPage = () => {
                   <div>
                     <h2 className="text-lg font-semibold text-gray-900">Packing list</h2>
                     <p className="text-sm text-gray-600">
-                      {packingIsCurrentWeek ? (
+                      All deliveries for{' '}
+                      {weeklyOrdersRange ? (
                         <>
-                          All packable deliveries for this week (
-                          {weeklyOrdersRange ? (
-                            <>
-                              Mon <span className="font-mono">{weeklyOrdersRange.start}</span> – Sun{' '}
-                              <span className="font-mono">{weeklyOrdersRange.end}</span>
-                            </>
-                          ) : (
-                            'current week'
-                          )}
-                          ). Paused / skipped / cancelled deliveries are hidden. A customer changing bucket size (e.g. Mini → Family+) does not remove other customers.
+                          Mon <span className="font-mono">{weeklyOrdersRange.start}</span> – Sun{' '}
+                          <span className="font-mono">{weeklyOrdersRange.end}</span>
                         </>
                       ) : (
-                        <>
-                          Deliveries for{' '}
-                          {weeklyOrdersRange ? (
-                            <>
-                              Mon <span className="font-mono">{weeklyOrdersRange.start}</span> – Sun{' '}
-                              <span className="font-mono">{weeklyOrdersRange.end}</span>
-                            </>
-                          ) : (
-                            'selected week'
-                          )}
-                          . All statuses shown for history.
-                        </>
+                        'the selected week'
                       )}
+                      {packingIsCurrentWeek ? ' (this week)' : ''}. Same customer can appear more than
+                      once if they have multiple deliveries. Use the status filter to narrow the list.
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
@@ -1417,6 +1364,26 @@ const AdminPage = () => {
                         {packingWeekOptions.map((opt) => (
                           <option key={opt.start} value={opt.start}>
                             {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="flex items-center gap-2 text-sm text-gray-700">
+                      <span className="font-medium whitespace-nowrap">Status</span>
+                      <select
+                        value={packingStatusFilter}
+                        onChange={(e) =>
+                          setPackingStatusFilter(e.target.value as PackingStatusFilter)
+                        }
+                        className="text-sm border border-gray-300 rounded-lg px-2 py-2 bg-white text-gray-900 min-w-[9rem] capitalize focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                        aria-label="Filter packing list by delivery status"
+                      >
+                        <option value="all">
+                          All ({packingStatusCounts.all ?? 0})
+                        </option>
+                        {WEEKLY_DELIVERY_STATUSES.map((s) => (
+                          <option key={s} value={s}>
+                            {s.replace(/_/g, ' ')} ({packingStatusCounts[s] ?? 0})
                           </option>
                         ))}
                       </select>
@@ -1444,15 +1411,19 @@ const AdminPage = () => {
 
                 {weeklyOrdersLoading ? (
                   <p className="text-sm text-gray-500">Loading deliveries…</p>
-                ) : weeklyOrders.length === 0 ? (
+                ) : filteredWeeklyOrders.length === 0 ? (
                   <p className="text-sm text-gray-500">
-                    {packingIsCurrentWeek ? (
+                    {weeklyOrders.length === 0 ? (
                       <>
-                        No packable deliveries this week. Run <strong>Refresh line items</strong> after customization
-                        closes if you expect orders here.
+                        No deliveries this week. Run <strong>Refresh line items</strong> after
+                        customization closes if you expect orders here.
                       </>
                     ) : (
-                      <>No deliveries found for this week.</>
+                      <>
+                        No deliveries with status{' '}
+                        <strong className="capitalize">{packingStatusFilter.replace(/_/g, ' ')}</strong>{' '}
+                        this week. Choose <strong>All</strong> or another status.
+                      </>
                     )}
                   </p>
                 ) : (
@@ -1469,7 +1440,7 @@ const AdminPage = () => {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100 bg-white">
-                        {weeklyOrders.map((row) => {
+                        {filteredWeeklyOrders.map((row) => {
                           const items = packItemsByDelivery[row.deliveryId] ?? [];
                           const totalG = items.reduce((sum, i) => sum + i.weightGrams, 0);
                           return (
@@ -1539,7 +1510,15 @@ const AdminPage = () => {
                       </tbody>
                     </table>
                     <p className="text-xs text-gray-500 px-3 py-2 border-t border-gray-100 bg-gray-50">
-                      {weeklyOrders.length} pack{weeklyOrders.length === 1 ? '' : 's'} · Vegetables shown inline · Click customer for address &amp; payment
+                      {filteredWeeklyOrders.length} pack
+                      {filteredWeeklyOrders.length === 1 ? '' : 's'}
+                      {packingStatusFilter !== 'all'
+                        ? ` · ${packingStatusFilter.replace(/_/g, ' ')}`
+                        : ''}
+                      {weeklyOrders.length !== filteredWeeklyOrders.length
+                        ? ` (of ${weeklyOrders.length} this week)`
+                        : ''}{' '}
+                      · Vegetables shown inline · Click customer for address &amp; payment
                       {packingIsCurrentWeek ? (
                         <> · Mark <strong>Delivered</strong> when done</>
                       ) : (

@@ -149,29 +149,45 @@ class SubscriptionService {
         planType: BillingPlanCode = 'monthly',
         paymentMethodId?: string | null
     ): Promise<Subscription> {
-        const { data: profile, error: profileErr } = await supabase
-            .from('profiles')
-            .select('city, address')
-            .eq('id', userId)
-            .maybeSingle();
-        if (profileErr) throw profileErr;
-        if (!profile?.address?.trim()) {
-            throw new Error('Please add a delivery address before starting a subscription.');
+        // Ensure JWT is attached — auth.uid() is null without a live session (shows as
+        // "Not authenticated" in RPC / RLS violations on client INSERT).
+        let { data: sessionData } = await supabase.auth.getSession();
+        if (!sessionData.session?.access_token) {
+            const refreshed = await supabase.auth.refreshSession();
+            sessionData = refreshed.data;
         }
-        const city = (profile.city || '').trim();
-        if (!city) {
-            throw new Error('Please set a delivery city before starting a subscription.');
+        if (!sessionData.session?.access_token) {
+            throw new Error('Your session expired. Please sign in again and retry.');
         }
-        const { data: cityRow, error: cityErr } = await supabase
-            .from('delivery_cities')
-            .select('name, available')
-            .ilike('name', city)
-            .maybeSingle();
-        if (cityErr) throw cityErr;
-        if (!cityRow?.available) {
-            throw new Error(
-                'We don’t deliver to that city yet. Choose a city we deliver to before starting a subscription.'
-            );
+        if (sessionData.session.user?.id && sessionData.session.user.id !== userId) {
+            throw new Error('Signed-in user does not match. Please refresh and try again.');
+        }
+
+        // Prefer SECURITY DEFINER RPC — client INSERT into subscriptions is blocked by RLS
+        // on some environments (error 42501 / "violates row-level security policy").
+        const { data: rpcSub, error: rpcErr } = await supabase.rpc('create_my_subscription', {
+            p_bucket_type_id: bucketTypeId,
+            p_plan_code: planType,
+            p_payment_method_id: paymentMethodId ?? null,
+        });
+
+        if (!rpcErr && rpcSub) {
+            return (Array.isArray(rpcSub) ? rpcSub[0] : rpcSub) as Subscription;
+        }
+
+        if (rpcErr) {
+            const msg = rpcErr.message || '';
+            if (/not authenticated/i.test(msg)) {
+                throw new Error('Your session expired. Please sign in again and retry.');
+            }
+            // Fall through only if RPC is missing; otherwise surface the error.
+            if (
+                !msg.includes('Could not find the function') &&
+                !msg.includes('schema cache')
+            ) {
+                throw rpcErr;
+            }
+            console.warn('[createSubscription] RPC missing, falling back to client insert', msg);
         }
 
         const { data: bucketType, error: btError } = await supabase
